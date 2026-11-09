@@ -1,0 +1,2 @@
+# laurel is formatted by hand in id software style, never by rustfmt
+disable_all_formatting = true

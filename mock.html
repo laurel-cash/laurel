@@ -1,0 +1,318 @@
+<!doctype html>
+<html lang="en">
+	<head>
+		<meta charset="UTF-8" />
+		<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+		<title>Laurel (mock)</title>
+		<!--
+		mock.html -- Laurel's real screens with a stand-in for the engine, for
+		looking at them without Tauri: headless Edge screenshots at any size or
+		text size (docs/DEVELOPMENT.md, "Seeing the screens"). Answers are fixed
+		below, by command name; anything else answers null. Not in a release:
+		vite builds index.html only.
+		-->
+		<script>
+			// a flag of the address (?sapling, ?behind...): the whole name, never a word found
+			// anywhere in it. Read as a substring, a ?click= selector naming .pool-sapling
+			// turned ?sapling on
+			const QUERY = new URLSearchParams( location.search );
+			const Flag = ( name ) => QUERY.has( name );
+			const Z = 100_000_000;
+			// checking: private money the engine is still checking (not yet spendable)
+			const bal = ( i, o, s, t, checking = 0 ) => ( { ironwood: { confirmed: i, pending: 0 }, orchard: { confirmed: o, pending: 0 }, sapling: { confirmed: s, pending: 0 }, transparent: { confirmed: t, pending: 0 }, total: i + o + s + t, spendable: i + o + s - checking } );
+			const progress = { running: false, complete: true, percent: 100, walletHeight: 4403000, chainHeight: 4403000, error: null, attempting: false, nextRetryAt: null, paused: false, etaSecs: null, birthdayTime: null, repairing: false };
+			// ?behind: the wallet still catching up (a payment waits for it: UI_CatchingUp)
+			if ( Flag( "behind" ) ) Object.assign( progress, { running: true, complete: false, percent: 62, walletHeight: 4401200, etaSecs: 95 } );
+			const wallet = ( id, name, accounts ) => ( { seq: 1, id, name, kind: "seed", can: { spend: true, receive: true, moveWithin: true, addAccount: true }, backedUp: true, saveError: null, sameWords: [], progress, accounts } );
+			const now = Math.floor( Date.now() / 1000 );
+			const item = ( txid, kind, amount, memo, t ) => ( { txid: txid.repeat( 64 ).slice( 0, 64 ), time: now - t, kind, amount, fee: kind === "received" ? null : 10000, state: { kind: "confirmed", height: 1 }, from: [ "ironwood" ], into: [ "ironwood" ], counterparty: kind === "sent" ? "utest1qqpxw4r9aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa7kd2" : null, memo, note: null, category: null } );
+			// a public bip-39 test phrase, holding nothing
+			const RECOVERY = { seedPhrase: "abandon ".repeat( 23 ) + "art", passphrase: null, birthday: 4465000, birthdayTime: now - 86400 };
+			const TO = "utest1qqpxw4r9aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa7kd2";
+			const FIX = {
+				// ?locked: a password is set and Laurel starts locked (the lock screen; any password opens it)
+				V_Open_f:		Flag( "locked" ) ? { state: "locked", protection: "password", osProtectionAvailable: true, minPasswordLen: 8 } : { state: "unlocked", protection: "os", osProtectionAvailable: true, minPasswordLen: 8 },
+				V_Unlock_f:		{ state: "unlocked", protection: "password", osProtectionAvailable: true, minPasswordLen: 8 },
+				V_Status_f:		{ state: "unlocked", protection: "os", osProtectionAvailable: true, minPasswordLen: 8 },
+				W_Constants_f:	{ mobile: Flag( "phone" ), phraseLengths: [ 12, 24 ], maxAccounts: 20, maxNameLen: 40, defaultWalletName: "My Wallet", defaultAccountName: "Main", blockSecs: 75, autoLockChoices: [ 1, 5, 10, 15, 30, 60 ], lockAwayChoices: [ 0, 60, 300 ], memoMaxBytes: 512, categories: [ "income", "food" ], textScales: [ 100, 115, 130, 150, 175 ] },
+				// &scale=175: the text size, set as the app sets it (useTextScale: css zoom on a phone)
+				S_Get_f:		{ autoLockMinutes: null, lockAwaySecs: 60, notifyInApp: true, notifySystem: true, network: "testnet", showPrice: false, textScale: Number( QUERY.get( "scale" ) ?? 100 ) },
+				// ?sapling: some money in Sapling, to move (W_QuoteMove_f)
+				// ?welcome: a first run, no wallets yet (the welcome screen, and from it Restore)
+				W_List_f:		Flag( "welcome" ) ? { firstRun: true, failed: [], wallets: [] } : { firstRun: false, failed: [], wallets: [ wallet( "w1", "Everyday", [ { index: 0, name: "Main", balance: bal( 12.5 * Z, 0.3 * Z, Flag( "sapling" ) ? 0.8 * Z : 0, 0.05 * Z, 1.2 * Z ) }, { index: 1, name: "Savings", balance: bal( 40 * Z, 0, 0, 0 ) } ] ), wallet( "w2", "Business", [ { index: 0, name: "Main", balance: bal( 3 * Z, 0, 0, 0 ) } ] ) ] },
+				W_Transactions_f:	[ item( "a", "received", 1.5 * Z, "Lunch money", 3600 ), item( "b", "sent", 0.25 * Z, null, 90000 ), item( "c", "shield", 0.05 * Z, null, 200000 ) ],
+				// ?history: two months of money arriving in each pool, then shielded and moved into Ironwood
+				W_BalanceHistory_f:	Flag( "history" ) ? [
+					[ 58, 0, 0.3, 2, 0 ], [ 50, 0, 0.3, 2, 1.5 ], [ 44, 0, 0.3, 4.5, 1.5 ], [ 37, 1.49, 0.3, 4.5, 0 ],
+					[ 30, 1.49, 0.3, 4.5, 3 ], [ 21, 5.98, 0.3, 0, 3 ], [ 14, 8.97, 0.3, 0, 0.05 ], [ 6, 12.5, 0.3, 0, 0.05 ],
+				].map( ( [ d, i, o, s, t ] ) => ( { time: now - d * 86400, zats: Math.round( ( i + o + s + t ) * Z ), pools: { ironwood: i * Z, orchard: o * Z, sapling: s * Z, transparent: t * Z } } ) ) : [],
+				W_ValueHistory_f:	{ kind: "noPrice" },
+				W_QuoteMove_f:		{ intent: "mock", quote: { amount: 0.8 * Z - 10000, fee: 10000, feeNote: null } },		// the mock is on testnet, where the engine says so
+				W_Receive_f:		{ shielded: "utest1qqpxw4r9" + "a".repeat( 180 ), shieldedIndex: 0, sapling: "ztestsapling1" + "c".repeat( 75 ), transparent: "tm" + "b".repeat( 33 ) },
+				W_ServerStatus_f:	null,
+				W_CheckKey_f:		{ kind: "empty" },
+				// ?sync: a running sync with two other computers, one not readable; else sync is off
+				F_Status_f:			Flag( "sync" )
+					? { on: true, folder: "C:\\Users\\me\\OneDrive\\Laurel", lastSync: now - 240, skipped: 0, problem: null, computers: [ { device: "a1", name: "Desk", me: true, readable: true }, { device: "b2", name: "Laptop", me: false, readable: true }, { device: "c3", name: "", me: false, readable: false } ] }
+					: { on: false, folder: null, lastSync: null, computers: [], skipped: 0, problem: null },
+				O_Pending_f:		Flag( "pending" )
+					? [ { id: "p1", walletId: "w1", account: 0, made: now - 7200, quote: { to: "utest1qqpxw4r9aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa7kd2", kind: "unified", amount: 1.25 * Z, fee: 10000, from: [ "ironwood" ], steps: 1, memo: null, feeNote: null, also: [] } } ]
+					: [],
+				// the flows walked through end to end: a new wallet and its backup, a payment
+				W_Create_f:			{ id: "w1", recovery: RECOVERY },
+				W_Recovery_f:		RECOVERY,
+				W_ParseScan_f:		{ address: TO, kind: "unified", amount: null, memo: null, label: null, message: null, also: [] },
+				W_QuoteSend_f:		{ intent: "mock", quote: { to: TO, kind: "unified", amount: 0.5 * Z, fee: 10000, from: [ "ironwood" ], steps: 1, memo: null, feeNote: null, also: [] } },
+				W_SendNow_f:		{ kind: "sent", txid: "7cd904e9".repeat( 8 ) },
+				Rp_List_f:			[
+					{ id: "r1", walletId: "w1", account: 0, label: "Rent", to: "utest1qqpxw4r9aaaa", zats: 2.5 * Z, memo: null, every: "month", next: now - 3600, day: 1, due: true },
+					{ id: "r2", walletId: "w1", account: 0, label: "Gym", to: "utest1qqpxw4r9bbbb", zats: 0.3 * Z, memo: null, every: "week", next: now + 5 * 86400, day: 3, due: false },
+				],
+			};
+			let cb = 0;
+			window.__TAURI_EVENT_PLUGIN_INTERNALS__ = { unregisterListener: () => {} };
+			window.__TAURI_INTERNALS__ = {
+				metadata:			{ currentWindow: { label: "main" }, currentWebview: { label: "main", windowLabel: "main" } },
+				transformCallback:	() => ++cb,
+				invoke:				async ( cmd, args ) => {
+					if ( cmd === "S_Set_f" ) { FIX.S_Get_f = structuredClone( args.settings ); return FIX.S_Get_f; }
+					return cmd in FIX ? structuredClone( FIX[cmd] ) : cmd.startsWith( "plugin:event" ) ? ++cb : null;
+				},
+			};
+		</script>
+	</head>
+	<body>
+		<div id="root"></div>
+		<script>
+			// ?check: window.__layout() waits until the dashboard has drawn (its balance's
+			// figures are in the page) and its entrance animations are over, then says every
+			// layout fault at this size (scripts/check_layout.mjs asks it, size after size).
+			// &drawn=selector: wait for that instead, a screen ?click= opened (a sheet, a panel)
+			if ( Flag( "check" ) ) {
+				// settled once: the entrance animations play at the first draw, not after a resize.
+				// No clock of its own: a busy machine draws late, and check_layout.mjs says when
+				// too late (its WAIT_MS); a page that gave up at 8s once failed a busy gate
+				const SETTLE_MS = 700;
+				let settled = false;
+				const DRAWN = QUERY.get( "drawn" ) ?? ".split .split-amount";
+				const Drawn = () => !!document.querySelector( DRAWN );
+				const Faults = () => {
+					const faults = [];
+					const name = ( el ) => el.tagName.toLowerCase() + ( el.className && typeof el.className === "string" ? "." + el.className.trim().split( /\s+/ ).join( "." ) : "" );
+					// an amount wider than its box is cut or spills
+					for ( const el of document.querySelectorAll( "[class*='amount'], .total" ) ) {
+						if ( el.scrollWidth > el.clientWidth + 1 ) faults.push( `${name( el )} (${el.textContent.trim()}) needs ${el.scrollWidth}px, has ${el.clientWidth}px` );
+					}
+					// no number is ever cut short: an amount, a date or a count cut is a wrong one ("0.05 T...")
+					for ( const el of document.querySelectorAll( "body *" ) ) {
+						// (a 1px box is hidden on purpose, for screen readers: .sr-only and the sidebar's rail)
+						if ( el.children.length === 0 && /\d/.test( el.textContent ) && el.clientWidth > 1 && el.scrollWidth > el.clientWidth + 1 && getComputedStyle( el ).overflow !== "visible" ) {
+							faults.push( `${name( el )} (${el.textContent.trim()}) is cut: needs ${el.scrollWidth}px, has ${el.clientWidth}px` );
+						}
+					}
+					// nothing in a sheet or a popover sticks out of it, or out of the window
+					for ( const box of document.querySelectorAll( "[role='dialog']" ) ) {
+						const outer = box.getBoundingClientRect();
+						for ( const el of box.querySelectorAll( "*" ) ) {
+							const r = el.getBoundingClientRect();
+							if ( r.width > 0 && ( r.right > Math.min( outer.right, innerWidth ) + 1 || r.left < Math.max( outer.left, 0 ) - 1 ) ) {
+								faults.push( `${name( el )} (${el.textContent.trim().slice( 0, 40 )}) sticks out of its ${name( box )}: ${Math.round( r.left )}..${Math.round( r.right )}px in ${Math.round( outer.left )}..${Math.round( outer.right )}px` );
+							}
+						}
+					}
+					// the page never scrolls sideways
+					if ( document.documentElement.scrollWidth > innerWidth + 1 ) faults.push( `the page is ${document.documentElement.scrollWidth}px wide in a ${innerWidth}px window` );
+					return faults.concat( Overlaps(), BrokenWords(), PastTheEdge(), UnderTheBar() );
+				};
+
+				// what shows: a box of 1px or less is hidden for a screen reader (.sr-only, an
+				// icon-only label), and aria-hidden is a drawing
+				const Shown = ( el ) => {
+					const r = el.getBoundingClientRect();
+					if ( r.width <= 1 || r.height <= 1 || el.closest( "[aria-hidden='true']" ) ) return null;
+					const cs = getComputedStyle( el );
+					return cs.visibility === "hidden" || +cs.opacity === 0 ? null : r;
+				};
+				const Tag = ( el ) => el.tagName.toLowerCase() + ( typeof el.className === "string" && el.className.trim() ? "." + el.className.trim().split( /\s+/ ).join( "." ) : "" );
+				const OwnText = ( el ) => [ ...el.childNodes ].some( ( n ) => n.nodeType === 3 && n.textContent.trim() );
+				// the fixed layer a box is in (the bottom bar, the title bar), or none
+				const Layer = ( el ) => {
+					for ( let p = el; p; p = p.parentElement ) if ( getComputedStyle( p ).position === "fixed" ) return p;
+					return null;
+				};
+				// a box's words where they are drawn: an ellipsis or a clipped box cuts them to it
+				const Words = ( el ) => {
+					const range = document.createRange();
+					range.selectNodeContents( el );
+					const box = el.getBoundingClientRect();
+					const clips = getComputedStyle( el ).overflow !== "visible";
+					return [ ...range.getClientRects() ]
+						.map( ( q ) => clips ? new DOMRect( Math.max( q.left, box.left ), Math.max( q.top, box.top ), Math.min( q.right, box.right ) - Math.max( q.left, box.left ), Math.min( q.bottom, box.bottom ) - Math.max( q.top, box.top ) ) : q )
+						.filter( ( q ) => q.width > 1 && q.height > 1 );
+				};
+				// each box's layer found once: asked per pair, the walk up was millions of style reads
+				const Texts = () => [ ...document.querySelectorAll( "body *" ) ].filter( ( el ) => OwnText( el ) && Shown( el ) ).map( ( el ) => ( { el, rects: Words( el ), sheet: el.closest( "[role='dialog']" ), layer: Layer( el ) } ) ).filter( ( t ) => t.rects.length );
+
+				// no words drawn over other words in the same layer ("99.6%" over "Public" on
+				// every phone; a sheet over the page and the bottom bar over the list are layers)
+				const Overlaps = () => {
+					const out = [];
+					// top to bottom: a box is held only against those that start above its end
+					const texts = Texts().map( ( t ) => ( { ...t, top: Math.min( ...t.rects.map( ( q ) => q.top ) ), bottom: Math.max( ...t.rects.map( ( q ) => q.bottom ) ) } ) ).sort( ( p, q ) => p.top - q.top );
+					for ( let i = 0; i < texts.length; i++ ) {
+						for ( let j = i + 1; j < texts.length && texts[j].top < texts[i].bottom - 2; j++ ) {
+							const a = texts[i], b = texts[j];
+							if ( a.el.contains( b.el ) || b.el.contains( a.el ) ) continue;
+							if ( a.sheet !== b.sheet || a.layer !== b.layer ) continue;
+							const hit = a.rects.some( ( p ) => b.rects.some( ( q ) => Math.min( p.right, q.right ) - Math.max( p.left, q.left ) > 2 && Math.min( p.bottom, q.bottom ) - Math.max( p.top, q.top ) > 2 ) );
+							if ( hit ) out.push( `${Tag( a.el )} (${a.el.textContent.trim().slice( 0, 24 )}) is drawn over ${Tag( b.el )} (${b.el.textContent.trim().slice( 0, 24 )})` );
+						}
+					}
+					return out;
+				};
+
+				// no word broken in two ("Receiv/e", "Mov/es"): one word's letters on two lines.
+				// An address breaks anywhere on purpose (monospace)
+				const BrokenWords = () => {
+					const out = [];
+					// only a box on more than one line can have broken one
+					for ( const { el, rects } of Texts() ) {
+						if ( new Set( rects.map( ( q ) => Math.round( q.top ) ) ).size < 2 || /mono/i.test( getComputedStyle( el ).fontFamily ) ) continue;
+						for ( const n of el.childNodes ) {
+							if ( n.nodeType !== 3 ) continue;
+							for ( const m of n.textContent.matchAll( /[A-Za-z][A-Za-z'’]{3,}/g ) ) {
+								const r = document.createRange();
+								r.setStart( n, m.index );
+								r.setEnd( n, m.index + m[0].length );
+								if ( new Set( [ ...r.getClientRects() ].filter( ( q ) => q.width > 0.5 ).map( ( q ) => Math.round( q.top ) ) ).size > 1 ) {
+									out.push( `${Tag( el )}: "${m[0]}" is broken in two` );
+								}
+							}
+						}
+					}
+					return out;
+				};
+
+				// nothing past the screen's edge (History's Filters on a phone), except in a box
+				// that scrolls sideways on purpose; the page's own scrollWidth missed one in a
+				// box that clips
+				const PastTheEdge = () => {
+					const out = [];
+					const W = document.documentElement.clientWidth;
+					const Scrolls = ( el ) => {
+						for ( let p = el.parentElement; p; p = p.parentElement ) if ( /auto|scroll/.test( getComputedStyle( p ).overflowX ) ) return true;
+						return false;
+					};
+					const Past = ( el ) => { const r = el.getBoundingClientRect(); return r.width > 1 && ( r.right > W + 1 || r.left < -1 ); };
+					for ( const el of document.querySelectorAll( "body *" ) ) {
+						if ( !Shown( el ) || !Past( el ) || Scrolls( el ) || [ ...el.children ].some( Past ) ) continue;
+						const r = el.getBoundingClientRect();
+						out.push( `${Tag( el )} (${el.textContent.trim().slice( 0, 30 )}) is past the screen's edge: ${Math.round( r.left )}..${Math.round( r.right )}px of ${W}px` );
+					}
+					return out;
+				};
+
+				// a phone's bottom bar never hides the end of a page: scrolled all the way, the
+				// last words are above it
+				const UnderTheBar = () => {
+					const nav = document.querySelector( ".sidebar .nav" );
+					if ( !nav || getComputedStyle( nav ).position !== "fixed" ) return [];
+					const top = nav.getBoundingClientRect().top;
+					const out = [];
+					for ( const sc of [ document.scrollingElement, ...document.querySelectorAll( "body *" ) ] ) {
+						if ( sc.scrollHeight <= sc.clientHeight + 1 || sc.closest( "[role='dialog']" ) ) continue;
+						if ( sc !== document.scrollingElement && !/auto|scroll/.test( getComputedStyle( sc ).overflowY ) ) continue;
+						const was = sc.scrollTop;
+						sc.scrollTop = sc.scrollHeight;
+						let last = null;
+						for ( const el of sc.querySelectorAll( "*" ) ) {
+							const r = OwnText( el ) && Shown( el );
+							if ( r && ( !last || r.bottom > last.r.bottom ) ) last = { el, r };
+						}
+						if ( last && last.r.bottom > top + 1 ) out.push( `${Tag( last.el )} (${last.el.textContent.trim().slice( 0, 30 )}) stays under the bottom bar at the end of ${Tag( sc )}` );
+						sc.scrollTop = was;
+					}
+					return out;
+				};
+				const Sleep = ( ms ) => new Promise( ( ok ) => setTimeout( ok, ms ) );
+				// in the pseudo-locale (&locale=en-XA) every sentence Laurel says is ⟦ between ⟧:
+				// words on screen outside them came from somewhere else. That is the sample data
+				// (names, memos, addresses), or a sentence a translation would never reach
+				const Plain = () => {
+					const plain = new Set();
+					const walker = document.createTreeWalker( document.body, NodeFilter.SHOW_TEXT );
+					for ( let n = walker.nextNode(); n; n = walker.nextNode() ) {
+						const el = n.parentElement;
+						if ( !el || el.closest( "script, style, [aria-hidden='true']" ) || !el.getClientRects().length ) continue;
+						const text = n.textContent.trim();
+						if ( /[A-Za-z]{2,}/.test( text ) && !/[⟦⟧]/.test( text ) ) plain.add( text );
+					}
+					return [ ...plain ];
+				};
+				// where every sheet and popover is: a popover follows a resize a frame or more after
+				// it (Radix places it from a resize listener), and measured before it had, one stuck
+				// out of a narrow window that it never sticks out of
+				const Frame = () => new Promise( ( ok ) => requestAnimationFrame( () => ok() ) );
+				const Placed = () => [ ...document.querySelectorAll( "[role='dialog']" ) ].map( ( d ) => { const r = d.getBoundingClientRect(); return `${r.left},${r.top},${r.width},${r.height}`; } ).join( "|" );
+				window.__layout = async () => {
+					while ( !Drawn() ) await Sleep( 50 );
+					await Sleep( settled ? 50 : SETTLE_MS );		// after a resize: its re-layout, a frame or two
+					settled = true;
+					// a sheet still opening: its animations over first (a spinner's never are, so
+					// only those that end), or 2 s, a sheet that never stops moving measured anyway.
+					// Mid-draw on a busy machine, What's New once had "Got It" over its notes
+					const ending = document.getAnimations().filter( ( a ) => a.playState === "running" && a.effect?.getComputedTiming().endTime !== Infinity );
+					await Promise.race( [ Promise.all( ending.map( ( a ) => a.finished.catch( () => {} ) ) ), Sleep( 2000 ) ] );
+					// then still: the same places two frames apart (a check_layout.mjs deadline says
+					// so if they never settle). Frames, not a clock: Radix places a popover in a
+					// frame, and a tab behind others gets about one a second, so check_layout.mjs
+					// brings each tab to the front first; on a clock a popover that hadn't moved
+					// yet read as settled
+					for ( let was = Placed(), now = ( await Frame(), await Frame(), Placed() ); now !== was; was = now, now = ( await Frame(), await Frame(), Placed() ) );
+					return { drawn: Drawn(), width: innerWidth, height: innerHeight, faults: Faults(), plain: Plain() };
+				};
+			}
+		</script>
+		<script type="module">
+			// ?pane=folder: Settings, on that pane; ?pane= alone: the dashboard. Either way
+			// what's new is already seen. Before main.tsx, with static imports, so it has
+			// run before the app decides
+			import { APP_VERSION, HOME_DEFAULT, PREF_NOTES_SEEN } from "/src/ui_local.ts";
+			import { useStore } from "/src/ui_store.ts";
+			import { MotionGlobalConfig } from "motion/react";
+			// ?check: window.__phone( true ) makes this page a phone's in place (the engine's
+			// constants say mobile), so check_layout measures both without loading it twice
+			if ( Flag( "check" ) ) {
+				window.__phone = ( on ) => useStore.setState( ( s ) => ( { constants: s.constants && { ...s.constants, mobile: on } } ) );
+			}
+			const pane = QUERY.get( "pane" );
+			if ( pane !== null ) {
+				localStorage.setItem( PREF_NOTES_SEEN, JSON.stringify( APP_VERSION ) );
+			}
+			if ( pane ) {
+				setTimeout( () => useStore.getState().Go( "settings", pane ), 1500 );
+			}
+			// ?fresh: the layout a computer's first wallet starts with (ui_store.ts, St_ApplyList): no pool list
+			if ( Flag( "fresh" ) ) {
+				useStore.getState().SetHome( { ...HOME_DEFAULT, hidden: [ "pools" ] } );
+			}
+			// ?click=.pool-row.pool-transparent: press that, once drawn (a sheet, a tab);
+			// several, apart by |, one after another, each once it's there. Pressed on a clock
+			// instead, a busy machine's late draw lost the press, and the screen it opens
+			// never came (check_layout.mjs: "took over 30s")
+			const click = QUERY.get( "click" );
+			if ( click ) {
+				MotionGlobalConfig.skipAnimations = true;		// a headless capture stops advancing animations once loaded
+				const Sleep = ( ms ) => new Promise( ( ok ) => setTimeout( ok, ms ) );
+				( async () => {
+					for ( const sel of click.split( "|" ) ) {
+						while ( !document.querySelector( sel ) ) await Sleep( 50 );
+						await Sleep( 150 );		// the last press's screen, settled into place
+						document.querySelector( sel ).click();
+					}
+				} )();
+			}
+		</script>
+		<script type="module" src="/src/main.tsx"></script>
+	</body>
+</html>

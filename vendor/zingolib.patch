@@ -1,0 +1,3476 @@
+# The fork: zingolib 81d799775f11e882896e8710e8af12d6d4d29a41 (https://github.com/zingolabs/zingolib) to vendor/zingolib.
+# Written by scripts/engine.mjs record; checked by the gate. 40 files; why each: docs/ENGINE.md.
+--- a/Cargo.lock
++++ b/Cargo.lock
+@@ -11280,6 +11280,7 @@ dependencies = [
+  "bip0039 0.14.0",
+  "bip32 0.6.0",
+  "blake2b_simd",
++ "bls12_381",
+  "bs58",
+  "byteorder",
+  "chrono",
+--- a/Cargo.toml
++++ b/Cargo.toml
+@@ -99,6 +99,9 @@ zip32 = "0.3.0"
+ ### Cryptographic
+ blake2b_simd = "1"
+ jubjub = "0.11.1"
++# LAUREL PATCH (size): upstream dropped it with zingolib's own use; Laurel's
++# patch still names the spend prover's anchor type with it (wallet/sapling_key.rs)
++bls12_381 = "=0.9.0"
+ secrecy = "0.8"
+ subtle = "2.6.1"
+ bech32 = "0.11.0"
+@@ -176,6 +179,11 @@ x509-parser = "0.18"
+ [profile.test]
+ opt-level = 3
+ 
++# Laurel builds this workspace only for checks and the live harness, never
++# to iterate on: incremental caches here were 16 GB of a disk that filled
++[profile.dev]
++incremental = false
++
+ # The one profile of the Binding Layer: the wallet library on both
+ # platforms, the proxy library on Android, and the iOS archive that carries
+ # both crates under the wallet crate's `zingo-nym-proxy-ffi` feature. The
+--- /dev/null
++++ b/clippy.toml
+@@ -0,0 +1,11 @@
++# clippy.toml -- Laurel's rules for its vendored engine (docs/ENGINE.md)
++#
++# BIP-39 derives a wallet from the phrase AND its passphrase. Deriving from
++# the phrase alone silently makes a different, empty wallet for anyone who
++# set a passphrase. Keys come only from WalletSeed::to_seed
++# (zingolib/src/wallet/keys/seed.rs), which carries the passphrase.
++
++disallowed-methods = [
++	{ path = "bip0039::Mnemonic::to_seed",		reason = "forgets the passphrase: derive through WalletSeed::to_seed" },
++	{ path = "bip0039::AnyMnemonic::to_seed",	reason = "forgets the passphrase: derive through WalletSeed::to_seed" },
++]
+--- a/pepper-sync/src/client/fetch.rs
++++ b/pepper-sync/src/client/fetch.rs
+@@ -84,15 +84,25 @@ async fn receive_fetch_requests(
+     false
+ }
+ 
+-// TODO: placeholder for algorithm that selects the next fetch request to be processed
+-// return `None` if a fetch request could not be selected
++// selects the next fetch request to be processed, `None` when there is none.
++// LAUREL PATCH (lock waits): a single request (a tree state, a block, a transaction) goes before the block and
++// nullifier streams the scanners read. a single request is awaited while the wallet lock is held, by whoever
++// applies a batch of scan results: behind the scanners' streams, each one kept every reader of the wallet
++// waiting for seconds (docs/ENGINE.md, "Speed work").
+ fn select_fetch_request(fetch_request_queue: &mut Vec<FetchRequest>) -> Option<FetchRequest> {
+-    // TODO: improve priority logic
+     if fetch_request_queue.is_empty() {
+-        None
+-    } else {
+-        Some(fetch_request_queue.remove(0))
++        return None;
+     }
++    let next = fetch_request_queue
++        .iter()
++        .position(|request| {
++            !matches!(
++                request,
++                FetchRequest::CompactBlockRange(..) | FetchRequest::NullifierRange(..)
++            )
++        })
++        .unwrap_or(0);
++    Some(fetch_request_queue.remove(next))
+ }
+ 
+ //
+@@ -386,3 +396,26 @@ where
+ {
+     client.get_mempool_stream().await
+ }
++
++#[cfg(test)]
++mod tests {
++    use super::*;
++    use tokio::sync::oneshot;
++
++    /// LAUREL PATCH (lock waits): a single request is answered before the scanners' streams queued ahead of it,
++    /// and the streams keep their order.
++    #[test]
++    fn a_single_request_goes_before_the_scanners_streams() {
++        let height = BlockHeight::from_u32(1);
++        let mut queue = vec![
++            FetchRequest::CompactBlockRange(oneshot::channel().0, height..height + 1, false),
++            FetchRequest::NullifierRange(oneshot::channel().0, height..height + 1),
++            FetchRequest::TreeState(oneshot::channel().0, height),
++        ];
++
++        assert!(matches!(select_fetch_request(&mut queue), Some(FetchRequest::TreeState(..))));
++        assert!(matches!(select_fetch_request(&mut queue), Some(FetchRequest::CompactBlockRange(..))));
++        assert!(matches!(select_fetch_request(&mut queue), Some(FetchRequest::NullifierRange(..))));
++        assert!(select_fetch_request(&mut queue).is_none());
++    }
++}
+--- a/pepper-sync/src/sync.rs
++++ b/pepper-sync/src/sync.rs
+@@ -5405,10 +5405,10 @@ mod test {
+         }
+ 
+         /// The shard trees are missing the checkpoint of the highest scanned block, so the tree state of the first
+-        /// scanned block is fetched for each pool. The checkpoint of the second scanned block copies it with no
+-        /// further request.
++        /// scanned block is fetched, once for all three pools (LAUREL PATCH: lock waits). The checkpoint of the
++        /// second scanned block copies it with no further request.
+         #[tokio::test]
+-        async fn missing_checkpoint_below_is_fetched_once_for_each_pool() {
++        async fn missing_checkpoint_below_is_fetched_once_for_all_pools() {
+             let mut wallet = wallet(ShardTrees::new());
+             let (fetch_request_sender, request_count) = spawn_counting_fetcher();
+ 
+@@ -5431,10 +5431,7 @@ mod test {
+                 checkpoint_tree_states(&mut wallet, SECOND_SCANNED_BLOCK),
+                 fetched_tree_states
+             );
+-            assert_eq!(
+-                request_count.load(atomic::Ordering::Acquire),
+-                SHIELDED_POOLS
+-            );
++            assert_eq!(request_count.load(atomic::Ordering::Acquire), 1);
+         }
+ 
+         /// The sapling tree holds the checkpoint of the highest scanned block and the orchard tree is missing it.
+--- a/pepper-sync/src/wallet/traits.rs
++++ b/pepper-sync/src/wallet/traits.rs
+@@ -307,6 +307,8 @@ pub trait SyncShardTrees: SyncWallet {
+             let mut sapling_checkpoints = BTreeMap::new();
+             let mut orchard_checkpoints = BTreeMap::new();
+             let mut ironwood_checkpoints = BTreeMap::new();
++            // LAUREL PATCH (lock waits): one tree state per height, for all three pools
++            let mut fetched_tree_sizes = BTreeMap::new();
+             for checkpoint_height in checkpoint_heights {
+                 let sapling_checkpoint = determine_checkpoint::<
+                     Sapling,
+@@ -320,6 +322,7 @@ pub trait SyncShardTrees: SyncWallet {
+                     &sapling_located_trees,
+                     &shard_trees.sapling,
+                     &sapling_checkpoints,
++                    &mut fetched_tree_sizes,
+                 )
+                 .await?;
+                 sapling_checkpoints.insert(checkpoint_height, sapling_checkpoint);
+@@ -335,6 +338,7 @@ pub trait SyncShardTrees: SyncWallet {
+                     &orchard_located_trees,
+                     &shard_trees.orchard,
+                     &orchard_checkpoints,
++                    &mut fetched_tree_sizes,
+                 )
+                 .await?;
+                 orchard_checkpoints.insert(checkpoint_height, orchard_checkpoint);
+@@ -350,6 +354,7 @@ pub trait SyncShardTrees: SyncWallet {
+                     &ironwood_located_trees,
+                     &shard_trees.ironwood,
+                     &ironwood_checkpoints,
++                    &mut fetched_tree_sizes,
+                 )
+                 .await?;
+                 ironwood_checkpoints.insert(checkpoint_height, ironwood_checkpoint);
+@@ -513,6 +518,7 @@ async fn determine_checkpoint<D, L, const DEPTH: u8, const SHARD_HEIGHT: u8>(
+         SHARD_HEIGHT,
+     >,
+     determined_checkpoints: &BTreeMap<BlockHeight, Checkpoint>,
++    fetched_tree_sizes: &mut BTreeMap<BlockHeight, [u64; 3]>,
+ ) -> Result<Checkpoint, ServerError>
+ where
+     L: Clone + PartialEq + incrementalmerkletree::Hashable,
+@@ -547,16 +553,29 @@ where
+     let tree_state = if let Some(checkpoint) = previous_checkpoint {
+         checkpoint.tree_state()
+     } else {
+-        let frontiers = client::get_frontiers(
+-            fetch_request_sender.clone(),
+-            consensus_parameters,
+-            checkpoint_height,
+-        )
+-        .await?;
++        // LAUREL PATCH (lock waits): a tree state holds every pool's tree, so a height is asked for once
++        let tree_sizes = match fetched_tree_sizes.get(&checkpoint_height) {
++            Some(tree_sizes) => *tree_sizes,
++            None => {
++                let frontiers = client::get_frontiers(
++                    fetch_request_sender.clone(),
++                    consensus_parameters,
++                    checkpoint_height,
++                )
++                .await?;
++                let tree_sizes = [
++                    frontiers.final_sapling_tree().tree_size(),
++                    frontiers.final_orchard_tree().tree_size(),
++                    frontiers.final_ironwood_tree().tree_size(),
++                ];
++                fetched_tree_sizes.insert(checkpoint_height, tree_sizes);
++                tree_sizes
++            }
++        };
+         let tree_size = match D::SHIELDED_PROTOCOL {
+-            ShieldedPool::Sapling => frontiers.final_sapling_tree().tree_size(),
+-            ShieldedPool::Orchard => frontiers.final_orchard_tree().tree_size(),
+-            ShieldedPool::Ironwood => frontiers.final_ironwood_tree().tree_size(),
++            ShieldedPool::Sapling => tree_sizes[0],
++            ShieldedPool::Orchard => tree_sizes[1],
++            ShieldedPool::Ironwood => tree_sizes[2],
+         };
+         if tree_size == 0 {
+             TreeState::Empty
+--- a/zingo-cli/src/commands.rs
++++ b/zingo-cli/src/commands.rs
+@@ -607,7 +607,7 @@ async fn quit(lightclient: &mut LightClient) -> Result<String, CommandError> {
+ 
+ async fn recovery_info(lightclient: &mut LightClient) -> Result<String, CommandError> {
+     match lightclient.wallet().read().await.recovery_info() {
+-        Some(backup_info) => Ok(backup_info.to_string()),
++        Some(backup_info) => Ok(backup_info.reveal()),
+         None => Err(CommandError::NotYetTyped(
+             "no mnemonic found. wallet loaded from key.".into(),
+         )),
+--- a/zingo-cli/src/lib.rs
++++ b/zingo-cli/src/lib.rs
+@@ -1483,7 +1483,7 @@ fn print_salvaged_recovery_info(
+         "The wallet file could not be fully loaded ({startup_error}); \
+          showing recovery info salvaged from its prefix."
+     );
+-    println!("{recovery_info}");
++    println!("{}", recovery_info.reveal());
+     Ok(())
+ }
+ 
+--- a/zingo-net-diag/src/lib.rs
++++ b/zingo-net-diag/src/lib.rs
+@@ -112,6 +112,12 @@ pub enum NetOpStage {
+     /// The remote target answered with an HTTP-level failure (a status, a
+     /// gRPC verdict, or an application rejection).
+     RemoteHttp,
++    /// The remote target answered that the operation's input is itself
++    /// invalid, whatever else happens (a transaction refused on its own
++    /// merits: a bad signature or proof, too low a fee, expired). Laurel
++    /// patch: unlike [`Self::RemoteHttp`], it proves the input was not
++    /// taken, so a wallet may free what it reserved for it.
++    RemoteRejected,
+     /// The target's response body was undecodable or structurally short.
+     PayloadDecode,
+     /// The operation exceeded its client-side bound.
+@@ -132,6 +138,7 @@ impl fmt::Display for NetOpStage {
+             NetOpStage::TunnelTransport => write!(f, "tunnel-transport"),
+             NetOpStage::RemoteTls => write!(f, "remote-tls"),
+             NetOpStage::RemoteHttp => write!(f, "remote-http"),
++            NetOpStage::RemoteRejected => write!(f, "remote-rejected"),
+             NetOpStage::PayloadDecode => write!(f, "payload-decode"),
+             NetOpStage::TimedOut { after_ms } => write!(f, "timed-out({after_ms}ms)"),
+         }
+@@ -236,6 +243,7 @@ mod tests {
+             (NetOpStage::TunnelTransport, "tunnel-transport"),
+             (NetOpStage::RemoteTls, "remote-tls"),
+             (NetOpStage::RemoteHttp, "remote-http"),
++            (NetOpStage::RemoteRejected, "remote-rejected"),
+             (NetOpStage::PayloadDecode, "payload-decode"),
+             (
+                 NetOpStage::TimedOut { after_ms: 25000 },
+--- a/zingolib/Cargo.toml
++++ b/zingolib/Cargo.toml
+@@ -14,6 +14,11 @@ default = []
+ # that wants the editorial layer opts in, and the default build proves core
+ # stands without it.
+ perspective = []
++# Laurel patch: removes the savers that write the wallet unencrypted
++# (save_task, flush, check_save_error, shutdown_save_task,
++# backup_wallet_file). An app that encrypts wallets itself turns this on so
++# any call to them fails to compile. See Laurel's docs/ENGINE.md.
++no-plaintext-save = []
+ nym = ["zingo-netutils/socks5-transmit", "zingo-price/socks5-fetch"]
+ testutils = [
+     "perspective",
+@@ -42,6 +47,7 @@ http.workspace = true
+ incrementalmerkletree = { workspace = true }
+ json = { workspace = true }
+ jubjub = { workspace = true }
++bls12_381 = { workspace = true }		# LAUREL PATCH (size): names the spend prover's anchor type (wallet/sapling_key.rs)
+ log = { workspace = true }
+ nonempty.workspace = true
+ orchard = { workspace = true }
+@@ -90,6 +96,7 @@ zingo-net-diag = { workspace = true, features = ["serde"] }
+ 
+ [build-dependencies]
+ zcash_proofs = { workspace = true, features = ["download-params"] }
++blake2b_simd = { workspace = true }		# LAUREL PATCH (integrity): build.rs checks the params it embeds
+ 
+ # The live mixnet harnesses drive nym-gated API, so they build only with
+ # the `nym` feature; every other test target stays auto-discovered.
+--- a/zingolib/build.rs
++++ b/zingolib/build.rs
+@@ -4,9 +4,17 @@
+ //!   `SAPLING_SPEND_PARAMS` and `SAPLING_OUTPUT_PARAMS`.
+ //! - Writes `git_description.txt` and `git_description.rs` into `OUT_DIR`
+ //!   and prints `cargo:rustc-env=ZINGOLIB_DESCRIPTOR`.
+-//! - Prints `cargo:rerun-if-changed` for this script, both parameter
+-//!   files, and the git state behind the descriptor; the package tree
+-//!   itself is never watched and never written.
++//! - Prints `cargo:rerun-if-changed` for this script and both parameter
++//!   files; the package tree itself is never watched and never written.
++//!
++//! LAUREL PATCH (size): only the output key is embedded in a build that
++//! ships; the spend key's path is handed over for the tests and testutils,
++//! which alone embed it (src/lib.rs), and the app fetches it when a payment
++//! first spends Sapling notes (src/wallet/sapling_key.rs).
++//! LAUREL PATCH (integrity): the cached output key is embedded only if it is
++//! the published one (`params_verified`).
++//! LAUREL PATCH (build speed): the git state behind the descriptor is not
++//! watched (`register_rerun_watches`).
+ 
+ #[path = "short_commit.rs"]
+ mod short_commit;
+@@ -19,49 +27,15 @@ const DESCRIPTOR_TEXT_FILE: &str = "git_description.txt";
+ const DESCRIPTOR_ENV: &str = "ZINGOLIB_DESCRIPTOR";
+ const DESCRIPTOR_SOURCE_FILE: &str = "git_description.rs";
+ 
+-/// - Prints `cargo:rerun-if-changed` for this script and the git state
+-///   behind the descriptor.
++/// - Prints `cargo:rerun-if-changed` for this script (the parameter files
++///   are watched as they are published).
+ fn register_rerun_watches() {
+     println!("cargo:rerun-if-changed={BUILD_SCRIPT}");
+-    // HEAD moves live in the worktree's own git dir. Branch refs and
+-    // packed refs live in the common dir, which differs from the git dir
+-    // in a linked worktree. The `_dirty` suffix reflects the tree at the
+-    // last rerun, because keeping it live would mean watching the whole
+-    // tree, and this watch set exists to end that every-run rebuild.
+-    if let Some(git_dir) = git_path_query("--git-dir") {
+-        println!("cargo:rerun-if-changed={}", git_dir.join("HEAD").display());
+-    }
+-    if let Some(common_dir) = git_path_query("--git-common-dir") {
+-        let packed_refs = common_dir.join("packed-refs");
+-        if packed_refs.exists() {
+-            println!("cargo:rerun-if-changed={}", packed_refs.display());
+-        }
+-        println!(
+-            "cargo:rerun-if-changed={}",
+-            common_dir.join("refs").display()
+-        );
+-    }
+-}
+-
+-/// A path from `git rev-parse <flag>`, or `None` outside a git
+-/// checkout (a published-crate build), where the git watches simply
+-/// don't apply.
+-fn git_path_query(flag: &str) -> Option<PathBuf> {
+-    let output = Command::new("git")
+-        .args(["rev-parse", flag])
+-        .output()
+-        .ok()?;
+-    if !output.status.success() {
+-        return None;
+-    }
+-    let path = String::from_utf8(output.stdout)
+-        .ok()?
+-        .trim_end()
+-        .to_string();
+-    if path.is_empty() {
+-        return None;
+-    }
+-    Some(PathBuf::from(path))
++    // LAUREL PATCH (build speed): the git state behind the descriptor is not
++    // watched. In Laurel's tree every commit moved HEAD, so each one reran
++    // this script, changed `git_description`, and rebuilt zingolib and
++    // everything above it: minutes per commit, for a string only zingo-cli
++    // prints. It is the state at the last rerun, as `--dirty` always was.
+ }
+ 
+ /// The trimmed stdout of a git command that succeeded with output, or `None`.
+@@ -124,12 +98,25 @@ fn git_description() -> Result<(), io::Error> {
+     )
+ }
+ 
++// SAPLING_SPEND_HASH, SAPLING_OUTPUT_HASH: one home, shared with the crate
++#[allow(dead_code)]
++mod params_hashes {
++    include!("src/params_hashes.rs");
++}
++use params_hashes::SAPLING_OUTPUT_HASH;
++
++/// Whether a file holds exactly the parameters with this BLAKE2b-512 hash.
++fn params_verified(path: &Path, hash: &str) -> bool {
++    std::fs::read(path).is_ok_and(|bytes| blake2b_simd::blake2b(&bytes).to_hex().as_str() == hash)
++}
++
+ /// - Downloads the Sapling parameters into the user's parameter cache
+ ///   when they are absent; a cached pair is reused without any network.
+ /// - Prints `cargo:rustc-env` and `cargo:rerun-if-changed` for each
+ ///   parameter file, so `include_bytes!` in the crate reads the cache
+ ///   directly and a vanished file reruns this script.
+-/// - Panics when the download fails.
++/// - Panics when the download fails, or when the output key is still not
++///   the published one after a fresh download.
+ fn get_zcash_params() {
+     println!("Checking if params are available...");
+ 
+@@ -146,6 +133,19 @@ fn get_zcash_params() {
+         }
+     };
+ 
++    // LAUREL PATCH (integrity): the cached output key is what the crate
++    // embeds, and zcash_proofs trusts a cached file for existing. Any other
++    // copy is removed and fetched again, a download zcash_proofs checks.
++    let params_path = if params_verified(&params_path.output, SAPLING_OUTPUT_HASH) {
++        params_path
++    } else {
++        println!("cargo:warning=zcash-params: the cached output key is not the published one; fetching it again");
++        std::fs::remove_file(&params_path.output).ok();
++        let again = zcash_proofs::download_sapling_parameters(Some(400)).expect("the output key downloads");
++        assert!(params_verified(&again.output, SAPLING_OUTPUT_HASH), "the downloaded output key is the published one");
++        again
++    };
++
+     publish_param_path("SAPLING_SPEND_PARAMS", &params_path.spend);
+     publish_param_path("SAPLING_OUTPUT_PARAMS", &params_path.output);
+ }
+--- a/zingolib/src/config.rs
++++ b/zingolib/src/config.rs
+@@ -17,7 +17,7 @@ use zingo_common_components::protocol::ActivationHeights;
+ use crate::wallet::{
+     WalletBase, WalletSettings,
+     error::{KeyError, WalletError},
+-    keys::unified::UnifiedKeyStore,
++    keys::{seed::WalletSeed, unified::UnifiedKeyStore},
+ };
+ 
+ /// Default wallet file name
+@@ -163,6 +163,17 @@ pub enum WalletConfig {
+         birthday: u32,
+         wallet_settings: WalletSettings,
+     },
++    /// Generate a wallet from a mnemonic phrase and the BIP-39 passphrase
++    /// (the "25th word") set with it. The passphrase is used exactly as
++    /// given: BIP-39 only normalizes it to NFKD, so case and spaces count.
++    /// An empty passphrase is the same wallet as [`Self::MnemonicPhrase`].
++    MnemonicPhraseWithPassphrase {
++        mnemonic_phrase: String,
++        passphrase: String,
++        no_of_accounts: NonZeroU32,
++        birthday: u32,
++        wallet_settings: WalletSettings,
++    },
+     /// Generate a wallet from an encoded unified full viewing key.
+     // TODO: take concrete UFVK type
+     Ufvk {
+@@ -177,6 +188,13 @@ pub enum WalletConfig {
+         birthday: u32,
+         wallet_settings: WalletSettings,
+     },
++    /// Generate a wallet with one account per unified spending key, in
++    /// order (zcashd's Sapling keys, Laurel's `laurel_engine::zcashd`).
++    Usks {
++        usks: Vec<Vec<u8>>,
++        birthday: u32,
++        wallet_settings: WalletSettings,
++    },
+     /// Read from wallet file.
+     Read,
+ }
+@@ -209,25 +227,39 @@ impl WalletConfig {
+                 .resolve(chain_type)
+             }
+             WalletConfig::MnemonicPhrase {
+-                mnemonic_phrase: mnemonic,
++                mnemonic_phrase,
++                no_of_accounts,
++                birthday,
++                wallet_settings,
++            } => WalletConfig::MnemonicPhraseWithPassphrase {
++                mnemonic_phrase,
++                passphrase: String::new(),
++                no_of_accounts,
++                birthday,
++                wallet_settings,
++            }
++            .resolve(chain_type),
++            WalletConfig::MnemonicPhraseWithPassphrase {
++                mnemonic_phrase,
++                passphrase,
+                 no_of_accounts,
+                 birthday,
+                 wallet_settings,
+             } => {
+-                let mnemonic = Mnemonic::from_phrase(mnemonic)?;
++                let seed = WalletSeed::new(Mnemonic::from_phrase(mnemonic_phrase)?, passphrase);
+                 let no_of_accounts = u32::from(no_of_accounts);
+                 let unified_key_store = (0..no_of_accounts)
+                     .map(|account_index| {
+                         let account_id = zip32::AccountId::try_from(account_index)?;
+                         Ok((
+                             account_id,
+-                            UnifiedKeyStore::new_from_mnemonic(chain_type, &mnemonic, account_id)?,
++                            UnifiedKeyStore::new_from_mnemonic(chain_type, &seed, account_id)?,
+                         ))
+                     })
+                     .collect::<Result<BTreeMap<_, _>, KeyError>>()?;
+                 Ok(WalletBase {
+                     unified_key_store,
+-                    mnemonic: Some(mnemonic),
++                    seed: Some(seed),
+                     birthday: BlockHeight::from_u32(birthday),
+                     wallet_settings,
+                 })
+@@ -244,7 +276,7 @@ impl WalletConfig {
+                 );
+                 Ok(WalletBase {
+                     unified_key_store,
+-                    mnemonic: None,
++                    seed: None,
+                     birthday: BlockHeight::from_u32(birthday),
+                     wallet_settings,
+                 })
+@@ -253,15 +285,34 @@ impl WalletConfig {
+                 usk,
+                 birthday,
+                 wallet_settings,
++            } => WalletConfig::Usks {
++                usks: vec![usk],
++                birthday,
++                wallet_settings,
++            }
++            .resolve(chain_type),
++            WalletConfig::Usks {
++                usks,
++                birthday,
++                wallet_settings,
+             } => {
+-                let mut unified_key_store = BTreeMap::new();
+-                unified_key_store.insert(
+-                    zip32::AccountId::ZERO,
+-                    UnifiedKeyStore::new_from_usk(usk.as_slice())?,
+-                );
++                if usks.is_empty() {
++                    return Err(KeyError::NoAccountKeys.into());
++                }
++                let unified_key_store = usks
++                    .iter()
++                    .enumerate()
++                    .map(|(i, usk)| {
++                        let account_id = u32::try_from(i)
++                            .ok()
++                            .and_then(|i| zip32::AccountId::try_from(i).ok())
++                            .ok_or(KeyError::NoAccountKeys)?;
++                        Ok((account_id, UnifiedKeyStore::new_from_usk(usk.as_slice())?))
++                    })
++                    .collect::<Result<BTreeMap<_, _>, KeyError>>()?;
+                 Ok(WalletBase {
+                     unified_key_store,
+-                    mnemonic: None,
++                    seed: None,
+                     birthday: BlockHeight::from_u32(birthday),
+                     wallet_settings,
+                 })
+--- a/zingolib/src/lib.rs
++++ b/zingolib/src/lib.rs
+@@ -6,6 +6,7 @@
+ use crate::config::ChainType;
+ 
+ pub mod config;
++mod params_hashes;		// LAUREL PATCH (integrity): the published params' hashes (build.rs shares them)
+ pub mod connectivity;
+ pub mod data;
+ pub mod destination;
+@@ -31,9 +32,14 @@ pub use zingo_netutils::ensure_default_crypto_provider;
+ // This line includes the generated `git_description()` function directly into this scope.
+ include!(concat!(env!("OUT_DIR"), "/git_description.rs"));
+ 
++/// Embedded zcash-params. LAUREL PATCH (size): a build that ships embeds
++/// the output key only; the spend key is fetched when a payment first spends
++/// Sapling notes (wallet/sapling_key.rs). The tests and testutils, whose
++/// mock chain proves spends without a fetch, embed it as upstream does.
+ pub struct SaplingParams;
+ 
+ impl SaplingParams {
++    #[cfg(any(test, feature = "testutils"))]
+     pub const SPEND: &'static [u8] = include_bytes!(env!("SAPLING_SPEND_PARAMS"));
+     pub const OUTPUT: &'static [u8] = include_bytes!(env!("SAPLING_OUTPUT_PARAMS"));
+ }
+--- a/zingolib/src/lightclient.rs
++++ b/zingolib/src/lightclient.rs
+@@ -13,7 +13,6 @@ use std::{
+ use json::JsonValue;
+ use tokio::{sync::RwLock, task::JoinHandle};
+ 
+-use bip0039::Mnemonic;
+ use zcash_keys::address::UnifiedAddress;
+ use zcash_protocol::consensus::BlockHeight;
+ use zcash_transparent::address::TransparentAddress;
+@@ -26,6 +25,8 @@ use pepper_sync::{
+ };
+ use zingo_netutils::Indexer as _;
+ 
++// Laurel patch: `now` and `save_handle` are only used by the plaintext savers
++#[cfg_attr(feature = "no-plaintext-save", allow(unused_imports))]
+ use crate::{
+     config::{ChainType, ClientConfig, WalletConfig},
+     data::ServerInfo,
+@@ -34,6 +35,7 @@ use crate::{
+         LightWallet, RecoveryInfo, WalletSettings,
+         balance::AccountBalance,
+         error::{BalanceError, KeyError, SummaryError, WalletError},
++        keys::seed::WalletSeed,
+         keys::unified::{ReceiverSelection, UnifiedAddressId},
+         summary::data::TransactionSummaries,
+     },
+@@ -71,8 +73,8 @@ struct WalletMeta {
+     chain_type: ChainType,
+     /// The wallet birthday height.
+     birthday: BlockHeight,
+-    /// The mnemonic seed phrase, if this is a spending wallet.
+-    mnemonic: Option<Mnemonic>,
++    /// The mnemonic and its passphrase, if this is a spending wallet.
++    seed: Option<WalletSeed>,
+     /// The locked mutable wallet state.
+     wallet_data: Arc<RwLock<LightWallet>>,
+ }
+@@ -83,7 +85,7 @@ impl std::fmt::Debug for WalletMeta {
+             .field("wallet_path", &self.wallet_path)
+             .field("chain_type", &self.chain_type)
+             .field("birthday", &self.birthday)
+-            .field("mnemonic", &self.mnemonic)
++            .field("seed", &self.seed)
+             .finish()
+     }
+ }
+@@ -96,7 +98,7 @@ impl WalletMeta {
+             wallet_path,
+             chain_type: wallet.chain_type(),
+             birthday: wallet.birthday(),
+-            mnemonic: wallet.mnemonic().cloned(),
++            seed: wallet.seed().cloned(),
+             wallet_data: Arc::new(RwLock::new(wallet)),
+         }
+     }
+@@ -155,6 +157,7 @@ pub struct LightClient {
+     /// The receiving end of the sync engine's progress channel, answering status queries without the wallet lock.
+     sync_progress: tokio::sync::watch::Receiver<Option<SyncStatus>>,
+     save_active: Arc<AtomicBool>,
++    #[cfg_attr(feature = "no-plaintext-save", allow(dead_code))]
+     save_handle: Option<JoinHandle<std::io::Result<()>>>,
+     /// Held while a stored proposal is pending, so the wallet state the
+     /// proposal selected against cannot shift before the send builds it.
+@@ -560,9 +563,9 @@ impl LightClient {
+     /// Returns the wallet's mnemonic phrase as a string.
+     pub fn mnemonic_phrase(&self) -> Option<String> {
+         self.wallet
+-            .mnemonic
++            .seed
+             .as_ref()
+-            .map(|m| m.phrase().to_string())
++            .map(|s| s.mnemonic().phrase().to_string())
+     }
+ 
+     /// Returns full path to wallet file.
+@@ -604,6 +607,15 @@ impl LightClient {
+         Ok(())
+     }
+ 
++    /// Laurel patch: installs an indexer connection made elsewhere. Lets an
++    /// application open wallets offline and connect them later without
++    /// holding the client (and its locks) for the length of a connection
++    /// attempt, which can take the full connect timeout when the network
++    /// is down.
++    pub fn set_indexer(&mut self, indexer: zingo_netutils::GrpcIndexer) {
++        self.indexer = Some(indexer);
++    }
++
+     /// - Offline tears every network capability down, as [`Self::go_offline`] does.
+     /// - Default and Named replace the session's indexer connection.
+     pub async fn choose_indexer(
+@@ -755,6 +767,7 @@ impl LightClient {
+         wallet.mark_dirty();
+     }
+ 
++    #[cfg(not(feature = "no-plaintext-save"))]
+     /// Creates a backup file of the current wallet file in the wallet directory.
+     pub fn backup_wallet_file(&self) -> Result<(), LightClientError> {
+         let backup_time = now();
+--- a/zingolib/src/lightclient/error.rs
++++ b/zingolib/src/lightclient/error.rs
+@@ -196,11 +196,32 @@ pub enum SendError {
+     },
+ }
+ 
++/// Whether a failed transmission was refused or never answered: a
++/// refusal is about the transaction, no answer is about the connection,
++/// and the two send a person to fix different things.
++#[derive(Clone, Copy, Debug, PartialEq, Eq)]
++pub enum TransmitVerdict {
++    /// At least one server answered, and said no.
++    Refused,
++    /// No server answered: every attempt failed before a reply.
++    Unreachable,
++    /// Laurel patch: an attempt may have delivered it (a timeout, a broken
++    /// stream, an answer that isn't a verdict on the transaction itself).
++    /// The transaction stays Calculated, to be sent again or to expire;
++    /// sending a new one instead could pay twice.
++    Unsure,
++}
++
+ #[derive(Debug, thiserror::Error)]
+ pub enum TransmissionError {
+     /// Transmission failed.
+-    #[error("Transmission failed. {0}")]
+-    TransmissionFailed(String),
++    #[error("Transmission failed. {text}")]
++    TransmissionFailed {
++        /// Every attempt's failure, as prose.
++        text: String,
++        /// Refused or unreachable, decided from the attempts' stages.
++        verdict: TransmitVerdict,
++    },
+     /// Transaction to transmit does not have `Calculated` status: {0}
+     #[error("Transaction to transmit does not have `Calculated` status: {0}")]
+     IncorrectTransactionStatus(TxId),
+--- a/zingolib/src/lightclient/indexer_history.rs
++++ b/zingolib/src/lightclient/indexer_history.rs
+@@ -36,9 +36,12 @@ pub(crate) fn fault_domain(stage: &zingo_net_diag::NetOpStage) -> FaultDomain {
+         | NetOpStage::LocalProxyConnect
+         | NetOpStage::SocksHandshake
+         | NetOpStage::TunnelTransport => FaultDomain::Tunnel,
+-        NetOpStage::RemoteTls | NetOpStage::RemoteHttp | NetOpStage::PayloadDecode => {
+-            FaultDomain::Destination
+-        }
++        // LAUREL PATCH: a server's refusal of the transaction itself is its own
++        // stage (zingo-net-diag), still the remote end's doing
++        NetOpStage::RemoteTls
++        | NetOpStage::RemoteHttp
++        | NetOpStage::RemoteRejected
++        | NetOpStage::PayloadDecode => FaultDomain::Destination,
+         _ => FaultDomain::Unknown,
+     }
+ }
+--- a/zingolib/src/lightclient/migrate.rs
++++ b/zingolib/src/lightclient/migrate.rs
+@@ -873,7 +873,11 @@ impl LightClient {
+             .await;
+         drop(sync);
+         if let Err(e) = transmitted {
+-            self.fail_unsent_transactions(&txids).await;
++            // Laurel patch: one that may have gone out keeps every part
++            // behind it Calculated too, to be sent again or to expire
++            if !crate::lightclient::send::may_have_delivered(&e) {
++                self.fail_unsent_transactions(&txids).await;
++            }
+             return Err(e);
+         }
+ 
+@@ -1963,8 +1967,12 @@ impl LightClient {
+             // `transmit_transactions` marks the transaction that failed, but
+             // the ones queued behind it stay `Calculated`: their notes would
+             // remain spent by transactions that will never reach the network.
+-            // Fail them so the next pass re-plans them.
+-            self.fail_unsent_transactions(&txids).await;
++            // Fail them so the next pass re-plans them. Laurel patch: not when
++            // the one that failed may have gone out: it and those behind it
++            // stay Calculated, to be sent again or to expire
++            if !crate::lightclient::send::may_have_delivered(&e) {
++                self.fail_unsent_transactions(&txids).await;
++            }
+             return Err(e);
+         }
+ 
+--- a/zingolib/src/lightclient/mock_chain_tests.rs
++++ b/zingolib/src/lightclient/mock_chain_tests.rs
+@@ -1072,6 +1072,72 @@ async fn send_survives_lost_response_and_duplicate_rejection() {
+     check_client_balances!(recipient, i: 70_000 o: 0 s: 0 t: 0);
+ }
+ 
++/// Laurel patch: a payment the network dropped after taking it (a node
++/// restart, an eviction) goes out again from `rebroadcast_pending`, its
++/// same bytes, and confirms once. One that can't be sent again first in
++/// the list (here one already mined, refused by its status) doesn't keep
++/// it from going: each is tried on its own.
++#[tokio::test]
++async fn a_dropped_payment_is_rebroadcast_past_one_that_fails() {
++    use nonempty::NonEmpty;
++    use zingo_status::confirmation_status::ConfirmationStatus;
++
++    let mut net = MockNet::launch().await;
++    let mut sender = net
++        .client(zingo_test_vectors::seeds::HOSPITAL_MUSEUM_SEED, None)
++        .await;
++    sender.set_transmit_retry_interval(std::time::Duration::ZERO);
++    let sender_ua = get_base_address(&sender, PoolType::Shielded(ShieldedPool::Orchard)).await;
++    net.chain.write().await.mine_empty_blocks(1);
++    fund(&net, vec![(&sender_ua, 100_000, None)], 1).await;
++    sender.sync_and_await().await.unwrap();
++    let mined = sender
++        .wallet()
++        .read()
++        .await
++        .wallet_transactions
++        .values()
++        .find(|t| matches!(t.status(), ConfirmationStatus::Confirmed(_)))
++        .unwrap()
++        .txid();
++
++    let sent = from_inputs::quick_send(
++        &mut sender,
++        vec![(&synthetic_wallet::external_address(PoolType::ORCHARD), 20_000, None)],
++    )
++    .await
++    .unwrap();
++    assert_eq!(net.chain.read().await.mempool_len(), 1);
++    net.chain.write().await.drop_mempool();
++
++    let results = sender
++        .rebroadcast_pending(NonEmpty::from((mined, vec![sent.head])))
++        .await;
++    assert_eq!(net.chain.read().await.mempool_len(), 1, "sent again past the one that failed");
++    assert!(results[0].1.is_err(), "the mined one is refused by its status");
++    assert!(results[1].1.is_ok());
++    assert!(matches!(
++        status_of_txid(&sender, &sent.head).await,
++        ConfirmationStatus::Transmitted(_) | ConfirmationStatus::Mempool(_)
++    ), "its status is left to sync");
++
++    // sent again while still held: a duplicate, which is delivered
++    let again = sender.rebroadcast_pending(NonEmpty::new(sent.head)).await;
++    assert!(again[0].1.is_ok(), "a duplicate counts as delivered");
++    assert_eq!(net.chain.read().await.mempool_len(), 1);
++
++    net.chain.write().await.mine_mempool();
++    sender.sync_and_await().await.unwrap();
++    check_client_balances!(sender, i: 70_000 o: 0 s: 0 t: 0);
++}
++
++async fn status_of_txid(
++    client: &crate::lightclient::LightClient,
++    txid: &zcash_protocol::TxId,
++) -> zingo_status::confirmation_status::ConfirmationStatus {
++    client.wallet().read().await.wallet_transactions.get(txid).unwrap().status()
++}
++
+ /// Twin of [`send_survives_lost_response_and_duplicate_rejection`] for
+ /// the validator's earlier phase: the lost-response submission is
+ /// still in the download/verification queue when the retry arrives, so
+@@ -1196,8 +1262,8 @@ async fn failed_split_round_transmit_strands_calculated_transactions() {
+     // Arm the deterministic transmit failure: the first send's response is
+     // lost while the bytes sit in the validator's download queue, and the
+     // queue never promotes, so every duplicate probe is rejected until the
+-    // wallet's probe budget is exhausted and it marks that transaction
+-    // Failed and errors out of transmit_transactions.
++    // wallet's probe budget is exhausted and it errors out of
++    // transmit_transactions, unsure (Laurel patch: upstream marked it Failed).
+     {
+         let mut chain = net.chain.write().await;
+         chain.lose_next_send_response = Some(LostSendDestination::DownloadQueue);
+@@ -1209,6 +1275,13 @@ async fn failed_split_round_transmit_strands_calculated_transactions() {
+         .await
+         .expect_err("the first split transaction's transmit fails");
+     eprintln!("migrate_to_ironwood returned: {err:?}");
++    // Laurel patch: the bytes sit in the validator's queue, so the failure is
++    // unsure, and nothing of the round may be failed: freed notes would let a
++    // replan spend them again while this round may still confirm
++    assert!(
++        crate::lightclient::send::may_have_delivered(&err),
++        "a lost answer for bytes in the queue is unsure: {err:?}"
++    );
+ 
+     // Diagnostics and precondition: the round must have reached the
+     // transmit stage (exactly one transaction Failed there).
+@@ -1237,21 +1310,17 @@ async fn failed_split_round_transmit_strands_calculated_transactions() {
+             _ => (),
+         }
+     }
++    // Laurel patch: the round stays Calculated, every part of it, its notes
++    // reserved, to be sent again (the same bytes) or to expire; none Failed.
++    // Upstream failed them all, the one in the queue too
+     assert!(
+-        !failed.is_empty(),
+-        "precondition: the transmit stage must have failed the first split \
+-         transaction (otherwise this test failed before transmit)"
++        failed.is_empty(),
++        "an unsure round failed {} transaction(s), freeing their notes: {failed:?}",
++        failed.len()
+     );
+-
+-    // The invariant the immediate migration path enforces (fail_unsent_transactions) and
+-    // the split path must too: after a failed round, nothing may remain
+-    // Calculated. Its notes would stay spent by transactions that will
+-    // never transmit, and a replan silently excludes them.
+     assert!(
+-        calculated.is_empty(),
+-        "a failed note-split round stranded {} transaction(s) in Calculated \
+-         with their input notes marked spent: {calculated:?}",
+-        calculated.len()
++        !calculated.is_empty(),
++        "precondition: the round reached its transmit stage"
+     );
+ }
+ 
+@@ -2407,7 +2476,10 @@ async fn migrate_to_ironwood_returns_under_continuous_sync() {
+         wallet
+             .wallet_transactions
+             .values()
+-            .any(|tx| matches!(tx.status(), ConfirmationStatus::Failed(_))),
++            // Laurel patch: a transmit that may have delivered keeps its
++            // round Calculated (it was Failed), so that is what reaching the
++            // transmit stage leaves
++            .any(|tx| matches!(tx.status(), ConfirmationStatus::Calculated(_))),
+         "the round reached its transmit stage, so its sync returned"
+     );
+     assert!(!wallet.wallet_settings.sync_config.shutdown_on_completion);
+@@ -3185,6 +3257,8 @@ mod strict_chain {
+             .await
+             .unwrap_err();
+         assert!(format!("{err:?}").contains("expired"), "{err:?}");
++        // Laurel patch: the answer is one node's; sync past its expiry fails it
++        sender.sync_and_await().await.unwrap();
+         let wallet = sender.wallet().read().await;
+         assert!(matches!(
+             wallet
+@@ -3425,6 +3499,13 @@ mod strict_chain {
+             .transmit_calculated(calculated.clone())
+             .await
+             .unwrap_err();
++        // Laurel patch: "expired" is one node's answer, not proof: the
++        // transaction stays until sync passes its expiry, then fails
++        assert!(matches!(
++            status_of(sender, &calculated[0]).await,
++            ConfirmationStatus::Calculated(_)
++        ));
++        sender.sync_and_await().await.unwrap();
+         assert!(matches!(
+             status_of(sender, &calculated[0]).await,
+             ConfirmationStatus::Failed(_)
+@@ -3451,6 +3532,17 @@ mod strict_chain {
+         calculated
+     }
+ 
++    // Laurel patch: a server's verdict on the transaction itself, the one
++    // refusal that frees its notes (transmit::invalid_on_its_own)
++    fn inject_send_refusals(chain: &mut crate::testutils::mock_indexer::MockChain, count: usize) {
++        for _ in 0..count {
++            chain.faults.inject(
++                Rpc::SendTransaction,
++                Fault::Fail(Code::Unknown, "16: bad-txns-sapling-bundle-invalid".to_string()),
++            );
++        }
++    }
++
+     fn inject_send_failures(chain: &mut crate::testutils::mock_indexer::MockChain, count: usize) {
+         for _ in 0..count {
+             chain.faults.inject(
+@@ -3460,8 +3552,11 @@ mod strict_chain {
+         }
+     }
+ 
++    // Laurel patch (security review A-03): the server took it and the answer
++    // was lost. The coins stay reserved, not freed: a new payment from them
++    // would be the second of two. It confirms once mined
+     #[tokio::test]
+-    async fn accepted_send_marked_failed_is_confirmed_after_mining() {
++    async fn accepted_send_whose_answer_was_lost_keeps_its_coins() {
+         let mut net = MockNet::launch().await;
+         let mut sender = funded_sender(&mut net).await;
+         let calculated = calculated_send(&mut sender).await;
+@@ -3480,10 +3575,10 @@ mod strict_chain {
+             .unwrap_err();
+         assert!(matches!(
+             status_of(&sender, &calculated[0]).await,
+-            ConfirmationStatus::Failed(_)
++            ConfirmationStatus::Calculated(_)
+         ));
+         assert_eq!(net.chain.read().await.mempool_len(), 1);
+-        assert!(ironwood_notes_unspent(&*sender.wallet().read().await));
++        assert!(!ironwood_notes_unspent(&*sender.wallet().read().await));
+ 
+         net.chain.write().await.mine_mempool();
+         sender.sync_and_await().await.unwrap();
+@@ -3524,8 +3619,42 @@ mod strict_chain {
+         check_client_balances!(sender, i: expected o: 0 s: 0 t: 0);
+     }
+ 
++    // Laurel patch: one that never got out but stays Calculated (an outage)
++    // isn't held forever: past its expiry height, sync fails it and its coins
++    // are free again (pepper-sync's expire_transactions)
++    #[tokio::test]
++    async fn an_unsure_send_that_never_got_out_frees_its_coins_at_expiry() {
++        let mut net = MockNet::launch().await;
++        let mut sender = funded_sender(&mut net).await;
++        let calculated = calculated_send(&mut sender).await;
++        inject_send_failures(&mut *net.chain.write().await, QUEUED_REJECTIONS);
++        sender
++            .transmit_calculated(calculated.clone())
++            .await
++            .unwrap_err();
++        assert!(matches!(
++            status_of(&sender, &calculated[0]).await,
++            ConfirmationStatus::Calculated(_)
++        ));
++        assert!(!ironwood_notes_unspent(&*sender.wallet().read().await));
++        assert_eq!(net.chain.read().await.mempool_len(), 0);
++
++        let expiry = expiry_of(&sender, &calculated[0]).await;
++        {
++            let mut chain = net.chain.write().await;
++            let tip = chain.tip();
++            chain.mine_empty_blocks(u32::from(expiry) - tip);
++        }
++        sender.sync_and_await().await.unwrap();
++        assert!(matches!(
++            status_of(&sender, &calculated[0]).await,
++            ConfirmationStatus::Failed(_)
++        ));
++        assert!(ironwood_notes_unspent(&*sender.wallet().read().await));
++    }
++
+     #[tokio::test]
+-    async fn later_step_rejected_leaves_earlier_step_transmitted() {
++    async fn later_step_unreachable_stays_calculated_and_earlier_step_transmitted() {
+         let mut net = MockNet::launch().await;
+         let mut sender = funded_sender(&mut net).await;
+         let calculated = calculated_tex_send(&mut sender).await;
+@@ -3547,7 +3676,7 @@ mod strict_chain {
+         ));
+         assert!(matches!(
+             status_of(&sender, &calculated[1]).await,
+-            ConfirmationStatus::Failed(_)
++            ConfirmationStatus::Calculated(_)
+         ));
+         assert_eq!(net.chain.read().await.mempool_len(), 1);
+ 
+@@ -3559,7 +3688,7 @@ mod strict_chain {
+         ));
+         assert!(matches!(
+             status_of(&sender, &calculated[1]).await,
+-            ConfirmationStatus::Failed(_)
++            ConfirmationStatus::Calculated(_)
+         ));
+         let balance = sender
+             .account_balance(zip32::AccountId::ZERO)
+@@ -3569,7 +3698,9 @@ mod strict_chain {
+     }
+ 
+     async fn failed_first_step_via_quick_send(net: &MockNet, sender: &mut LightClient) {
+-        inject_send_failures(&mut *net.chain.write().await, QUEUED_REJECTIONS);
++        // Laurel patch: a refusal of the transaction itself; an outage may have
++        // delivered it, and keeps it Calculated (later_step_unreachable_...)
++        inject_send_refusals(&mut *net.chain.write().await, QUEUED_REJECTIONS);
+         sender
+             .quick_send(tex_request(), zip32::AccountId::ZERO, true)
+             .await
+@@ -3659,7 +3790,7 @@ mod strict_chain {
+             refund_address_ids(&*sender.wallet().read().await, zip32::AccountId::ZERO);
+         assert_eq!(first_account_refunds_before.len(), 1);
+ 
+-        inject_send_failures(&mut *net.chain.write().await, QUEUED_REJECTIONS);
++        inject_send_refusals(&mut *net.chain.write().await, QUEUED_REJECTIONS);
+         sender
+             .quick_send(tex_request(), other_account, true)
+             .await
+@@ -3704,7 +3835,7 @@ mod strict_chain {
+         let mut sender = funded_sender(&mut net).await;
+         let refund_addresses_before = refund_address_count(&*sender.wallet().read().await);
+         let calculated = calculated_tex_send(&mut sender).await;
+-        inject_send_failures(&mut *net.chain.write().await, QUEUED_REJECTIONS);
++        inject_send_refusals(&mut *net.chain.write().await, QUEUED_REJECTIONS);
+         sender
+             .transmit_calculated(calculated.clone())
+             .await
+@@ -3790,9 +3921,11 @@ mod strict_chain {
+             QUEUED_REJECTIONS - net.chain.read().await.faults.pending(Rpc::SendTransaction);
+         assert!(attempts > 0);
+         assert_eq!(attempts % RETRIES_BEFORE_DELIVERY_CHECK, 0);
++        // Laurel patch: an "expired" answer for a transaction that isn't is no
++        // proof it went nowhere: it stays Calculated, to be sent again or to expire
+         assert!(matches!(
+             status_of(&sender, &calculated[0]).await,
+-            ConfirmationStatus::Failed(_)
++            ConfirmationStatus::Calculated(_)
+         ));
+     }
+ 
+@@ -4022,6 +4155,7 @@ mod strict_chain {
+             .transmit_calculated(calculated.clone())
+             .await
+             .unwrap_err();
++        shielder.sync_and_await().await.unwrap();		// Laurel patch: expired by sync, not by the answer
+ 
+         let failed = summary_of(&shielder, &calculated[0]).await;
+         assert!(matches!(failed.status, ConfirmationStatus::Failed(_)));
+--- a/zingolib/src/lightclient/propose.rs
++++ b/zingolib/src/lightclient/propose.rs
+@@ -56,10 +56,22 @@ impl LightClient {
+         &mut self,
+         request: TransactionRequest,
+         account_id: zip32::AccountId,
++    ) -> Result<ProportionalFeeProposal, ProposeSendError> {
++        self.propose_send_from(request, account_id, None).await
++    }
++
++    /// LAUREL PATCH (spend pool): [`Self::propose_send`], spending only notes
++    /// of `pool` (`None`: any pool, as `propose_send`).
++    pub async fn propose_send_from(
++        &mut self,
++        request: TransactionRequest,
++        account_id: zip32::AccountId,
++        pool: Option<zcash_protocol::PoolType>,
+     ) -> Result<ProportionalFeeProposal, ProposeSendError> {
+         let minted = self.hold_proposal_pause();
+         let result = {
+             let mut wallet = self.wallet().write().await;
++            let _only = crate::wallet::output::SpendPoolScope::only(pool);
+             wallet
+                 .create_send_proposal(request, account_id)
+                 .inspect(|proposal| {
+@@ -85,10 +97,23 @@ impl LightClient {
+         address: ZcashAddress,
+         memo: Option<zcash_protocol::memo::MemoBytes>,
+         account_id: zip32::AccountId,
++    ) -> Result<ProportionalFeeProposal, ProposeSendError> {
++        self.propose_send_all_from(address, memo, account_id, None).await
++    }
++
++    /// LAUREL PATCH (spend pool): [`Self::propose_send_all`], sending
++    /// everything in `pool` only (`None`: every shielded pool).
++    pub async fn propose_send_all_from(
++        &mut self,
++        address: ZcashAddress,
++        memo: Option<zcash_protocol::memo::MemoBytes>,
++        account_id: zip32::AccountId,
++        pool: Option<zcash_protocol::PoolType>,
+     ) -> Result<ProportionalFeeProposal, ProposeSendError> {
+         let minted = self.hold_proposal_pause();
+         let result = {
+             let mut wallet = self.wallet().write().await;
++            let _only = crate::wallet::output::SpendPoolScope::only(pool);
+             wallet
+                 .create_send_all_proposal(address, memo, account_id)
+                 .inspect(|proposal| {
+--- a/zingolib/src/lightclient/save.rs
++++ b/zingolib/src/lightclient/save.rs
+@@ -1,11 +1,15 @@
+ //! Wallet persistence for [`crate::lightclient::LightClient`].
+ 
++#[cfg(not(feature = "no-plaintext-save"))]
+ use futures::FutureExt as _;
+ use log::error;
+ 
+-use std::{borrow::BorrowMut as _, fs::remove_file, sync::atomic};
++#[cfg(not(feature = "no-plaintext-save"))]
++use std::{borrow::BorrowMut as _, sync::atomic};
++use std::fs::remove_file;
+ 
+ use super::LightClient;
++#[cfg(not(feature = "no-plaintext-save"))]
+ use crate::data::PollReport;
+ 
+ /// The outcome of a save-task shutdown request, distinguishing a stopped task from an absent one.
+@@ -17,6 +21,7 @@ pub enum SaveShutdown {
+     NotRunning,
+ }
+ 
++#[cfg(not(feature = "no-plaintext-save"))]
+ /// Writes `bytes` to file at `wallet_path` using a blocking thread.
+ ///
+ /// The write is atomic: bytes go to a `.tmp` sibling file first, then renamed into place.
+@@ -57,6 +62,7 @@ async fn write_to_path(wallet_path: &std::path::Path, bytes: &[u8]) -> std::io::
+     .map_err(std::io::Error::other)?
+ }
+ impl LightClient {
++    #[cfg(not(feature = "no-plaintext-save"))]
+     /// Launches a task for saving the wallet data to persistance when the wallet's `save_required` flag is set.
+     pub async fn save_task(&mut self) {
+         if self.save_active.load(atomic::Ordering::Acquire) {
+@@ -97,6 +103,7 @@ impl LightClient {
+         }
+     }
+ 
++    #[cfg(not(feature = "no-plaintext-save"))]
+     /// Polls the save task, returning [`self::PollReport`].
+     fn poll_save_task(&mut self) -> PollReport<(), std::io::Error> {
+         if let Some(mut save_handle) = self.save_handle.take() {
+@@ -111,6 +118,7 @@ impl LightClient {
+         }
+     }
+ 
++    #[cfg(not(feature = "no-plaintext-save"))]
+     /// Checks the save task handle in case of failure.
+     /// On save task failure, restarts the save task and returns the error.
+     pub async fn check_save_error(&mut self) -> std::io::Result<()> {
+@@ -129,6 +137,7 @@ impl LightClient {
+         }
+     }
+ 
++    #[cfg(not(feature = "no-plaintext-save"))]
+     /// Stops the save task after its in-flight save completes, reporting whether a task was running at all.
+     pub async fn shutdown_save_task(&mut self) -> std::io::Result<SaveShutdown> {
+         self.save_active.store(false, atomic::Ordering::Release);
+@@ -141,6 +150,7 @@ impl LightClient {
+         }
+     }
+ 
++    #[cfg(not(feature = "no-plaintext-save"))]
+     /// Immediately serialises and writes the wallet to disk if `save_required` is set.
+     ///
+     /// Unlike [`Self::save_task`], this is synchronous and does not start a background loop.
+--- a/zingolib/src/lightclient/send.rs
++++ b/zingolib/src/lightclient/send.rs
+@@ -56,6 +56,53 @@ fn record_send_attempt(
+ pub(crate) struct TransmitError {
+     host: String,
+     failure: zingo_net_diag::NetOpFailure,
++    /// Laurel patch (W1-09): an attempt before the last may have delivered it
++    may_have_delivered: bool,
++}
++
++impl TransmitError {
++    /// Laurel patch: whether the failure proves no copy of the transaction
++    /// went anywhere, so its notes may be freed. Every attempt either never
++    /// sent the bytes (it failed before or at the secure channel) or was
++    /// refused on the transaction's own merits. A timeout, a broken stream
++    /// or any other answer may hide a delivery: a retry with freed notes
++    /// could then pay twice, so the transaction stays Calculated, to be sent
++    /// again or to expire.
++    pub(crate) fn proves_unsent(&self) -> bool {
++        !self.may_have_delivered && Self::never_sent(&self.failure.stage)
++    }
++
++    /// Whether an attempt that failed at this stage never sent the bytes, or
++    /// was refused on the transaction's own merits.
++    fn never_sent(stage: &zingo_net_diag::NetOpStage) -> bool {
++        use zingo_net_diag::NetOpStage;
++
++        matches!(
++            stage,
++            NetOpStage::ProxyLaunch
++                | NetOpStage::RouteResolution
++                | NetOpStage::RemoteConnect
++                | NetOpStage::LocalProxyConnect
++                | NetOpStage::SocksHandshake
++                | NetOpStage::RemoteTls
++                | NetOpStage::RemoteRejected
++        )
++    }
++
++    /// Unsure unless the failure proves nothing went out; then refused when
++    /// a server refused the transaction itself, else unreachable.
++    pub(crate) fn verdict(&self) -> crate::lightclient::error::TransmitVerdict {
++        use crate::lightclient::error::TransmitVerdict;
++
++        if !self.proves_unsent() {
++            return TransmitVerdict::Unsure;
++        }
++        if self.failure.stage == zingo_net_diag::NetOpStage::RemoteRejected {
++            TransmitVerdict::Refused
++        } else {
++            TransmitVerdict::Unreachable
++        }
++    }
+ }
+ 
+ use crate::lightclient::{DEFAULT_REQUEST_TIMEOUT, LightClient};
+@@ -169,11 +216,14 @@ impl NakednetTarget {
+         status: &zingo_netutils::Status,
+         host: &crate::destination::Host,
+     ) -> zingo_net_diag::NetOpFailure {
+-        zingo_net_diag::NetOpFailure::from_error(
+-            zingo_net_diag::NetOpStage::RemoteHttp,
+-            host,
+-            status,
+-        )
++        // Laurel patch: a verdict on the transaction itself is typed apart
++        // from every other answer, so only it can free the notes
++        let stage = if crate::lightclient::transmit::SubmitFailure::refuses_itself(status) {
++            zingo_net_diag::NetOpStage::RemoteRejected
++        } else {
++            zingo_net_diag::NetOpStage::RemoteHttp
++        };
++        zingo_net_diag::NetOpFailure::from_error(stage, host, status)
+     }
+ }
+ 
+@@ -380,7 +430,28 @@ where
+         |event| context.progress.set(format!("destination {host}: {event}")),
+     )
+     .await
+-    .map_err(|TransmitFailed(failure)| describe_failure(&failure, host));
++    .map_err(|TransmitFailed(failure, every_refused, earlier)| {
++        // Laurel patch: an earlier attempt that may have delivered it
++        // outweighs a later refusal
++        let mut described = describe_failure(&failure, host);
++        if !every_refused && described.stage == zingo_net_diag::NetOpStage::RemoteRejected {
++            described.stage = zingo_net_diag::NetOpStage::RemoteHttp;
++        }
++        // W1-09: and any later failure, a connection that never opened too.
++        // An earlier answer counts as unsent only by its stage, and a
++        // refusal only if it refused the transaction itself: however a path
++        // types a server's answer, "queued" never frees the notes
++        let may_have_delivered = earlier.iter().any(|(f, refused_itself)| {
++            let stage = describe_failure(f, host).stage;
++            !TransmitError::never_sent(&stage)
++                || (stage == zingo_net_diag::NetOpStage::RemoteRejected && !refused_itself)
++        });
++        (described, may_have_delivered)
++    });
++    let (outcome, may_have_delivered) = match outcome {
++        Ok(server_txid) => (Ok(server_txid), false),
++        Err((failure, may_have_delivered)) => (Err(failure), may_have_delivered),
++    };
+     record_send_attempt(
+         context.history,
+         host,
+@@ -397,10 +468,44 @@ where
+         Err(failure) => Err(TransmitError {
+             host: host.to_string(),
+             failure,
++            may_have_delivered,
+         }),
+     }
+ }
+ 
++/// Laurel patch: for a broadcast made outside a client (a sweep, a payment
++/// signed on another computer), whether a server's rejection is a refusal of
++/// the transaction itself, the same reading the client's own sends get
++/// ([`crate::lightclient::transmit::invalid_on_its_own`]).
++pub fn refused_on_its_own(message: &str) -> bool {
++    crate::lightclient::transmit::invalid_on_its_own(message)
++}
++
++/// Laurel patch: ...or says the server already has it, in its mempool or a
++/// block: delivered, by an earlier attempt or anyone else.
++pub fn already_has_it(message: &str) -> bool {
++    matches!(
++        crate::lightclient::transmit::classify_rejection(message),
++        crate::lightclient::transmit::RejectionClass::StorageBackedDuplicate
++    )
++}
++
++/// Laurel patch: whether a failed transmission may have delivered a
++/// transaction (an unsure verdict, or a server that took it and named another
++/// txid). Then nothing it covered may be failed by the caller either.
++pub(crate) fn may_have_delivered(error: &LightClientError) -> bool {
++    use crate::lightclient::error::TransmitVerdict;
++    matches!(
++        error,
++        LightClientError::SendError(SendError::TransmissionError(
++            TransmissionError::TransmissionFailed {
++                verdict: TransmitVerdict::Unsure,
++                ..
++            } | TransmissionError::IncorrectTxidFromServer(..)
++        ))
++    )
++}
++
+ fn fail_unsent(wallet: &mut LightWallet, calculated_txids: &NonEmpty<TxId>, from: usize) {
+     let unsent: Vec<TxId> = calculated_txids.iter().skip(from).copied().collect();
+     pepper_sync::set_transactions_failed(&mut wallet.wallet_transactions, unsent);
+@@ -593,7 +698,20 @@ impl LightClient {
+         &mut self,
+         calculated_txids: NonEmpty<TxId>,
+     ) -> Result<NonEmpty<TxId>, LightClientError> {
+-        self.transmit_transactions(calculated_txids)
++        self.transmit_transactions_releasing(calculated_txids, true)
++            .await
++            .map(|reports| reports.map(|report| report.txid))
++    }
++
++    /// Laurel patch: [`Self::transmit_calculated`] for transactions that may
++    /// already have been sent (a stop, an unsure answer), whose failure never
++    /// frees their notes: this call sending nothing proves nothing of an
++    /// earlier one. They end confirmed, or failed by sync past their expiry.
++    pub async fn retransmit_calculated(
++        &mut self,
++        calculated_txids: NonEmpty<TxId>,
++    ) -> Result<NonEmpty<TxId>, LightClientError> {
++        self.transmit_transactions_releasing(calculated_txids, false)
+             .await
+             .map(|reports| reports.map(|report| report.txid))
+     }
+@@ -845,6 +963,53 @@ impl LightClient {
+         &mut self,
+         calculated_txids: NonEmpty<TxId>,
+     ) -> Result<NonEmpty<TransmitReport>, LightClientError> {
++        self.transmit_transactions_releasing(calculated_txids, true).await
++    }
++
++    /// Laurel patch: `release` false never fails a transaction on a failed
++    /// transmission (a resend: see [`Self::retransmit_calculated`]).
++    pub(crate) async fn transmit_transactions_releasing(
++        &mut self,
++        calculated_txids: NonEmpty<TxId>,
++        release: bool,
++    ) -> Result<NonEmpty<TransmitReport>, LightClientError> {
++        self.transmit_stored(calculated_txids, release, false).await
++    }
++
++    /// Laurel patch: sends again the same bytes of transactions already
++    /// transmitted and not yet mined (Transmitted or Mempool), for one the
++    /// network dropped (a node restart, a stall, an eviction). The txid is
++    /// the same, so it can never pay twice; a server that already holds it
++    /// answers with a duplicate, which counts as delivered. Their status is
++    /// left alone (sync moves them on), and a failure frees nothing: they
++    /// end confirmed, or failed by sync past their expiry. Each is sent on
++    /// its own, so one that can't go (expiring soon, mined meanwhile, a
++    /// conflicting spend) doesn't keep the others from going: every one's
++    /// result is returned, in the order given.
++    pub async fn rebroadcast_pending(
++        &mut self,
++        pending_txids: NonEmpty<TxId>,
++    ) -> Vec<(TxId, Result<(), LightClientError>)> {
++        let mut results = Vec::with_capacity(pending_txids.len());
++        for txid in pending_txids {
++            let sent = self
++                .transmit_stored(NonEmpty::new(txid), false, true)
++                .await
++                .map(|_| ());
++            results.push((txid, sent));
++        }
++        results
++    }
++
++    /// Laurel patch: the transmission loop, for Calculated transactions, or
++    /// with `pending` for Transmitted and Mempool ones, whose status it keeps.
++    async fn transmit_stored(
++        &mut self,
++        calculated_txids: NonEmpty<TxId>,
++        release: bool,
++        pending: bool,
++    ) -> Result<NonEmpty<TransmitReport>, LightClientError> {
++        debug_assert!(!(release && pending), "a rebroadcast never frees coins");
+         let indexer = self.indexer.clone();
+ 
+         // Resolve the send route once for the whole send (ADR 0011), under
+@@ -900,10 +1065,18 @@ impl LightClient {
+                 .ok_or(WalletError::TransactionNotFound(*txid))?;
+             let height = calculated_transaction.status().get_height();
+ 
+-            if !matches!(
+-                calculated_transaction.status(),
+-                ConfirmationStatus::Calculated(_)
+-            ) {
++            let expected = if pending {
++                matches!(
++                    calculated_transaction.status(),
++                    ConfirmationStatus::Transmitted(_) | ConfirmationStatus::Mempool(_)
++                )
++            } else {
++                matches!(
++                    calculated_transaction.status(),
++                    ConfirmationStatus::Calculated(_)
++                )
++            };
++            if !expected {
+                 return Err(SendError::TransmissionError(
+                     TransmissionError::IncorrectTransactionStatus(*txid),
+                 )
+@@ -915,7 +1088,9 @@ impl LightClient {
+                 .transaction()
+                 .write(&mut transaction_bytes)
+                 .map_err(|e| {
+-                    fail_unsent(&mut wallet, &calculated_txids, index);
++                    if release {
++                        fail_unsent(&mut wallet, &calculated_txids, index);
++                    }
+                     WalletError::TransactionWrite(e)
+                 })?;
+ 
+@@ -954,26 +1129,36 @@ impl LightClient {
+                     if wire.is_mixnet() {
+                         self.note_standing_exit_suspicion();
+                     }
+-                    fail_unsent(&mut wallet, &calculated_txids, index);
++                    // Laurel patch: freed only when nothing can have gone
++                    // out; otherwise it stays Calculated, to be sent again
++                    // (the same bytes: harmless) or to expire
++                    if release && failure.proves_unsent() {
++                        fail_unsent(&mut wallet, &calculated_txids, index);
++                    }
+                     // The typed failure is rendered only here, at the
+                     // report's existing prose field.
+                     return Err(SendError::TransmissionError(
+-                        TransmissionError::TransmissionFailed(failure.to_string()),
++                        TransmissionError::TransmissionFailed {
++                            text: failure.to_string(),
++                            verdict: failure.verdict(),
++                        },
+                     )
+                     .into());
+                 }
+             };
+ 
+-            wallet
+-                .wallet_transactions
+-                .get_mut(txid)
+-                .ok_or(WalletError::TransactionNotFound(*txid))?
+-                .update_status(
+-                    ConfirmationStatus::Transmitted(height),
+-                    crate::utils::now(),
+-                    false,
+-                );
+-            wallet.save_required = true;
++            if !pending {
++                wallet
++                    .wallet_transactions
++                    .get_mut(txid)
++                    .ok_or(WalletError::TransactionNotFound(*txid))?
++                    .update_status(
++                        ConfirmationStatus::Transmitted(height),
++                        crate::utils::now(),
++                        false,
++                    );
++                wallet.save_required = true;
++            }
+ 
+             let txid_from_server =
+                 crate::utils::conversion::txid_from_hex_encoded_str(txid_from_server.as_str())
+@@ -989,8 +1174,10 @@ impl LightClient {
+             // server txid verified. Each is a no-op unless its owner armed the
+             // side channel (an immediate migration or a note-splitting round),
+             // and the two are mutually exclusive in practice.
+-            self.immediate_migration_progress.set_sent(index as u32 + 1);
+-            self.split_progress.set_sent(index as u32 + 1);
++            if !pending {
++                self.immediate_migration_progress.set_sent(index as u32 + 1);
++                self.split_progress.set_sent(index as u32 + 1);
++            }
+ 
+             reports.push(TransmitReport {
+                 txid: *txid,
+@@ -1818,3 +2005,168 @@ mod op_return {
+         assert_eq!(reserved_refund_addresses(&client).await, 1);
+     }
+ }
++
++#[cfg(test)]
++mod transmit_verdict_tests {
++    use super::TransmitError;
++    use crate::lightclient::error::TransmitVerdict;
++    use zingo_net_diag::{NetOpFailure, NetOpStage};
++
++    // one target per send since upstream 8.0.0 (zingo-adrs zingolib/0063):
++    // the failure is the last attempt's, already read against the earlier
++    // ones (`transmit_to`: a refusal after one that may have delivered is
++    // RemoteHttp)
++    fn failed(stage: NetOpStage) -> TransmitError {
++        TransmitError {
++            host: "example.com".to_string(),
++            failure: NetOpFailure {
++                stage,
++                target: "example.com".to_string(),
++                cause_chain: vec!["why".to_string()],
++            },
++            may_have_delivered: false,
++        }
++    }
++
++    #[test]
++    fn a_server_that_refused_the_transaction_itself_refused_it() {
++        assert_eq!(failed(NetOpStage::RemoteRejected).verdict(), TransmitVerdict::Refused);
++        assert!(failed(NetOpStage::RemoteRejected).proves_unsent());
++    }
++
++    // Laurel patch: an attempt that may have delivered keeps the notes
++    #[test]
++    fn an_attempt_that_may_have_delivered_it_is_unsure() {
++        for stage in [
++            NetOpStage::RemoteHttp,
++            NetOpStage::TimedOut { after_ms: 30_000 },
++            NetOpStage::TunnelTransport,
++            NetOpStage::PayloadDecode,
++        ] {
++            assert_eq!(failed(stage.clone()).verdict(), TransmitVerdict::Unsure, "{stage:?}");
++            assert!(!failed(stage.clone()).proves_unsent(), "{stage:?}");
++        }
++    }
++
++    #[test]
++    fn a_clean_rejection_is_typed_apart_from_any_other_answer() {
++        let host = crate::destination::Host::of_uri(&"https://example.com".parse().unwrap());
++        let rejected = zingo_netutils::Status::unknown("16: bad-txns-sapling-bundle-invalid");
++        let spent = zingo_netutils::Status::unknown("16: bad-txns-sapling-duplicate-nullifier");
++        // the transport's own trouble, whatever its text says
++        let internal = zingo_netutils::Status::internal("16: bad-txns-sapling-bundle-invalid");
++        assert_eq!(super::NakednetTarget::failure(&rejected, &host).stage, NetOpStage::RemoteRejected);
++        assert_eq!(super::NakednetTarget::failure(&spent, &host).stage, NetOpStage::RemoteHttp);
++        assert_eq!(super::NakednetTarget::failure(&internal, &host).stage, NetOpStage::RemoteHttp);
++    }
++
++    /// A target that answers each submit with the next scripted failure,
++    /// and never knows the transaction.
++    struct Scripted {
++        answers: Vec<&'static str>,
++        next: std::sync::atomic::AtomicUsize,
++    }
++
++    #[derive(Debug)]
++    struct Answer(&'static str);
++
++    impl std::fmt::Display for Answer {
++        fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
++            f.write_str(self.0)
++        }
++    }
++
++    impl std::error::Error for Answer {}
++
++    impl crate::lightclient::transmit::SubmitFailure for Answer {
++        fn rejection_text(&self) -> Option<&str> {
++            Some(self.0)
++        }
++    }
++
++    impl crate::lightclient::transmit::TransmitTarget for Scripted {
++        type Failure = Answer;
++
++        fn submit(
++            &self,
++            _raw_tx: &[u8],
++            _height: u64,
++        ) -> impl Future<Output = Result<String, Answer>> + Send {
++            let i = self.next.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
++            let answer = self.answers.get(i).copied().unwrap_or("connect");
++            async move { Err(Answer(answer)) }
++        }
++
++        async fn knows_transaction(&self, _txid: &zcash_protocol::TxId) -> bool {
++            false
++        }
++    }
++
++    // the mixnet path's reading: a timeout after the bytes left, or a
++    // connection that never opened; and a reader that types every server
++    // answer a refusal, which neither path does today: the notes must not
++    // hang on that reading
++    fn stage_of(answer: &Answer, host: &crate::destination::Host) -> NetOpFailure {
++        let stage = match answer.0 {
++            "timeout" => NetOpStage::TimedOut { after_ms: 30_000 },
++            QUEUED => NetOpStage::RemoteRejected,
++            _ => NetOpStage::RemoteConnect,
++        };
++        NetOpFailure::from_error(stage, host, answer)
++    }
++
++    async fn transmitted(answers: Vec<&'static str>) -> TransmitError {
++        let target = Scripted { answers, next: Default::default() };
++        let host = crate::destination::Host::of_uri(&"https://example.com".parse().unwrap());
++        let context = super::TransmitContext {
++            progress: &Default::default(),
++            history: &Default::default(),
++            retry_interval: std::time::Duration::ZERO,
++        };
++        super::transmit_to(
++            super::Wire::Nakednet,
++            &host,
++            &target,
++            stage_of,
++            b"tx",
++            1,
++            &zcash_protocol::TxId::from_bytes([7u8; 32]),
++            &context,
++        )
++        .await
++        .unwrap_err()
++    }
++
++    const QUEUED: &str = "already queued for download";
++
++    // W1-09: the server said it has the transaction, then the connection
++    // died for every probe and retry: the server may well have it
++    #[tokio::test]
++    async fn a_queued_answer_then_a_dead_connection_frees_nothing() {
++        let err = transmitted(vec![QUEUED, "connect", "connect", "connect", "connect"]).await;
++        assert_eq!(err.failure.stage, NetOpStage::RemoteConnect, "the last attempt's");
++        assert!(!err.proves_unsent(), "the server said it had it");
++        assert_eq!(err.verdict(), TransmitVerdict::Unsure);
++    }
++
++    // W1-09: the last attempt never connected, but the first may have
++    // delivered it; freeing its notes would let a retry pay twice
++    #[tokio::test]
++    async fn a_failure_after_one_that_may_have_delivered_frees_nothing() {
++        let err = transmitted(vec!["timeout", "connect", "connect", "connect"]).await;
++        assert_eq!(err.failure.stage, NetOpStage::RemoteConnect, "the last attempt's");
++        assert!(!err.proves_unsent(), "the first attempt may have delivered it");
++        assert_eq!(err.verdict(), TransmitVerdict::Unsure);
++
++        let never = transmitted(vec!["connect", "connect", "connect", "connect"]).await;
++        assert!(never.proves_unsent(), "no attempt ever connected");
++        assert_eq!(never.verdict(), TransmitVerdict::Unreachable);
++    }
++
++    #[test]
++    fn no_answer_anywhere_is_unreachable() {
++        for stage in [NetOpStage::RemoteConnect, NetOpStage::RemoteTls] {
++            assert_eq!(failed(stage.clone()).verdict(), TransmitVerdict::Unreachable, "{stage:?}");
++        }
++    }
++}
+--- a/zingolib/src/lightclient/transmit.rs
++++ b/zingolib/src/lightclient/transmit.rs
+@@ -74,6 +74,13 @@ pub(crate) trait SubmitFailure: std::fmt::Display {
+     /// The server's verdict text (a rejection message or an RPC status
+     /// message), or `None` for a transport failure that carries no verdict.
+     fn rejection_text(&self) -> Option<&str>;
++
++    /// Laurel patch: whether this answer is a refusal of the transaction
++    /// itself (invalid_on_its_own). None by default: only a path that can
++    /// tell a server's verdict from a transport failure says yes.
++    fn refuses_itself(&self) -> bool {
++        false
++    }
+ }
+ 
+ /// The nakednet path's failure type: a gRPC status, carried whole. The
+@@ -83,6 +90,13 @@ impl SubmitFailure for zingo_netutils::Status {
+     fn rejection_text(&self) -> Option<&str> {
+         Some(self.message())
+     }
++
++    // a server's rejection reaches us as Unknown (2), as GrpcIndexer folds
++    // lightwalletd's answer; any other code is the transport's or the
++    // server's own trouble, whatever its text says
++    fn refuses_itself(&self) -> bool {
++        self.code() as i32 == 2 && invalid_on_its_own(self.message())
++    }
+ }
+ 
+ /// The mixnet path's failure type, carried whole. Only the variants that
+@@ -125,9 +139,14 @@ pub(crate) trait TransmitTarget {
+ 
+ /// The transmission exhausted the resilience policy: retries or queued-probes
+ /// ran out and the server does not know the transaction. Carries the last
+-/// typed failure, whole.
++/// typed failure, whole, and (Laurel patch) whether every submission was
++/// refused on the transaction's own merits: an earlier attempt whose answer
++/// was lost may have delivered it, whatever the last answer says. Then
++/// (W1-09) every earlier failure, oldest first, each with whether it
++/// refused the transaction itself, for the caller to read the same way it
++/// reads the last.
+ #[derive(Debug, Clone, PartialEq, Eq)]
+-pub(crate) struct TransmitFailed<F>(pub F);
++pub(crate) struct TransmitFailed<F>(pub F, pub bool, pub Vec<(F, bool)>);
+ 
+ /// How the resilience policy reads a submission failure message.
+ #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+@@ -159,6 +178,41 @@ pub(crate) fn classify_rejection(message: &str) -> RejectionClass {
+     RejectionClass::Transient
+ }
+ 
++/// Whether a server's rejection says the transaction itself can never be mined,
++/// so no copy of it is anywhere and its notes may be freed. Laurel patch: only
++/// zcashd's reject reasons (src/main.cpp) that depend on the transaction's own
++/// bytes being malformed (proofs, signatures, structure): never on what the
++/// chain or mempool holds, nor on one node's policy or height. Valid bytes
++/// get none of these from any node, so a copy of ours that got in earlier
++/// can't be answered with them. Fee and expiry answers are policy and
++/// context (zcashd checks expiring-soon before mempool duplicates), and
++/// another node may have taken the transaction. A prefix such as "bad-txns-"
++/// was not enough: "bad-txns-sapling-duplicate-nullifier" and
++/// "-unknown-anchor" share it. Any other text, zebra's and zaino's too, is unsure:
++/// keeping a transaction that did fail costs its notes until it expires;
++/// freeing one that went out lets a retry pay twice.
++pub(crate) fn invalid_on_its_own(message: &str) -> bool {
++    const INVALID: [&str; 14] = [
++        // proofs and signatures
++        "bad-txns-sapling-bundle-invalid",
++        "bad-sapling-bundle-authorization",
++        "bad-orchard-bundle-authorization",
++        "bad-orchard-action-identity-point",
++        "bad-txns-invalid-joinsplit-signature",
++        "bad-txns-joinsplit-verification-failed",
++        "error-computing-signature-hash",
++        // structure and value
++        "bad-txns-oversize",
++        "bad-txns-no-source-of-funds",
++        "bad-txns-no-sink-of-funds",
++        "bad-txns-vout-negative",
++        "bad-txns-vout-toolarge",
++        "bad-txns-txouttotal-toolarge",
++        "bad-txns-valuebalance-toolarge",
++    ];
++    INVALID.iter().any(|reason| message.contains(reason))
++}
++
+ /// Submit `raw_tx` to `target` under the shared resilience policy, the single
+ /// definition of the retry / duplicate-in-mempool / queued-probe behavior.
+ ///
+@@ -190,6 +244,8 @@ where
+ {
+     let mut retry_count: u8 = 0;
+     let mut queued_probes: u8 = 0;
++    let mut every_refused = true;
++    let mut earlier = Vec::new();
+ 
+     report("submitting".to_string());
+     let exhausted = loop {
+@@ -197,6 +253,7 @@ where
+             Ok(server_txid) => return Ok(server_txid),
+             Err(failure) => failure,
+         };
++        every_refused &= failure.refuses_itself();
+ 
+         match classify_rejection(failure.rejection_text().unwrap_or_default()) {
+             RejectionClass::StorageBackedDuplicate => return Ok(txid.to_string()),
+@@ -208,6 +265,8 @@ where
+                 report(format!(
+                     "delivered, awaiting the server's verdict (probe {queued_probes}/{MAX_QUEUED_PROBES})"
+                 ));
++                let refused_itself = failure.refuses_itself();
++                earlier.push((failure, refused_itself));
+                 sleep(TRANSMIT_RETRY_INTERVAL).await;
+             }
+             RejectionClass::Transient => {
+@@ -218,6 +277,8 @@ where
+                 report(format!(
+                     "retrying after a transient error (retry {retry_count}/{MAX_RETRIES})"
+                 ));
++                let refused_itself = failure.refuses_itself();
++                earlier.push((failure, refused_itself));
+                 sleep(TRANSMIT_RETRY_INTERVAL).await;
+             }
+         }
+@@ -231,7 +292,7 @@ where
+     if target.knows_transaction(txid).await {
+         return Ok(txid.to_string());
+     }
+-    Err(TransmitFailed(exhausted))
++    Err(TransmitFailed(exhausted, every_refused, earlier))
+ }
+ 
+ #[cfg(test)]
+@@ -240,6 +301,45 @@ mod tests {
+ 
+     use super::*;
+ 
++    #[test]
++    fn only_a_verdict_on_the_transaction_itself_is_invalid_on_its_own() {
++        for invalid in [
++            "16: bad-txns-sapling-bundle-invalid",
++            "16: bad-orchard-bundle-authorization",
++            "16: bad-txns-oversize",
++        ] {
++            assert!(super::invalid_on_its_own(invalid), "{invalid}");
++        }
++        for maybe in [
++            // a copy of ours already in: zcashd's words (src/main.cpp)
++            "16: bad-txns-sapling-duplicate-nullifier",
++            "16: bad-txns-orchard-duplicate-nullifier",
++            "16: bad-txns-sapling-unknown-anchor",
++            "16: bad-txns-orchard-unknown-anchor",
++            "bad-txns-shielded-requirements-not-met",
++            "bad-txns-joinsplit-requirements-not-met",
++            "a future bad-txns-ironwood-duplicate-nullifier",
++            // policy and context: another node may have taken it
++            "66: min relay fee not met",
++            "16: tx-expiring-soon",
++            "16: tx-overwinter-expired",
++            "RPC Error (code: -26): transaction has expired",
++            "16: bad-tx-consensus-branch-id-mismatch",
++            "18: bad-txns-inputs-spent",
++            "bad-txns-inputs-missingorspent",
++            "missing-inputs",
++            "txn-mempool-conflict",
++            "txn-already-known",
++            "transaction already exists in mempool",
++            "already queued for download",
++            "",
++            "status: Unknown, message: \"h2 protocol error\"",
++            "something no list has seen",
++        ] {
++            assert!(!super::invalid_on_its_own(maybe), "{maybe}");
++        }
++    }
++
+     /// A scripted failure whose whole text is the server's verdict, so the
+     /// policy classifies exactly what the script says.
+     #[derive(Clone, Debug, PartialEq, Eq)]
+@@ -255,6 +355,10 @@ mod tests {
+         fn rejection_text(&self) -> Option<&str> {
+             Some(&self.0)
+         }
++
++        fn refuses_itself(&self) -> bool {
++            super::invalid_on_its_own(&self.0)
++        }
+     }
+ 
+     /// A target that replays a scripted sequence of submit responses and a
+@@ -323,6 +427,30 @@ mod tests {
+         std::future::ready(())
+     }
+ 
++    // Laurel patch: a lost answer, then refusals of the transaction itself.
++    // The first attempt may have delivered it: not a clean refusal
++    #[tokio::test]
++    async fn a_refusal_after_a_lost_answer_is_not_a_clean_refusal() {
++        const INVALID: &str = "16: bad-txns-sapling-bundle-invalid";
++        let mut script = vec![Err("timeout".to_string())];
++        script.extend(std::iter::repeat_n(Err(INVALID.to_string()), MAX_RETRIES as usize));
++        let target = ScriptedTarget::new(script, false);
++        let err = resilient_transmit(&target, b"tx", 1, &a_txid(), no_sleep, |_| {})
++            .await
++            .unwrap_err();
++        assert_eq!(err.0, TestFailure(INVALID.to_string()), "the last answer is the refusal");
++        assert!(!err.1, "an earlier attempt may have delivered it");
++
++        let refused = ScriptedTarget::new(
++            std::iter::repeat_n(Err(INVALID.to_string()), MAX_RETRIES as usize + 1).collect(),
++            false,
++        );
++        let err = resilient_transmit(&refused, b"tx", 1, &a_txid(), no_sleep, |_| {})
++            .await
++            .unwrap_err();
++        assert!(err.1, "refused every time on its own merits");
++    }
++
+     #[tokio::test]
+     async fn accepts_on_first_submit() {
+         let target = ScriptedTarget::new(vec![Ok("server-txid".into())], false);
+--- a/zingolib/src/mixnet/driver.rs
++++ b/zingolib/src/mixnet/driver.rs
+@@ -404,6 +404,7 @@ mod wire_contract {
+             NetOpStage::TunnelTransport,
+             NetOpStage::RemoteTls,
+             NetOpStage::RemoteHttp,
++            NetOpStage::RemoteRejected,
+             NetOpStage::PayloadDecode,
+         ];
+         for stage in &unit_stages {
+@@ -416,6 +417,7 @@ mod wire_contract {
+                 | NetOpStage::TunnelTransport
+                 | NetOpStage::RemoteTls
+                 | NetOpStage::RemoteHttp
++                | NetOpStage::RemoteRejected
+                 | NetOpStage::PayloadDecode
+                 | NetOpStage::TimedOut { .. } => {}
+             }
+--- /dev/null
++++ b/zingolib/src/params_hashes.rs
+@@ -0,0 +1,11 @@
++// LAUREL PATCH (integrity): the published Sapling parameters' BLAKE2b-512
++// hashes, as zcash_proofs knows them (SAPLING_SPEND_HASH and
++// SAPLING_OUTPUT_HASH, private there) and zcashd's fetch-params.sh checks
++// them. One home: build.rs includes this file to verify the output key it
++// embeds, a test verifies what was embedded, and wallet::sapling_key
++// verifies the spend key the app fetches, at every use. A proving key that
++// isn't the published one can make proofs that give away what they should
++// hide, so nothing else is ever proven with.
++
++pub const SAPLING_SPEND_HASH: &str = "8270785a1a0d0bc77196f000ee6d221c9c9894f55307bd9357c3f0105d31ca63991ab91324160d8f53e2bbd3c2633a6eb8bdf5205d822e7f3f73edac51b2b70c";
++pub const SAPLING_OUTPUT_HASH: &str = "657e3d38dbb5cb5e7dd2970e8b03d69b4787dd907285b5a7f0790dcc8072f60bf593b32cc2d1c030e00ff5ae64bf84c5c3beb84ddc841d48264b4a171744d028";
+--- a/zingolib/src/testutils/mock_indexer.rs
++++ b/zingolib/src/testutils/mock_indexer.rs
+@@ -1246,6 +1246,12 @@ impl MockChain {
+         }
+     }
+ 
++    /// Laurel patch: the validator forgets its mempool (a restart, an
++    /// eviction), as a dropped payment meets it.
++    pub fn drop_mempool(&mut self) {
++        self.mempool.clear();
++    }
++
+     /// Mines every mempool transaction into the next block.
+     pub fn mine_mempool(&mut self) {
+         let pending = std::mem::take(&mut self.mempool);
+--- a/zingolib/src/wallet.rs
++++ b/zingolib/src/wallet.rs
+@@ -3,7 +3,6 @@
+ use std::collections::{BTreeMap, HashMap};
+ use std::num::NonZeroU32;
+ 
+-use bip0039::Mnemonic;
+ 
+ use pepper_sync::sync::MAX_REORG_ALLOWANCE;
+ use zcash_keys::address::UnifiedAddress;
+@@ -22,6 +21,7 @@ use zingo_price::PriceList;
+ use crate::config::{ChainType, WalletConfig};
+ use crate::data::proposal::ZingoProposal;
+ use error::{KeyError, WalletError};
++use keys::seed::WalletSeed;
+ use keys::unified::{UnifiedAddressId, UnifiedKeyStore};
+ 
+ pub mod error;
+@@ -39,6 +39,7 @@ pub mod migration;
+ pub(crate) mod note_selection;
+ pub mod output;
+ pub mod propose;
++pub mod sapling_key;
+ pub mod send;
+ pub mod summary;
+ pub mod sync;
+@@ -69,10 +70,16 @@ impl Default for WalletSettings {
+ }
+ 
+ /// Provides necessary information to recover the wallet without the wallet file.
+-#[derive(Clone, Debug, PartialEq, serde::Serialize)]
++///
++/// Laurel patch (W1-04): no `Display`, and a `Debug` with neither the words
++/// nor the passphrase, so a stray `{}` or `{:?}` in a log line can't write
++/// them; showing them is [`RecoveryInfo::reveal`], by name.
++#[derive(Clone, PartialEq, serde::Serialize)]
+ pub struct RecoveryInfo {
+     /// 24-word mnemonic phrase.
+     pub seed_phrase: String,
++    /// The BIP-39 passphrase set with it; empty when none was.
++    pub passphrase: String,
+     /// Block height wallet was created.
+     pub birthday: u64,
+     /// Number of accounts in use.
+@@ -81,17 +88,39 @@ pub struct RecoveryInfo {
+     pub birthday_adjusted_from: Option<u64>,
+ }
+ 
+-impl std::fmt::Display for RecoveryInfo {
++impl std::fmt::Debug for RecoveryInfo {
+     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+-        write!(
+-            f,
++        f.debug_struct("RecoveryInfo")
++            .field("words", &self.seed_phrase.split_whitespace().count())
++            .field("has_passphrase", &!self.passphrase.is_empty())
++            .field("birthday", &self.birthday)
++            .field("no_of_accounts", &self.no_of_accounts)
++            .field("birthday_adjusted_from", &self.birthday_adjusted_from)
++            .finish()
++    }
++}
++
++impl RecoveryInfo {
++    /// The words, the passphrase if there is one, the birthday and the
++    /// accounts, as text to show the wallet's owner: what `Display` printed
++    /// before W1-04, for a caller that shows them on purpose.
++    #[must_use]
++    pub fn reveal(&self) -> String {
++        format!(
+             "Wallet backup info:
+ {{
+-    seed phrase: {}
++    seed phrase: {}{}
+     birthday: {}
+     no_of_accounts: {}
+ }}",
+-            self.seed_phrase, self.birthday, self.no_of_accounts,
++            self.seed_phrase,
++            if self.passphrase.is_empty() {
++                String::new()
++            } else {
++                format!("\n    passphrase: {}", self.passphrase)
++            },
++            self.birthday,
++            self.no_of_accounts,
+         )
+     }
+ }
+@@ -99,7 +128,7 @@ impl std::fmt::Display for RecoveryInfo {
+ /// Base data required to construct a new [`crate::wallet::LightWallet`].
+ pub(crate) struct WalletBase {
+     pub(crate) unified_key_store: BTreeMap<zip32::AccountId, UnifiedKeyStore>,
+-    pub(crate) mnemonic: Option<Mnemonic>,
++    pub(crate) seed: Option<WalletSeed>,
+     pub(crate) birthday: BlockHeight,
+     pub(crate) wallet_settings: WalletSettings,
+ }
+@@ -121,8 +150,8 @@ pub struct LightWallet {
+     read_version: u64,
+     /// Blockchain network type
+     chain_type: ChainType,
+-    /// The seed for the wallet, stored as a zip339 Mnemonic, and the account index.
+-    mnemonic: Option<Mnemonic>,
++    /// The wallet's mnemonic and its passphrase.
++    seed: Option<WalletSeed>,
+     /// The block height at which the wallet was created.
+     birthday: BlockHeight,
+     /// - Process-lifetime state, never written to the wallet file.
+@@ -188,7 +217,7 @@ impl LightWallet {
+     ) -> Result<Self, WalletError> {
+         let WalletBase {
+             unified_key_store,
+-            mnemonic,
++            seed,
+             birthday,
+             wallet_settings,
+         } = wallet_base;
+@@ -231,7 +260,7 @@ impl LightWallet {
+             current_version: LightWallet::serialized_version(),
+             read_version: LightWallet::serialized_version(),
+             chain_type,
+-            mnemonic,
++            seed,
+             birthday: BlockHeight::from_u32(birthday.into()),
+             birthday_adjusted_from: None,
+             unified_key_store,
+@@ -299,16 +328,16 @@ impl LightWallet {
+         self.chain_type
+     }
+ 
+-    /// Returns the wallet's mnemonic for internal operations.
++    /// Returns the wallet's mnemonic and passphrase for internal operations.
+     #[must_use]
+-    pub(crate) fn mnemonic(&self) -> Option<&Mnemonic> {
+-        self.mnemonic.as_ref()
++    pub(crate) fn seed(&self) -> Option<&WalletSeed> {
++        self.seed.as_ref()
+     }
+ 
+     /// Returns the wallet's mnemonic phrase.
+     #[must_use]
+     pub fn mnemonic_phrase(&self) -> Option<String> {
+-        self.mnemonic().map(|m| m.phrase().to_string())
++        self.seed().map(|s| s.mnemonic().phrase().to_string())
+     }
+ 
+     /// Returns unified addresses.
+@@ -379,10 +408,21 @@ impl LightWallet {
+         self.save_required = true;
+     }
+ 
++    /// Laurel patch: clears `save_required`, for an application that writes
++    /// the bytes from [`Self::save`] itself (for example encrypted) instead of
++    /// through the save task. Call it under the same lock as the `save` that
++    /// produced the bytes, so no change can slip in between; then write them
++    /// out, and if that write fails call [`Self::mark_dirty`] so the next
++    /// save tries again.
++    pub fn mark_saved(&mut self) {
++        self.save_required = false;
++    }
++
+     #[must_use]
+     pub fn recovery_info(&self) -> Option<RecoveryInfo> {
+         Some(RecoveryInfo {
+             seed_phrase: self.mnemonic_phrase()?,
++            passphrase: self.seed()?.passphrase().to_string(),
+             birthday: self.birthday.into(),
+             no_of_accounts: self.unified_key_store.len() as u32,
+             birthday_adjusted_from: self.birthday_adjusted_from.map(u64::from),
+@@ -401,7 +441,7 @@ impl LightWallet {
+             account_id,
+             UnifiedKeyStore::new_from_mnemonic(
+                 self.chain_type(),
+-                self.mnemonic().ok_or(WalletError::MnemonicNotFound)?,
++                self.seed().ok_or(WalletError::MnemonicNotFound)?,
+                 account_id,
+             )?,
+         );
+--- a/zingolib/src/wallet/disk.rs
++++ b/zingolib/src/wallet/disk.rs
+@@ -22,6 +22,7 @@ use zingo_common_components::protocol::ActivationHeights;
+ use zingo_netutils::lightwallet_protocol::TreeState;
+ use zingo_price::PriceList;
+ 
++use super::keys::seed::WalletSeed;
+ use super::keys::unified::{ReceiverSelection, UnifiedAddressId};
+ use super::{LightWallet, RecoveryInfo, error::KeyError};
+ use crate::wallet::{WalletSettings, legacy::WalletZecPriceInfo, utils};
+@@ -203,11 +204,18 @@ impl LightWallet {
+     /// reads version 45 refuses a newer embedded layout by itself, so a change
+     /// to an embedded type's serialized version takes no new Wallet Version.
+     ///
++    /// Changes in version 46 (Laurel's fork, docs/ENGINE.md):
++    /// the BIP-39 passphrase, as a string after the birthday; empty when
++    /// none was set or no seed is stored. LAUREL PATCH (passphrase): Laurel
++    /// wrote this layout as 45 over 44's before upstream gave 45 to the
++    /// sync state, so a version-45 file is either; [`Self::read`] tries
++    /// Laurel's first. Versions before 45 read as no passphrase.
++    ///
+     /// Landing in dev ships a format: every layout that has landed in dev
+     /// must remain readable, and the wallet writable, forever after.
+     #[must_use]
+     pub const fn serialized_version() -> u64 {
+-        45
++        46
+     }
+ 
+     /// Upper bound on the version word [`Self::read_recovery_info`] accepts:
+@@ -232,12 +240,19 @@ impl LightWallet {
+             ChainType::Testnet => 1,
+             ChainType::Regtest(_) => 2,
+         })?;
+-        let seed_bytes = match &self.mnemonic {
+-            Some(m) => m.clone().into_entropy(),
++        let seed_bytes = match &self.seed {
++            Some(s) => s.mnemonic().clone().into_entropy(),
+             None => vec![],
+         };
+         Vector::write(&mut writer, &seed_bytes, |w, byte| w.write_u8(*byte))?;
+         writer.write_u32::<LittleEndian>(self.birthday.into())?;
++        utils::write_string(
++            &mut writer,
++            &self
++                .seed
++                .as_ref()
++                .map_or_else(String::new, |s| s.passphrase().to_string()),
++        )?;
+         Vector::write(
+             &mut writer,
+             &self.unified_key_store.iter().collect::<Vec<_>>(),
+@@ -302,13 +317,17 @@ impl LightWallet {
+     /// Deserialize into `reader`
+     // TODO: update to return WalletError
+     pub fn read<R: Read>(mut reader: R, chain_type: ChainType) -> io::Result<Self> {
++        // one number to bump: the writer's version is the newest read
++        const NEWEST: u64 = LightWallet::serialized_version();
+         let version = reader.read_u64::<LittleEndian>()?;
+         info!("Reading wallet version {version}");
+         let mut wallet = match version {
+             ..32 => Self::read_v0(reader, chain_type, version),
+             // 43 is a burned version number with the final 42 layout; see
+             // the `serialized_version` docs and ADR 0015.
+-            32..=45 => Self::read_v32(reader, chain_type, version),
++            // LAUREL PATCH (passphrase): Laurel's 45 or upstream's (see `serialized_version`)
++            45 => Self::read_by_passphrase(reader, version, |r, passphrase| Self::read_v32(r, chain_type, version, passphrase)),
++            32..=NEWEST => Self::read_v32(reader, chain_type, version, version >= FIRST_PASSPHRASE_VERSION),
+             _ => Err(io::Error::new(
+                 ErrorKind::InvalidData,
+                 format!(
+@@ -325,6 +344,7 @@ impl LightWallet {
+     /// it right after the version word; older files store it past the keys,
+     /// so they are read whole under each chain until one parses.
+     pub fn read_chain(bytes: &[u8]) -> io::Result<ChainType> {
++        const NEWEST: u64 = LightWallet::serialized_version();
+         let mut reader = bytes;
+         let version = reader.read_u64::<LittleEndian>()?;
+         match version {
+@@ -341,7 +361,7 @@ impl LightWallet {
+                     format!("wallet version {version} parses under no chain"),
+                 )
+             }),
+-            32..=45 => {
++            32..=NEWEST => {
+                 if version >= 41 {
+                     chain_type_from_tag(reader.read_u8()?)
+                 } else if version == 40 {
+@@ -459,7 +479,7 @@ impl LightWallet {
+         };
+ 
+         let seed_bytes = Vector::read(&mut reader, byteorder::ReadBytesExt::read_u8)?;
+-        let mnemonic = if seed_bytes.is_empty() {
++        let seed = if seed_bytes.is_empty() {
+             None
+         } else {
+             let _account_index = if version >= 28 {
+@@ -467,10 +487,11 @@ impl LightWallet {
+             } else {
+                 0
+             };
+-            Some(
++            Some(WalletSeed::new(
+                 Mnemonic::from_entropy(seed_bytes)
+                     .map_err(|e| Error::new(ErrorKind::InvalidData, e.to_string()))?,
+-            )
++                String::new(), // no passphrase existed before version 45
++            ))
+         };
+ 
+         // Derive unified spending key from seed and override temporary USK if wallet is pre v29.
+@@ -479,11 +500,11 @@ impl LightWallet {
+         // This is due to the legacy transparent extended private key (ExtendedPrivKey) not containing all information required for BIP0032.
+         // There is also the issue that the legacy transparent private key is derived an extra level to the external scope.
+         if version < 29 {
+-            if let Some(mnemonic) = mnemonic.as_ref() {
++            if let Some(seed) = seed.as_ref() {
+                 wallet_capability.unified_key_store = UnifiedKeyStore::Spend(Box::new(
+                     UnifiedSpendingKey::from_seed(
+                         &chain_type,
+-                        &mnemonic.to_seed(""),
++                        &seed.to_seed(),
+                         AccountId::ZERO,
+                     )
+                     .map_err(|e| {
+@@ -564,7 +585,7 @@ impl LightWallet {
+         let lw = Self {
+             current_version: LightWallet::serialized_version(),
+             read_version: version,
+-            mnemonic,
++            seed,
+             birthday,
+             birthday_adjusted_from: None,
+             unified_key_store,
+@@ -595,7 +616,25 @@ impl LightWallet {
+         Ok(lw)
+     }
+ 
+-    fn read_v32<R: Read>(mut reader: R, chain_type: ChainType, version: u64) -> io::Result<Self> {
++    /// LAUREL PATCH (passphrase): reads the rest of a file with or without
++    /// the passphrase after the birthday, as its version says. Version 45 is
++    /// both: Laurel's layout (with it) is tried first, then upstream's
++    /// (without); if neither reads, the error is Laurel's.
++    fn read_by_passphrase<R: Read, T>(
++        mut reader: R,
++        version: u64,
++        read: impl Fn(&mut &[u8], bool) -> io::Result<T>,
++    ) -> io::Result<T> {
++        let mut rest = Vec::new();
++        reader.read_to_end(&mut rest)?;
++        if version == 45 {
++            read(&mut rest.as_slice(), true).or_else(|laurel| read(&mut rest.as_slice(), false).map_err(|_| laurel))
++        } else {
++            read(&mut rest.as_slice(), version >= FIRST_PASSPHRASE_VERSION)
++        }
++    }
++
++    fn read_v32<R: Read>(mut reader: R, chain_type: ChainType, version: u64, passphrase: bool) -> io::Result<Self> {
+         let dev_v40_grammar = if version >= 41 {
+             let saved_network = chain_type_from_tag(reader.read_u8()?)?;
+             check_saved_chain(&saved_network.to_string(), &chain_type)?;
+@@ -630,6 +669,7 @@ impl LightWallet {
+             )
+         };
+         let birthday = BlockHeight::from_u32(reader.read_u32::<LittleEndian>()?);
++        let seed = Self::read_seed(&mut reader, passphrase, mnemonic)?;
+ 
+         let unified_key_store = if version >= 35 {
+             Vector::read(&mut reader, |r| {
+@@ -855,7 +895,7 @@ impl LightWallet {
+             current_version: LightWallet::serialized_version(),
+             read_version: version,
+             chain_type,
+-            mnemonic,
++            seed,
+             birthday,
+             birthday_adjusted_from: None,
+             unified_key_store,
+@@ -990,25 +1030,59 @@ impl LightWallet {
+                 ),
+             ));
+         }
+-        let no_of_accounts = if version >= 35 {
+-            u32::try_from(CompactSize::read(&mut reader)?).map_err(|e| {
+-                Error::new(
+-                    ErrorKind::InvalidData,
+-                    format!("stored account count is not a valid u32: {e}"),
+-                )
+-            })?
+-        } else {
+-            1
+-        };
++        // LAUREL PATCH (passphrase): what follows the birthday, in either version-45 layout
++        let (seed, no_of_accounts) = Self::read_by_passphrase(reader, version, |r, passphrase| {
++            let seed = Self::read_seed(&mut *r, passphrase, Some(mnemonic.clone()))?
++                .ok_or_else(|| Error::other("a stored mnemonic came back as no seed"))?;
++            let no_of_accounts = if version >= 35 {
++                u32::try_from(CompactSize::read(&mut *r)?).map_err(|e| {
++                    Error::new(
++                        ErrorKind::InvalidData,
++                        format!("stored account count is not a valid u32: {e}"),
++                    )
++                })?
++            } else {
++                1
++            };
++            Ok((seed, no_of_accounts))
++        })?;
+ 
+         Ok(RecoveryInfo {
+-            seed_phrase: mnemonic.phrase().to_string(),
++            seed_phrase: seed.mnemonic().phrase().to_string(),
++            passphrase: seed.passphrase().to_string(),
+             birthday: u64::from(birthday),
+             no_of_accounts,
+             birthday_adjusted_from: None,
+         })
+     }
++
++    /// Reads the passphrase that follows the birthday (when `stored`) and
++    /// pairs it with the stored mnemonic. Before 45 there was no passphrase.
++    /// A passphrase with no mnemonic is a file no writer produces.
++    fn read_seed<R: Read>(
++        mut reader: R,
++        stored: bool,
++        mnemonic: Option<Mnemonic>,
++    ) -> io::Result<Option<WalletSeed>> {
++        let passphrase = if stored {
++            utils::read_string(&mut reader)?
++        } else {
++            String::new()
++        };
++        match mnemonic {
++            Some(mnemonic) => Ok(Some(WalletSeed::new(mnemonic, passphrase))),
++            None if passphrase.is_empty() => Ok(None),
++            None => Err(Error::new(
++                ErrorKind::InvalidData,
++                "wallet file stores a passphrase but no seed",
++            )),
++        }
++    }
+ }
+ 
++/// The first wallet version that always stores the BIP-39 passphrase
++/// (45 may or may not: see [`LightWallet::serialized_version`]).
++const FIRST_PASSPHRASE_VERSION: u64 = 46;
++
+ #[cfg(any(test, feature = "testutils"))]
+ pub mod testing;
+--- a/zingolib/src/wallet/disk/testing.rs
++++ b/zingolib/src/wallet/disk/testing.rs
+@@ -32,7 +32,7 @@ pub async fn assert_wallet_capability_matches_seed(
+ 
+     let expected_keys = crate::wallet::keys::unified::UnifiedKeyStore::new_from_mnemonic(
+         wallet.chain_type,
+-        &expected_mnemonic,
++        &crate::wallet::keys::seed::WalletSeed::new(expected_mnemonic, String::new()),
+         zip32::AccountId::ZERO,
+     )
+     .unwrap();
+--- a/zingolib/src/wallet/disk/testing/tests.rs
++++ b/zingolib/src/wallet/disk/testing/tests.rs
+@@ -233,6 +233,7 @@ async fn reload_wallet_from_file() {
+     mid_client.wait_for_save().await;
+     mid_client.shutdown_save_task().await.unwrap();
+ 
++    // reading needs no indexer: none is set, so nothing connects
+     let config = ClientConfig::builder()
+         .set_chain_type(mid_client_network)
+         .set_wallet_dir(mid_client.wallet_dir().unwrap())
+@@ -246,7 +247,7 @@ async fn reload_wallet_from_file() {
+ 
+     let expected_keys = UnifiedKeyStore::new_from_mnemonic(
+         mid_client_network,
+-        &expected_mnemonic,
++        &crate::wallet::keys::seed::WalletSeed::new(expected_mnemonic, String::new()),
+         zip32::AccountId::ZERO,
+     )
+     .unwrap();
+@@ -477,7 +478,7 @@ async fn wallet_reads_retired_version_43_as_current() {
+     use crate::wallet::LightWallet;
+ 
+     let expected = current_version_wallet_bytes().await;
+-    let mut bytes = expected.bytes.clone();
++    let mut bytes = crate::wallet::keys::seed::without_passphrase_field(&expected.bytes);
+     bytes[..8].copy_from_slice(&43u64.to_le_bytes());
+ 
+     let recovered = LightWallet::read(bytes.as_slice(), expected.chain_type)
+@@ -764,12 +765,18 @@ mod validation {
+             ),
+         ];
+ 
+-        for (fixture, chain_type) in fixtures {
+-            let path = fixture.example_wallet_path();
+-            let bytes = std::fs::read(&path).expect("example wallet files are checked in");
+-            LightWallet::validate(bytes.as_slice(), chain_type)
+-                .unwrap_or_else(|error| panic!("{} must validate: {error}", path.display()));
+-        }
++        // LAUREL PATCH (test speed): the fixtures are independent, so they are
++        // validated side by side; one after another took over 5 seconds
++        std::thread::scope(|s| {
++            for (fixture, chain_type) in fixtures {
++                s.spawn(move || {
++                    let path = fixture.example_wallet_path();
++                    let bytes = std::fs::read(&path).expect("example wallet files are checked in");
++                    LightWallet::validate(bytes.as_slice(), chain_type)
++                        .unwrap_or_else(|error| panic!("{} must validate: {error}", path.display()));
++                });
++            }
++        });
+     }
+ 
+     /// [`LightWallet::validate`] accepts the output of `write` untouched and
+@@ -880,6 +887,7 @@ mod validation {
+             bytes.push(32);
+             bytes.extend_from_slice(&[0x55; 32]);
+             bytes.extend_from_slice(&birthday.to_le_bytes());
++            bytes.extend_from_slice(&0u64.to_le_bytes()); // no passphrase (version 46)
+             bytes.push(1);
+             bytes
+         };
+@@ -912,6 +920,7 @@ mod validation {
+         bytes.push(seed_entropy.len() as u8);
+         bytes.extend_from_slice(&seed_entropy);
+         bytes.extend_from_slice(&0u32.to_le_bytes());
++        bytes.extend_from_slice(&0u64.to_le_bytes()); // no passphrase (version 46)
+         bytes
+     }
+ 
+--- a/zingolib/src/wallet/error.rs
++++ b/zingolib/src/wallet/error.rs
+@@ -308,6 +308,9 @@ pub enum CalculateTransactionError<NoteRef> {
+     NoSpendingKey(#[from] KeyError),
+     #[error("Failed to load sapling paramaters. {0}")]
+     SaplingParams(String),
++    /// LAUREL PATCH (size): the spend key a Sapling spend needs isn't usable here
++    #[error("{0}")]
++    SaplingSpendKey(#[from] crate::wallet::sapling_key::SaplingKeyError),
+     #[error("Failed to calculate transaction. {0}")]
+     Calculation(
+         zcash_client_backend::data_api::error::Error<
+--- a/zingolib/src/wallet/keys.rs
++++ b/zingolib/src/wallet/keys.rs
+@@ -18,6 +18,7 @@ use zip32::DiversifierIndex;
+ use super::{LightWallet, error::KeyError};
+ 
+ pub mod legacy;
++pub mod seed;
+ pub mod unified;
+ 
+ /// The transparent address a wallet stores encoded, decoded for `network`.
+--- /dev/null
++++ b/zingolib/src/wallet/keys/seed.rs
+@@ -0,0 +1,303 @@
++//! A wallet's seed: its BIP-39 mnemonic together with the optional
++//! passphrase (the "25th word").
++//!
++//! BIP-39 derives the seed from both. Deriving from the mnemonic alone
++//! gives a different wallet whenever a passphrase was set, so keys come
++//! only from [`WalletSeed::to_seed`], which cannot forget it
++//! (`clippy.toml` bans `Mnemonic::to_seed` everywhere else).
++
++use bip0039::Mnemonic;
++use secrecy::zeroize::Zeroize;
++
++/// A mnemonic and the passphrase that goes with it. An empty passphrase is
++/// BIP-39's "no passphrase": both derive the same seed.
++#[derive(Clone, PartialEq)]
++pub struct WalletSeed {
++    mnemonic: Mnemonic,
++    passphrase: String,
++}
++
++impl WalletSeed {
++    /// A seed from a mnemonic and its passphrase (empty for none).
++    #[must_use]
++    pub fn new(mnemonic: Mnemonic, passphrase: String) -> Self {
++        Self {
++            mnemonic,
++            passphrase,
++        }
++    }
++
++    /// The mnemonic.
++    #[must_use]
++    pub fn mnemonic(&self) -> &Mnemonic {
++        &self.mnemonic
++    }
++
++    /// The passphrase; empty when none was set.
++    #[must_use]
++    pub fn passphrase(&self) -> &str {
++        &self.passphrase
++    }
++
++    /// The 64-byte BIP-39 seed, from the mnemonic and its passphrase.
++    #[must_use]
++    #[allow(clippy::disallowed_methods)] // the one place allowed to: it passes the passphrase
++    pub fn to_seed(&self) -> [u8; 64] {
++        self.mnemonic.to_seed(&self.passphrase)
++    }
++}
++
++/// The passphrase is wiped here; the mnemonic wipes its own words and
++/// entropy as it drops (bip0039 0.14 keeps them in `Zeroizing`; W1-08).
++impl Drop for WalletSeed {
++    fn drop(&mut self) {
++        self.passphrase.zeroize();
++    }
++}
++
++/// Never prints the words or the passphrase: only whether there is one.
++impl std::fmt::Debug for WalletSeed {
++    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
++        f.debug_struct("WalletSeed")
++            .field("words", &self.mnemonic.phrase().split(' ').count())
++            .field("has_passphrase", &!self.passphrase.is_empty())
++            .finish()
++    }
++}
++
++#[cfg(test)]
++mod tests {
++    use super::*;
++
++    const PHRASE: &str = "abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon about";
++
++    fn seed(passphrase: &str) -> WalletSeed {
++        WalletSeed::new(
++            Mnemonic::from_phrase(PHRASE).unwrap(),
++            passphrase.to_string(),
++        )
++    }
++
++    /// BIP-39's published vector for this phrase with passphrase "TREZOR".
++    #[test]
++    fn the_passphrase_reaches_the_seed() {
++        let with = seed("TREZOR").to_seed();
++        assert_eq!(
++            hex::encode(&with[..8]),
++            "c55257c360c07c72",
++            "BIP-39 test vector"
++        );
++        assert_ne!(with, seed("").to_seed());
++    }
++
++    #[test]
++    fn debug_shows_neither_words_nor_passphrase() {
++        let text = format!("{:?}", seed("hunter2"));
++        assert!(!text.contains("abandon"));
++        assert!(!text.contains("hunter2"));
++        assert!(text.contains("has_passphrase: true"));
++    }
++
++    // W1-04: the phrase as the wallet hands it out to be shown is never formatted either
++    const WORDS_24: [&str; 24] = [
++        "zebra", "violin", "oxygen", "walnut", "yellow", "kitten", "lobster", "marble",
++        "nephew", "pepper", "quarter", "rabbit", "salmon", "tomato", "umbrella", "velvet",
++        "wagon", "yogurt", "anchor", "bamboo", "cactus", "dolphin", "eagle", "falcon",
++    ];
++
++    fn recovery_info() -> crate::wallet::RecoveryInfo {
++        crate::wallet::RecoveryInfo {
++            seed_phrase: WORDS_24.join(" "),
++            passphrase: "hunter2".to_string(),
++            birthday: 419_200,
++            no_of_accounts: 2,
++            birthday_adjusted_from: None,
++        }
++    }
++
++    #[test]
++    fn recovery_info_debug_shows_neither_words_nor_passphrase() {
++        let text = format!("{:?}", recovery_info());
++        let tokens: Vec<&str> = text.split(|c: char| !c.is_ascii_alphanumeric()).collect();
++        for word in WORDS_24 {
++            assert!(!tokens.contains(&word), "{word} in {text}");
++        }
++        assert!(!text.contains("hunter2"));
++        assert!(text.contains("419200"), "{text}");
++        assert!(text.contains("has_passphrase: true"), "{text}");
++    }
++
++    // Whether a type implements Display, with no dependency: the inherent const exists
++    // only where T: Display, and a path to it falls back to the trait's otherwise
++    struct Shows<T: ?Sized>(std::marker::PhantomData<T>);
++    trait NotShown {
++        const SHOWN: bool = false;
++    }
++    impl<T: ?Sized> NotShown for Shows<T> {}
++    impl<T: ?Sized + std::fmt::Display> Shows<T> {
++        #[allow(dead_code)]
++        const SHOWN: bool = true;
++    }
++
++    #[test]
++    fn recovery_info_has_no_display() {
++        assert!(Shows::<String>::SHOWN, "the probe itself sees Display");
++        assert!(!Shows::<crate::wallet::RecoveryInfo>::SHOWN);
++    }
++}
++
++// Moved from wallet/disk/testing/tests.rs: the passphrase's file tests live
++// with the passphrase, in Laurel's own file, not inside an upstream one.
++#[cfg(test)]
++/// Current bytes as upstream's layout (before version 45, and upstream's
++/// 45): the same, less the passphrase after the birthday (which must be
++/// empty to drop).
++pub(crate) fn without_passphrase_field(current: &[u8]) -> Vec<u8> {
++    const VERSION_AND_CHAIN: usize = 9;
++    let seed_len = usize::from(current[VERSION_AND_CHAIN]);
++    assert!(seed_len < 253, "a one-byte CompactSize");
++    let passphrase_at = VERSION_AND_CHAIN + 1 + seed_len + 4;
++    assert_eq!(
++        current[passphrase_at..passphrase_at + 8],
++        0u64.to_le_bytes(),
++        "an empty passphrase"
++    );
++    let mut bytes = current[..passphrase_at].to_vec();
++    bytes.extend_from_slice(&current[passphrase_at + 8..]);
++    bytes
++}
++
++/// The passphrase ("25th word") is part of the seed: it changes every key,
++/// survives the wallet file, reaches recovery info and the salvage reader,
++/// and a file from before version 45 reads as having none.
++#[cfg(test)]
++mod passphrase_file {
++    use crate::config::{ChainType, WalletConfig};
++    use crate::wallet::{LightWallet, WalletSettings};
++
++    const PHRASE: &str = "abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon about";
++
++    fn wallet(passphrase: &str) -> LightWallet {
++        LightWallet::new(
++            ChainType::Mainnet,
++            WalletConfig::MnemonicPhraseWithPassphrase {
++                mnemonic_phrase: PHRASE.to_string(),
++                passphrase: passphrase.to_string(),
++                no_of_accounts: 1.try_into().unwrap(),
++                birthday: 2_000_000,
++                wallet_settings: WalletSettings::default(),
++            },
++        )
++        .unwrap()
++    }
++
++    fn first_address(wallet: &LightWallet) -> String {
++        wallet.transparent_addresses().values().next().unwrap().clone()
++    }
++
++    fn saved(wallet: &mut LightWallet) -> Vec<u8> {
++        wallet.save_required = true;
++        wallet.save().unwrap().expect("save required")
++    }
++
++    #[test]
++    fn the_passphrase_changes_every_key() {
++        let plain = wallet("");
++        let with = wallet("Correct Horse");
++        assert_ne!(first_address(&plain), first_address(&with));
++        assert_ne!(first_address(&with), first_address(&wallet("correct horse")), "case counts");
++    }
++
++    #[test]
++    fn an_empty_passphrase_is_the_plain_phrase() {
++        let plain = LightWallet::new(
++            ChainType::Mainnet,
++            WalletConfig::MnemonicPhrase {
++                mnemonic_phrase: PHRASE.to_string(),
++                no_of_accounts: 1.try_into().unwrap(),
++                birthday: 2_000_000,
++                wallet_settings: WalletSettings::default(),
++            },
++        )
++        .unwrap();
++        assert_eq!(first_address(&plain), first_address(&wallet("")));
++    }
++
++    #[test]
++    fn the_passphrase_survives_the_wallet_file() {
++        let mut original = wallet("Correct Horse");
++        let bytes = saved(&mut original);
++        let read = LightWallet::read(bytes.as_slice(), ChainType::Mainnet).unwrap();
++
++        assert_eq!(read.recovery_info().unwrap().passphrase, "Correct Horse");
++        assert_eq!(first_address(&read), first_address(&original));
++
++        let salvaged = LightWallet::read_recovery_info(bytes.as_slice()).unwrap();
++        assert_eq!(salvaged, original.recovery_info().unwrap());
++    }
++
++    #[test]
++    fn a_new_account_derives_with_the_passphrase() {
++        let mut with = wallet("Correct Horse");
++        with.create_new_account().unwrap();
++        let mut plain = wallet("");
++        plain.create_new_account().unwrap();
++        let account = zip32::AccountId::try_from(1).unwrap();
++        let ufvk = |w: &LightWallet| {
++            zcash_keys::keys::UnifiedFullViewingKey::try_from(&w.unified_key_store[&account])
++                .unwrap()
++                .encode(&w.chain_type())
++        };
++        assert_ne!(ufvk(&with), ufvk(&plain));
++    }
++
++    #[test]
++    fn a_file_before_version_45_has_no_passphrase() {
++        let bytes = super::without_passphrase_field(&saved(&mut wallet("")));
++        let mut v44 = bytes.clone();
++        v44[..8].copy_from_slice(&44u64.to_le_bytes());
++        let read = LightWallet::read(v44.as_slice(), ChainType::Mainnet).unwrap();
++        assert_eq!(read.recovery_info().unwrap().passphrase, "");
++        assert_eq!(read.read_version(), 44);
++    }
++
++    /// Laurel wrote the passphrase as version 45 before upstream gave 45 to
++    /// the sync state: such a file still opens, passphrase and all.
++    #[test]
++    fn laurels_version_45_keeps_its_passphrase() {
++        let mut original = wallet("Correct Horse");
++        let mut bytes = saved(&mut original);
++        bytes[..8].copy_from_slice(&45u64.to_le_bytes());
++        let read = LightWallet::read(bytes.as_slice(), ChainType::Mainnet).unwrap();
++        assert_eq!(read.recovery_info().unwrap().passphrase, "Correct Horse");
++        assert_eq!(first_address(&read), first_address(&original));
++        let salvaged = LightWallet::read_recovery_info(bytes.as_slice()).unwrap();
++        assert_eq!(salvaged.passphrase, "Correct Horse");
++    }
++
++    /// Upstream's version 45 has no passphrase field: it opens as none.
++    #[test]
++    fn upstreams_version_45_has_no_passphrase() {
++        let mut original = wallet("");
++        let mut bytes = super::without_passphrase_field(&saved(&mut original));
++        bytes[..8].copy_from_slice(&45u64.to_le_bytes());
++        let read = LightWallet::read(bytes.as_slice(), ChainType::Mainnet).unwrap();
++        assert_eq!(read.recovery_info().unwrap().passphrase, "");
++        assert_eq!(first_address(&read), first_address(&original));
++        let salvaged = LightWallet::read_recovery_info(bytes.as_slice()).unwrap();
++        assert_eq!(salvaged, original.recovery_info().unwrap());
++    }
++
++    #[test]
++    fn a_passphrase_with_no_seed_is_refused() {
++        let mut bytes = LightWallet::serialized_version().to_le_bytes().to_vec();
++        bytes.push(0); // mainnet
++        bytes.push(0); // no seed
++        bytes.extend_from_slice(&2_000_000u32.to_le_bytes());
++        bytes.extend_from_slice(&1u64.to_le_bytes());
++        bytes.push(b'x');
++        bytes.push(0); // no accounts
++        let error = LightWallet::read(bytes.as_slice(), ChainType::Mainnet).unwrap_err();
++        assert!(error.to_string().contains("passphrase but no seed"), "{error}");
++    }
++}
+--- a/zingolib/src/wallet/keys/unified.rs
++++ b/zingolib/src/wallet/keys/unified.rs
+@@ -3,7 +3,6 @@
+ use secrecy::ExposeSecret;
+ use std::io::{self, Read, Write};
+ 
+-use bip0039::Mnemonic;
+ use byteorder::{ReadBytesExt, WriteBytesExt};
+ 
+ use pepper_sync::keys::transparent::TransparentScope;
+@@ -19,6 +18,7 @@ use zip32::{AccountId, DiversifierIndex};
+ 
+ use crate::config::ChainType;
+ use crate::wallet::error::KeyError;
++use crate::wallet::keys::seed::WalletSeed;
+ use crate::wallet::traits::ReadableWriteable;
+ 
+ pub(crate) const KEY_TYPE_EMPTY: u8 = 0;
+@@ -56,16 +56,15 @@ impl UnifiedKeyStore {
+         Ok(UnifiedKeyStore::Spend(Box::new(usk)))
+     }
+ 
+-    /// Create a unified key store from a mnemonic.
++    /// Create a unified key store from a mnemonic and its passphrase.
+     ///
+     /// Refer to BIP-0039 for details on seed generation from mnemonic phrases.
+     pub fn new_from_mnemonic(
+         chain_type: ChainType,
+-        mnemonic: &Mnemonic,
++        seed: &WalletSeed,
+         account_index: zip32::AccountId,
+     ) -> Result<Self, KeyError> {
+-        let seed = mnemonic.to_seed("");
+-        Self::new_from_seed(chain_type, &seed, account_index)
++        Self::new_from_seed(chain_type, &seed.to_seed(), account_index)
+     }
+ 
+     /// Create a unified key store from unified spending key bytes.
+--- a/zingolib/src/wallet/migration/parts.rs
++++ b/zingolib/src/wallet/migration/parts.rs
+@@ -19,7 +19,6 @@ use zcash_primitives::transaction::TxId;
+ use zcash_protocol::consensus::BlockHeight;
+ 
+ use crate::wallet::error::WalletError;
+-use crate::wallet::utils;
+ 
+ /// Stable identifier of a part within one migration: its index in
+ /// [`super::MigrationState::parts`].
+@@ -955,15 +954,15 @@ impl ProveOnce {
+             )
+             .map_err(|e| WalletError::MigrationBuild(format!("{e}")))?;
+ 
+-        let sapling_prover = utils::LazySaplingProver::default();
++        // Orchard notes in, Ironwood out: no Sapling spend to prove
+         let build_result = builder
+             .build(
+                 &zcash_transparent::builder::TransparentSigningSet::new(),
+                 &[usk.sapling().clone()],
+                 &[usk.orchard().into()],
+                 crate::utils::system_rng(),
+-                &sapling_prover,
+-                &sapling_prover,
++                &crate::wallet::sapling_key::SpendKey::NotNeeded,
++                crate::wallet::sapling_key::output_prover(),
+                 &fee_rule,
+             )
+             .map_err(|e| WalletError::MigrationBuild(format!("{e:?}")))?;
+--- a/zingolib/src/wallet/migration/split.rs
++++ b/zingolib/src/wallet/migration/split.rs
+@@ -10,7 +10,6 @@ use zcash_protocol::value::Zatoshis;
+ 
+ use super::params::MigrationParams;
+ use super::quantize::decompose;
+-use crate::wallet::utils;
+ 
+ /// ZIP-317 marginal fee per logical action, in zatoshis.
+ /// [`zcash_primitives::transaction::fees::zip317::MARGINAL_FEE`] as a `u64`,
+@@ -836,15 +835,15 @@ impl crate::wallet::LightWallet {
+             }
+         }
+ 
+-        let sapling_prover = utils::LazySaplingProver::default();
++        // Orchard notes in, Ironwood out: no Sapling spend to prove
+         let build_result = builder
+             .build(
+                 &zcash_transparent::builder::TransparentSigningSet::new(),
+                 &[usk.sapling().clone()],
+                 &[usk.orchard().into()],
+                 crate::utils::system_rng(),
+-                &sapling_prover,
+-                &sapling_prover,
++                &crate::wallet::sapling_key::SpendKey::NotNeeded,
++                crate::wallet::sapling_key::output_prover(),
+                 &fee_rule,
+             )
+             .map_err(|e| WalletError::MigrationBuild(format!("{e:?}")))?;
+--- a/zingolib/src/wallet/output.rs
++++ b/zingolib/src/wallet/output.rs
+@@ -19,6 +19,36 @@ use query::OutputQuery;
+ use query::OutputSpendStatusQuery;
+ use zingo_status::confirmation_status::ConfirmationStatus;
+ 
++// LAUREL PATCH (spend pool): "pay from this pool". Proposals are built
++// synchronously on the calling thread, so a scope set around one proposal
++// limits note selection to one pool without changing the wallet struct or
++// its file format. Every selection path, budgeted, fallback and all-funds,
++// reads notes through `spendable_notes`, so the gate there can't be bypassed.
++thread_local! {
++    static SPEND_POOL: std::cell::Cell<Option<PoolType>> = const { std::cell::Cell::new(None) };
++}
++
++/// Limits note selection to `pool` until dropped (`None`: every pool).
++pub struct SpendPoolScope(Option<PoolType>);
++
++impl SpendPoolScope {
++    /// Sets the pool for proposals built on this thread while the scope lives.
++    pub fn only(pool: Option<PoolType>) -> Self {
++        let previous = SPEND_POOL.with(|cell| cell.replace(pool));
++        Self(previous)
++    }
++}
++
++impl Drop for SpendPoolScope {
++    fn drop(&mut self) {
++        SPEND_POOL.with(|cell| cell.set(self.0));
++    }
++}
++
++fn spend_pool_allows(pool: PoolType) -> bool {
++    SPEND_POOL.with(|cell| cell.get().is_none_or(|only| only == pool))
++}
++
+ pub mod query;
+ 
+ /// Output reference.
+@@ -250,6 +280,9 @@ impl LightWallet {
+         account: zip32::AccountId,
+         include_potentially_spent_notes: bool,
+     ) -> Result<Vec<&'a N>, WalletError> {
++        if !spend_pool_allows(N::POOL_TYPE) {
++            return Ok(Vec::new());
++        }
+         let Some(spend_horizon) = self.spend_horizon(false) else {
+             return Err(WalletError::NoSyncData);
+         };
+--- /dev/null
++++ b/zingolib/src/wallet/sapling_key.rs
+@@ -0,0 +1,249 @@
++//! LAUREL PATCH (size): Sapling's two proving keys, kept apart.
++//!
++//! The output key (3.6 MB) is compiled in: any payment to a Sapling address
++//! proves with it. The spend key (48 MB) is not: only a payment that spends
++//! Sapling notes proves with it, and compiled in it was two thirds of the
++//! app's download, for money most wallets no longer hold. The app says
++//! where a copy is ([`use_spend_params`]); every use reads the file again
++//! and checks it is the published key, so a file changed after it was
++//! checked is refused, never proven with.
++
++use std::path::{Path, PathBuf};
++use std::sync::{Mutex, OnceLock};
++
++use sapling_crypto::bundle::GrothProofBytes;
++use sapling_crypto::circuit::{OutputParameters, SpendParameters};
++use sapling_crypto::prover::SpendProver;
++
++use crate::params_hashes::{SAPLING_OUTPUT_HASH, SAPLING_SPEND_HASH};
++
++/// The spend key's file name, as Zcash publishes it and wallets keep it.
++pub const SPEND_PARAMS_NAME: &str = "sapling-spend.params";
++/// Its size: anything longer is not it, so a download stops there.
++pub const SPEND_PARAMS_BYTES: u64 = 47_958_396;
++/// Where Zcash publishes it, whole or in parts `.part.1`, `.part.2`
++/// (zcash_proofs' own source: its hash is checked, not the server).
++pub const SPEND_PARAMS_URL: &str = "https://download.z.cash/downloads/sapling-spend.params";
++
++// the checked copy the app named, if any
++static SPEND_PATH: Mutex<Option<(PathBuf, Stamp)>> = Mutex::new(None);
++
++// a file as it was when checked: its size and when it last changed. A copy
++// put over it since, or cut short, is not ready until it is checked again
++type Stamp = (u64, Option<std::time::SystemTime>);
++
++fn stamp(path: &Path) -> Option<Stamp> {
++    std::fs::metadata(path).ok().map(|m| (m.len(), m.modified().ok()))
++}
++// the compiled-in output key, read once
++static OUTPUT: OnceLock<OutputParameters> = OnceLock::new();
++
++/// Why the spend key can't be used.
++#[derive(Debug, thiserror::Error)]
++pub enum SaplingKeyError {
++    /// No copy was named, or the named one is gone.
++    #[error("Sapling's spend proving key ({SPEND_PARAMS_NAME}) is not on this device")]
++    Missing,
++    /// A file that is not the published key: damaged, cut short, or swapped.
++    #[error("{0} is not Sapling's published spend proving key")]
++    NotPublished(PathBuf),
++    /// The file couldn't be read.
++    #[error("reading {0}: {1}")]
++    Read(PathBuf, std::io::Error),
++}
++
++/// Whether these bytes are the published spend key (a download, before it is kept).
++pub fn is_spend_key(bytes: &[u8]) -> bool {
++    bytes.len() as u64 == SPEND_PARAMS_BYTES
++        && blake2b_simd::blake2b(bytes).to_hex().as_str() == SAPLING_SPEND_HASH
++}
++
++/// The file's bytes, if they are the published spend key.
++fn read_published(path: &Path) -> Result<Vec<u8>, SaplingKeyError> {
++    let len = std::fs::metadata(path)
++        .map_err(|e| SaplingKeyError::Read(path.to_path_buf(), e))?
++        .len();
++    // the size first: a wrong file of any length is refused without reading it all
++    if len != SPEND_PARAMS_BYTES {
++        return Err(SaplingKeyError::NotPublished(path.to_path_buf()));
++    }
++    let bytes = std::fs::read(path).map_err(|e| SaplingKeyError::Read(path.to_path_buf(), e))?;
++    if !is_spend_key(&bytes) {
++        return Err(SaplingKeyError::NotPublished(path.to_path_buf()));
++    }
++    Ok(bytes)
++}
++
++/// Names the copy of the spend key to prove with, once it checks out.
++pub fn use_spend_params(path: &Path) -> Result<(), SaplingKeyError> {
++    read_published(path)?;
++    let checked = stamp(path).ok_or(SaplingKeyError::Missing)?;
++    *SPEND_PATH.lock().unwrap_or_else(|e| e.into_inner()) = Some((path.to_path_buf(), checked));
++    Ok(())
++}
++
++/// Whether a named copy is still there, unchanged since it was checked (it
++/// is checked again when used besides).
++pub fn spend_params_ready() -> bool {
++    SPEND_PATH
++        .lock()
++        .unwrap_or_else(|e| e.into_inner())
++        .as_ref()
++        .is_some_and(|(p, checked)| stamp(p).as_ref() == Some(checked))
++}
++
++/// The compiled-in output key.
++pub fn output_prover() -> &'static OutputParameters {
++    OUTPUT.get_or_init(|| {
++        let bytes = crate::SaplingParams::OUTPUT;
++        // build.rs embeds only the published key; checked once more here, as
++        // the spend key is at every use, for the price of hashing 3.6 MB once
++        assert_eq!(
++            blake2b_simd::blake2b(bytes).to_hex().as_str(),
++            SAPLING_OUTPUT_HASH,
++            "the embedded output key is the published one"
++        );
++        OutputParameters::read(bytes, false).expect("the embedded output key parses")
++    })
++}
++
++/// What proves Sapling spends: the key, read and checked now, when the
++/// transaction spends Sapling notes; nothing when it doesn't, as a builder
++/// with no Sapling spends asks for no spend proof (sapling-crypto's
++/// `BundleType::num_spends`: none requested, none padded).
++pub enum SpendKey {
++    /// The published key, read and checked for this transaction.
++    Loaded(Box<SpendParameters>),
++    /// The transaction spends no Sapling notes.
++    NotNeeded,
++}
++
++#[cfg(test)]
++thread_local! {
++    static SPEND_LOADS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
++}
++
++/// How many times this thread went for the spend key (a test's witness that
++/// a build without Sapling spends never does).
++#[cfg(test)]
++pub(crate) fn spend_key_loads() -> usize {
++    SPEND_LOADS.with(std::cell::Cell::get)
++}
++
++impl SpendKey {
++    pub(crate) fn for_spends(spends_sapling: bool) -> Result<Self, SaplingKeyError> {
++        if !spends_sapling {
++            return Ok(Self::NotNeeded);
++        }
++        #[cfg(test)]
++        SPEND_LOADS.with(|loads| loads.set(loads.get() + 1));
++        let path = SPEND_PATH
++            .lock()
++            .unwrap_or_else(|e| e.into_inner())
++            .as_ref()
++            .map(|(p, _)| p.clone())
++            .ok_or(SaplingKeyError::Missing)?;
++        if !path.is_file() {
++            return Err(SaplingKeyError::Missing);
++        }
++        let bytes = read_published(&path)?;
++        let params = SpendParameters::read(&bytes[..], false)
++            .map_err(|e| SaplingKeyError::Read(path, e))?;
++        Ok(Self::Loaded(Box::new(params)))
++    }
++}
++
++impl SpendProver for SpendKey {
++    type Proof = <SpendParameters as SpendProver>::Proof;
++
++    fn prepare_circuit(
++        proof_generation_key: sapling_crypto::ProofGenerationKey,
++        diversifier: sapling_crypto::Diversifier,
++        rseed: sapling_crypto::Rseed,
++        value: sapling_crypto::value::NoteValue,
++        alpha: jubjub::Fr,
++        rcv: sapling_crypto::value::ValueCommitTrapdoor,
++        anchor: bls12_381::Scalar,
++        merkle_path: sapling_crypto::MerklePath,
++    ) -> Option<sapling_crypto::circuit::Spend> {
++        SpendParameters::prepare_circuit(
++            proof_generation_key,
++            diversifier,
++            rseed,
++            value,
++            alpha,
++            rcv,
++            anchor,
++            merkle_path,
++        )
++    }
++
++    fn create_proof<R: rand::Rng>(
++        &self,
++        circuit: sapling_crypto::circuit::Spend,
++        rng: &mut R,
++    ) -> Self::Proof {
++        match self {
++            Self::Loaded(params) => params.create_proof(circuit, rng),
++            // for_spends(false) only where the transaction has no Sapling spend
++            Self::NotNeeded => unreachable!("a Sapling spend proof for a transaction said to have none"),
++        }
++    }
++
++    fn encode_proof(proof: Self::Proof) -> GrothProofBytes {
++        SpendParameters::encode_proof(proof)
++    }
++}
++
++#[cfg(test)]
++mod tests {
++    use super::*;
++
++    /// HYPOTHESIS: what was compiled in is the published output key.
++    /// Falsified by a changed output blob. (A shipped build has no spend
++    /// key to look for: `SaplingParams::SPEND` exists only for the tests
++    /// and testutils, whose mock chain proves spends without a fetch.)
++    #[test]
++    fn the_published_output_key_is_embedded() {
++        let _ = output_prover(); // checks the output key's hash
++    }
++
++    /// HYPOTHESIS: a file is refused unless it is the published spend key,
++    /// whatever its size, and a transaction without Sapling spends needs
++    /// none. Falsified by a same-size impostor or a short file accepted.
++    #[test]
++    fn a_spend_key_is_the_published_one_or_refused() {
++        let dir = tempfile::tempdir().unwrap();
++        let short = dir.path().join("short.params");
++        std::fs::write(&short, b"not a key").unwrap();
++        assert!(matches!(use_spend_params(&short), Err(SaplingKeyError::NotPublished(_))));
++
++        let impostor = vec![0u8; SPEND_PARAMS_BYTES as usize];
++        assert!(!is_spend_key(&impostor));
++        let at = dir.path().join("impostor.params");
++        std::fs::write(&at, &impostor).unwrap();
++        assert!(matches!(use_spend_params(&at), Err(SaplingKeyError::NotPublished(_))));
++
++        assert!(matches!(use_spend_params(&dir.path().join("absent")), Err(SaplingKeyError::Read(..))));
++        assert!(!spend_params_ready(), "nothing refused is named");
++        assert!(matches!(SpendKey::for_spends(false), Ok(SpendKey::NotNeeded)));
++        assert!(matches!(SpendKey::for_spends(true), Err(SaplingKeyError::Missing)));
++
++        // the published key, named: ready. Changed after (a copy put over it, cut
++        // short): not ready, and refused at use. One test, as the name is the process's
++        let published = crate::wallet::utils::get_zcash_params_path().unwrap().join(SPEND_PARAMS_NAME);
++        if !published.is_file() {
++            return;		// the build fetches it (build.rs); a machine without it can't say more
++        }
++        let copy = dir.path().join(SPEND_PARAMS_NAME);
++        std::fs::copy(&published, &copy).unwrap();
++        use_spend_params(&copy).unwrap();
++        assert!(spend_params_ready());
++        assert!(matches!(SpendKey::for_spends(true), Ok(SpendKey::Loaded(_))));
++        let mut bytes = std::fs::read(&copy).unwrap();
++        bytes[1000] ^= 1;
++        std::fs::write(&copy, &bytes).unwrap();
++        assert!(!spend_params_ready(), "a key changed since it was checked is checked again");
++        assert!(matches!(SpendKey::for_spends(true), Err(SaplingKeyError::NotPublished(_))));
++    }
++}
+--- a/zingolib/src/wallet/send.rs
++++ b/zingolib/src/wallet/send.rs
+@@ -17,7 +17,6 @@ use zcash_protocol::{ShieldedPool, TxId};
+ 
+ use super::LightWallet;
+ use super::error::{CalculateTransactionError, KeyError};
+-use crate::wallet::utils;
+ 
+ impl LightWallet {
+     /// Creates and stores transaction from the given `proposal`, returning the txids for each calculated transaction.
+@@ -69,7 +68,16 @@ impl LightWallet {
+             .ok_or(KeyError::NoAccountKeys)?
+             .try_into()?;
+ 
+-        let sapling_prover = utils::LazySaplingProver::default();
++        // LAUREL PATCH (size): the spend key only when a step spends Sapling notes
++        let spends_sapling = proposal.steps().iter().any(|step| {
++            step.shielded_inputs().is_some_and(|inputs| {
++                inputs
++                    .notes()
++                    .iter()
++                    .any(|n| matches!(n.note(), zcash_client_backend::wallet::Note::Sapling(_)))
++            })
++        });
++        let spend_prover = crate::wallet::sapling_key::SpendKey::for_spends(spends_sapling)?;
+ 
+         let expiry_height = self.proposal_expiry_height(&proposal);
+ 
+@@ -78,8 +86,8 @@ impl LightWallet {
+             &chain_type,
+             &SystemClock,
+             &mut crate::utils::system_rng(),
+-            &sapling_prover,
+-            &sapling_prover,
++            &spend_prover,
++            crate::wallet::sapling_key::output_prover(),
+             &SpendingKeys::new(usk),
+             zcash_client_backend::wallet::OvkPolicy::Sender,
+             &proposal,
+@@ -368,17 +376,16 @@ mod tests {
+     use crate::lightclient::LightClient;
+     use crate::testutils::lightclient::from_inputs;
+     use crate::testutils::synthetic_wallet::{self, SyntheticWalletBuilder};
+-    use crate::wallet::utils;
+ 
+     const ORCHARD_FUNDS: u64 = 100_000;
+     const PAYMENT: u64 = 20_000;
+ 
+     /// HYPOTHESIS: a wallet that holds Orchard funds alone builds its
+-    /// transaction without parsing the Sapling prover, so a device with no
+-    /// Sapling notes never parses the embedded Sapling parameters.
+-    /// Falsified if the build parses them on this thread.
++    /// transaction without the Sapling spend key, so a device with no
++    /// Sapling notes never needs it fetched. Falsified if the build goes
++    /// for it on this thread.
+     #[tokio::test]
+-    async fn orchard_only_build_parses_no_sapling_prover() {
++    async fn orchard_only_build_needs_no_sapling_spend_key() {
+         let wallet = SyntheticWalletBuilder::new(zingo_test_vectors::seeds::HOSPITAL_MUSEUM_SEED)
+             .orchard_note(ORCHARD_FUNDS)
+             .build();
+@@ -394,7 +401,7 @@ mod tests {
+         .await
+         .expect("an Orchard-only wallet proposes an Orchard payment");
+ 
+-        let parses_before = utils::sapling_prover_parses();
++        let loads_before = crate::wallet::sapling_key::spend_key_loads();
+         client
+             .wallet()
+             .write()
+@@ -403,10 +410,12 @@ mod tests {
+             .await
+             .expect("the Orchard-only transaction builds");
+ 
++        // LAUREL PATCH (size): upstream counts parses of its embedded spend
++        // key; Laurel's is fetched, so the witness is that it was never sought
+         assert_eq!(
+-            utils::sapling_prover_parses(),
+-            parses_before,
+-            "an Orchard-only build parsed the Sapling prover"
++            crate::wallet::sapling_key::spend_key_loads(),
++            loads_before,
++            "an Orchard-only build went for the Sapling spend key"
+         );
+     }
+ 
+--- a/zingolib/src/wallet/transparent.rs
++++ b/zingolib/src/wallet/transparent.rs
+@@ -29,7 +29,6 @@ use pepper_sync::keys::transparent::TransparentAddressId;
+ 
+ use super::LightWallet;
+ use super::error::{KeyError, WalletError};
+-use crate::wallet::utils;
+ 
+ /// The maximum size, in bytes, of an OP_RETURN payload that relays on the
+ /// network. This is the same limit the upstream transaction builder
+@@ -214,15 +213,15 @@ impl LightWallet {
+             .add_transparent_null_data_output::<std::convert::Infallible>(data.as_bytes())
+             .map_err(|e| WalletError::TransparentBuild(format!("op_return: {e:?}")))?;
+ 
+-        let prover = utils::LazySaplingProver::default();
++        // a transparent coin in, transparent outputs: no Sapling spend to prove
+         let build_result = builder
+             .build(
+                 &signing_set,
+                 &[],
+                 &[],
+                 crate::utils::system_rng(),
+-                &prover,
+-                &prover,
++                &crate::wallet::sapling_key::SpendKey::NotNeeded,
++                crate::wallet::sapling_key::output_prover(),
+                 &zip317::FeeRule::standard(),
+             )
+             .map_err(|e| WalletError::TransparentBuild(format!("build: {e:?}")))?;
+--- a/zingolib/src/wallet/utils.rs
++++ b/zingolib/src/wallet/utils.rs
+@@ -1,15 +1,10 @@
+ //! TODO: Add Mod Description Here!
+ use byteorder::{LittleEndian, ReadBytesExt, WriteBytesExt};
+-use sapling_crypto::{
+-    bundle as sapling_bundle, circuit as sapling_circuit, keys as sapling_keys,
+-    prover as sapling_prover, value as sapling_value,
+-};
+ use std::{
+     io::{self, Read, Write},
+     path::PathBuf,
+ };
+ use zcash_primitives::transaction::TxId;
+-use zcash_proofs::prover;
+ use zcash_protocol::memo::MemoBytes;
+ 
+ pub(crate) const MAX_STRING_LENGTH: u64 = 1 << 16;
+@@ -75,113 +70,6 @@ pub fn txid_from_slice(txid: &[u8]) -> TxId {
+     TxId::from_bytes(txid_bytes)
+ }
+ 
+-#[cfg(test)]
+-thread_local! {
+-    static SAPLING_PROVER_PARSES: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+-}
+-
+-#[cfg(test)]
+-pub(crate) fn sapling_prover_parses() -> usize {
+-    SAPLING_PROVER_PARSES.with(std::cell::Cell::get)
+-}
+-
+-/// - Increments this thread's count of Sapling parameter parses.
+-#[cfg(test)]
+-fn note_sapling_prover_parse() {
+-    SAPLING_PROVER_PARSES.with(|parses| parses.set(parses.get() + 1));
+-}
+-
+-#[derive(Default)]
+-pub(crate) struct LazySaplingProver {
+-    prover: std::sync::OnceLock<prover::LocalTxProver>,
+-}
+-
+-impl LazySaplingProver {
+-    /// - Parses the embedded Sapling parameters on this adapter's first call.
+-    fn prover(&self) -> &prover::LocalTxProver {
+-        self.prover.get_or_init(|| {
+-            #[cfg(test)]
+-            note_sapling_prover_parse();
+-            prover::LocalTxProver::from_bytes(
+-                crate::SaplingParams::SPEND,
+-                crate::SaplingParams::OUTPUT,
+-            )
+-        })
+-    }
+-}
+-
+-impl sapling_prover::SpendProver for LazySaplingProver {
+-    type Proof = <prover::LocalTxProver as sapling_prover::SpendProver>::Proof;
+-
+-    fn prepare_circuit(
+-        proof_generation_key: sapling_crypto::ProofGenerationKey,
+-        diversifier: sapling_crypto::Diversifier,
+-        rseed: sapling_crypto::Rseed,
+-        value: sapling_value::NoteValue,
+-        alpha: jubjub::Fr,
+-        rcv: sapling_value::ValueCommitTrapdoor,
+-        anchor: jubjub::Fq,
+-        merkle_path: sapling_crypto::MerklePath,
+-    ) -> Option<sapling_circuit::Spend> {
+-        <prover::LocalTxProver as sapling_prover::SpendProver>::prepare_circuit(
+-            proof_generation_key,
+-            diversifier,
+-            rseed,
+-            value,
+-            alpha,
+-            rcv,
+-            anchor,
+-            merkle_path,
+-        )
+-    }
+-
+-    /// - Parses the embedded Sapling parameters if this adapter has not yet.
+-    fn create_proof<R: rand::Rng>(
+-        &self,
+-        circuit: sapling_circuit::Spend,
+-        rng: &mut R,
+-    ) -> Self::Proof {
+-        sapling_prover::SpendProver::create_proof(self.prover(), circuit, rng)
+-    }
+-
+-    fn encode_proof(proof: Self::Proof) -> sapling_bundle::GrothProofBytes {
+-        <prover::LocalTxProver as sapling_prover::SpendProver>::encode_proof(proof)
+-    }
+-}
+-
+-impl sapling_prover::OutputProver for LazySaplingProver {
+-    type Proof = <prover::LocalTxProver as sapling_prover::OutputProver>::Proof;
+-
+-    fn prepare_circuit(
+-        esk: &sapling_keys::EphemeralSecretKey,
+-        payment_address: sapling_crypto::PaymentAddress,
+-        rcm: jubjub::Fr,
+-        value: sapling_value::NoteValue,
+-        rcv: sapling_value::ValueCommitTrapdoor,
+-    ) -> sapling_circuit::Output {
+-        <prover::LocalTxProver as sapling_prover::OutputProver>::prepare_circuit(
+-            esk,
+-            payment_address,
+-            rcm,
+-            value,
+-            rcv,
+-        )
+-    }
+-
+-    /// - Parses the embedded Sapling parameters if this adapter has not yet.
+-    fn create_proof<R: rand::Rng>(
+-        &self,
+-        circuit: sapling_circuit::Output,
+-        rng: &mut R,
+-    ) -> Self::Proof {
+-        sapling_prover::OutputProver::create_proof(self.prover(), circuit, rng)
+-    }
+-
+-    fn encode_proof(proof: Self::Proof) -> sapling_bundle::GrothProofBytes {
+-        <prover::LocalTxProver as sapling_prover::OutputProver>::encode_proof(proof)
+-    }
+-}
+-
+ /// Returns the path to the default directory that the Zcash proving parameters are located in.
+ pub fn get_zcash_params_path() -> std::io::Result<PathBuf> {
+     zcash_proofs::default_params_folder()
+@@ -192,20 +80,6 @@ pub fn get_zcash_params_path() -> std::io::Result<PathBuf> {
+ mod tests {
+     use super::*;
+ 
+-    /// HYPOTHESIS: the embedded Sapling parameters are present whole, so
+-    /// loading them is infallible. Falsified if either blob is empty.
+-    #[test]
+-    fn embedded_sapling_params_load_whole() {
+-        assert!(
+-            !crate::SaplingParams::OUTPUT.is_empty(),
+-            "output params are embedded"
+-        );
+-        assert!(
+-            !crate::SaplingParams::SPEND.is_empty(),
+-            "spend params are embedded"
+-        );
+-    }
+-
+     #[test]
+     fn test_memo_bytes_from_string_plain_text() {
+         let result = memo_bytes_from_string("Hello World".to_string());

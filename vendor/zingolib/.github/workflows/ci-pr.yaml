@@ -1,0 +1,422 @@
+name: CI
+
+on:
+  workflow_call:
+    inputs:
+      # The nightly builds every ABI, packages one AAR from them, and builds
+      # the XCFramework, so it skips this workflow's x86_64 and iOS builds.
+      skip-binding-layer-build:
+        required: false
+        type: boolean
+        default: false
+      # The cargo-hack subcommand. A pull request checks every feature
+      # set; the nightly builds every feature set through this input, so
+      # one job holds the flags for both.
+      cargo-hack-subcommand:
+        required: false
+        type: string
+        default: check
+  workflow_dispatch:
+  pull_request:
+    types: [opened, synchronize, reopened, ready_for_review]
+    paths:
+      - "**/*.rs"
+      - "**/Cargo.toml"
+      - "**/Cargo.lock"
+      - ".cargo/**"
+      - "rust-toolchain.toml"
+      - "bindings/**"
+      - "**/uniffi.toml"
+      - "zingo-ffi/lib/src/exported_surface.snapshot.txt"
+      - ".github/workflows/**"
+      - "deny.toml"
+      - ".github/actions/**"
+  push:
+    branches: [stable, dev]
+
+# One CI tree per pull request: a new commit on a PR'd branch cancels the
+# superseded commit's still-running jobs (including the container test
+# matrix called through test.yaml), returning those runners to the pool.
+# Pushes to stable/dev group by ref but never cancel a running tree —
+# GitHub instead collapses any queued runs behind it to the newest.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  reject-trailing-whitespace:
+    uses: zingolabs/infrastructure/.github/workflows/trailing-whitespace.yaml@20485fed7a080e381130ed8120419dc81acae641
+
+  # cargo-deny resolves the dependency graph without compiling, so the
+  # pinned toolchain serves only `cargo metadata`. The root workspace
+  # holds every crate but tools/workbench, which is its own workspace, so
+  # each of the two is scanned on its own against the one deny.toml.
+  # `--locked` keeps the scan on the committed lockfile.
+  cargo-deny:
+    name: Cargo Deny
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    env:
+      CARGO_DENY_VERSION: "0.19.0"
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v6
+
+      - name: Setup Rust and the cargo cache
+        uses: ./.github/actions/rust-setup
+
+      - name: Install cargo-deny
+        uses: taiki-e/install-action@v2
+        with:
+          tool: cargo-deny@${{ env.CARGO_DENY_VERSION }}
+
+      - name: Check bans in the root workspace
+        run: cargo deny --locked check --config deny.toml bans
+
+      - name: Check bans in tools/workbench
+        run: >-
+          cargo deny --manifest-path tools/workbench/Cargo.toml --locked
+          check --config deny.toml bans
+
+  # The three gates the root workspace keeps from cargo-checkmate, each
+  # at the scope the phase had: rustfmt over every crate, clippy over
+  # the library and binary targets with the default features (the nym
+  # job lints every target of zingolib and zingo-cli under nym, and the
+  # test archive compiles every test target with warnings denied), and
+  # rustdoc over the workspace's own crates only. The
+  # checkmate doc phase documented every dependency with warnings denied,
+  # six minutes a run that a dependency's rustdoc warning could fail.
+  # The check and build phases are covered by the cargo-hack sweep and
+  # the test archive build. The proxy crate is excluded here because it
+  # turns on the `nym` feature of zingo-netutils, which would unify the
+  # nym-sdk stack into the whole build; the nym feature job lints it.
+  root-lints:
+    name: Format, clippy and rustdoc (root workspace)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    env:
+      RUSTFLAGS: -D warnings
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v6
+
+      - name: Setup Rust and the cargo cache
+        uses: ./.github/actions/rust-setup
+
+      - name: Format
+        run: cargo fmt --all --check
+
+      - name: Clippy
+        run: cargo clippy --workspace --exclude zingo-nym-proxy-ffi -- -D warnings
+
+      - name: Doc
+        run: cargo doc --workspace --exclude zingo-nym-proxy-ffi --no-deps
+        env:
+          RUSTDOCFLAGS: -D warnings
+
+  # The draft state of the pull request when this job runs. The event
+  # payload holds the state at the time of the event. A push and a "ready
+  # for review" seconds apart start two runs, and the run that survives
+  # the concurrency group can carry a payload that says draft. A run with
+  # no pull request reports false.
+  draft-state:
+    name: Draft state
+    runs-on: ubuntu-24.04
+    outputs:
+      draft: ${{ steps.read.outputs.draft }}
+    steps:
+      - name: Read the draft state of the pull request
+        id: read
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PULL_REQUEST: ${{ github.event.pull_request.number }}
+        run: |
+          draft=false
+          if [ -n "$PULL_REQUEST" ]; then
+            draft="$(gh api "repos/$GITHUB_REPOSITORY/pulls/$PULL_REQUEST" --jq '.draft')"
+          fi
+          echo "draft state: $draft"
+          echo "draft=$draft" >> "$GITHUB_OUTPUT"
+
+  # zingolib is upstream of its consumers. No file under .github names the
+  # repository of a consumer, in a call, a checkout, a command, or a comment.
+  ci-independent-of-consumers:
+    name: CI independent of consumers
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v6
+
+      - name: Reject the name of a consumer
+        run: |
+          if grep --recursive --line-number --ignore-case --extended-regexp \
+            'zingo[-_](mobile|pc|delegator)' .github; then
+            echo "::error::a file under .github names a consumer of zingolib"
+            exit 1
+          fi
+
+  # .github/actions/rust-setup holds the one toolchain and cache policy.
+  # No workflow names the toolchain action or the cache action directly.
+  one-rust-setup:
+    name: One Rust setup
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v6
+
+      - name: Reject a toolchain or cache step outside the action
+        run: |
+          if grep --recursive --line-number --extended-regexp \
+            '^ *(- )?uses: .*(setup-rust-toolchain|rust-cache)' .github/workflows; then
+            echo "::error::a workflow bypasses .github/actions/rust-setup"
+            exit 1
+          fi
+
+  # On a pull_request event the inputs are empty, so each expression
+  # below falls back to the check.
+  cargo-hack-check:
+    name: Cargo Hack ${{ inputs.cargo-hack-subcommand == 'build' && 'Build' || 'Check' }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: ${{ inputs.cargo-hack-subcommand == 'build' && 90 || 45 }}
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v6
+
+      # The nightly's build and the pull request's check share one
+      # GITHUB_JOB, so the subcommand keys the cache.
+      - name: Setup Rust and the cargo cache
+        uses: ./.github/actions/rust-setup
+        with:
+          key: ${{ inputs.cargo-hack-subcommand || 'check' }}
+
+      # The flags are the action's defaults plus two exclusions and one
+      # excluded feature. zingo-uniffi-bindgen is a binary with no library
+      # target and no features, and `--lib` fails on a package without one.
+      # zingo-nym-proxy-ffi turns on the `nym` feature of zingo-netutils, and
+      # `nym` itself is excluded from the powerset, because its nym-sdk stack
+      # would rebuild once per feature subset; the nym feature job below
+      # checks the two crates with every feature on. The rest of netutils'
+      # feature powerset stays in the sweep.
+      - name: Run cargo-hack
+        uses: zingolabs/infrastructure/.github/actions/cargo-hack@20485fed7a080e381130ed8120419dc81acae641
+        with:
+          hack-subcommand: ${{ inputs.cargo-hack-subcommand || 'check' }}
+          hack-flags: "--workspace --exclude zingo-uniffi-bindgen --exclude zingo-nym-proxy-ffi --exclude-features nym --feature-powerset --lib --bins --tests --target-dir target/hack"
+
+  # The `nym` feature of zingo-netutils compiles the nym-sdk stack, and the
+  # proxy crate turns it on. The --workspace jobs above and the nextest
+  # archive in test.yaml exclude the proxy crate so that feature
+  # unification keeps the stack out of every other build; this job checks
+  # the two crates with every feature on and runs the proxy crate's tests.
+  netutils-nym:
+    name: zingo-netutils (nym feature)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    env:
+      RUSTFLAGS: -D warnings
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v6
+
+      - name: Setup Rust and the cargo cache
+        uses: ./.github/actions/rust-setup
+
+      - name: Clippy
+        run: >-
+          cargo clippy --package zingo-netutils --package zingo-nym-proxy-ffi
+          --all-targets --all-features -- -D warnings
+
+      # The proxy crate's live-mixnet feature builds a test that reaches the
+      # real Nym network, so the proxy crate's tests run with it off.
+      - name: Test
+        run: cargo test --package zingo-netutils --all-features
+
+      - name: Test the proxy crate
+        run: cargo test --package zingo-nym-proxy-ffi
+
+      # The live test reaches the real Nym network, so it may fail on the
+      # network without failing the check (zingolib/0054). One thread keeps
+      # its cases from sharing the proxy. The timeout bounds a stuck
+      # network: the test's four cases each allow 180 seconds to start and
+      # 90 seconds to stop, which is 18 minutes, and the rest is the build.
+      - name: Live mixnet start (may fail on the network)
+        continue-on-error: true
+        timeout-minutes: 25
+        run: |
+          cargo test --package zingo-nym-proxy-ffi \
+            --features live-mixnet --test live_mixnet -- --test-threads=1
+
+      # The root-lints job documents the members with their default
+      # features and without the proxy crate, and clippy does not run
+      # rustdoc lints, so the nym feature needs its own doc gate.
+      - name: Doc
+        run: >-
+          cargo doc --package zingo-netutils --package zingo-nym-proxy-ffi
+          --all-features --no-deps
+        env:
+          RUSTDOCFLAGS: -D warnings
+
+  # The builder is the one source of every Binding Layer artifact name and
+  # of the ABI list. One run of it here feeds the build workflows below, so
+  # the names come from exactly one commit per run.
+  binding-layer-names:
+    if: ${{ inputs.skip-binding-layer-build != true }}
+    name: Name the Binding Layer artifacts
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    outputs:
+      abis: ${{ steps.names.outputs.abis }}
+      abi_artifacts: ${{ steps.names.outputs.abi_artifacts }}
+      abi_pattern: ${{ steps.names.outputs.abi_pattern }}
+      android_repository: ${{ steps.names.outputs.android_repository }}
+      maven_version: ${{ steps.names.outputs.maven_version }}
+      bundle_android: ${{ steps.names.outputs.bundle_android }}
+      bundle_ios: ${{ steps.names.outputs.bundle_ios }}
+      ios_out: ${{ steps.names.outputs.ios_out }}
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v6
+
+      - name: Setup Rust and the cargo cache
+        uses: ./.github/actions/rust-setup
+        with:
+          workspaces: tools/workbench
+
+      # The Maven version joins the wallet crate's version at the commit
+      # with the commit, so the workbench reads the manifest from git.
+      - name: Name the artifacts
+        id: names
+        run: cargo run --quiet --manifest-path tools/workbench/Cargo.toml --bin build-binding-layer -- artifact --commit "$GITHUB_SHA" >> "$GITHUB_OUTPUT"
+
+  # The per-PR tier of zingolib/0054: the x86_64 libraries, the Kotlin
+  # Binding Sets, the Maven layout and the Kotlin wire-contract test.
+  # binding-layer-android.yaml runs the builder on this commit, here and in
+  # the nightly, so one definition builds an ABI in both tiers. On a pull
+  # request that commit is the merge commit. A push builds once, on a cargo
+  # cache keyed by the ABI, and skips the package job the pull request ran.
+  binding-layer-android:
+    if: ${{ inputs.skip-binding-layer-build != true }}
+    needs: binding-layer-names
+    uses: ./.github/workflows/binding-layer-android.yaml
+    with:
+      abis: '["x86_64"]'
+      abi_artifacts: ${{ needs.binding-layer-names.outputs.abi_artifacts }}
+      abi_pattern: ${{ needs.binding-layer-names.outputs.abi_pattern }}
+      repository: ${{ needs.binding-layer-names.outputs.android_repository }}
+      version: ${{ needs.binding-layer-names.outputs.maven_version }}
+      bundle: ${{ needs.binding-layer-names.outputs.bundle_android }}
+
+  # The per-PR tier's iOS half: the XCFramework and the Swift sources,
+  # on the WarpBuild macOS runner that binding-layer-ios.yaml names. The
+  # Android job above proves the Kotlin Binding Set on every pull request,
+  # and this job proves the Swift one the same way, so a change that
+  # breaks either fails the pull request that makes it rather than the
+  # nightly. The builder runs on this commit here and in the nightly.
+  binding-layer-ios:
+    if: ${{ inputs.skip-binding-layer-build != true }}
+    needs: binding-layer-names
+    uses: ./.github/workflows/binding-layer-ios.yaml
+    with:
+      out: ${{ needs.binding-layer-names.outputs.ios_out }}
+      bundle: ${{ needs.binding-layer-names.outputs.bundle_ios }}
+
+  # The `nym` feature gates the mixnet transmission and price-fetch surfaces
+  # (ADR 0011) in zingolib and zingo-cli. zingo-cli carries it as a default
+  # feature (ADR 0026), so the --workspace jobs above compile the CLI's gated
+  # code; zingolib's own default remains nym-off. The gated lib suites run
+  # sharded in the test-nym job below. This job keeps the targets a nextest
+  # archive never holds: clippy under the feature, zingolib's doc tests
+  # under the feature, and the CLI's explicit opt-out build, whose refusal
+  # strings must keep compiling and rendering. Those three steps finish in
+  # about five minutes, so the timeout bounds a hang at four times that.
+  nym-feature:
+    name: nym feature (zingolib + zingo-cli)
+    # Compile-bound: clippy and the doc tests build zingolib and zingo-cli
+    # under the nym features. On four cores the job took 8.3 minutes, longer
+    # than the archive and its shards; on the sixteen-core runner that the
+    # CI_LINUX_RUNNER repository variable names it took 2.5 (2026-10-16).
+    runs-on: ${{ vars.CI_LINUX_RUNNER || 'warp-ubuntu-2404-x64-16x' }}
+    timeout-minutes: 20
+    env:
+      RUSTFLAGS: -D warnings
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v6
+
+      - name: Setup Rust and the cargo cache
+        uses: ./.github/actions/rust-setup
+
+      - name: Clippy
+        run: cargo clippy -p zingolib -p zingo-cli --features nym --all-targets -- -D warnings
+
+      # The lib suites under the nym features run in the test-nym job
+      # below, sharded like the normal suite. This job keeps the targets
+      # nextest archives never hold: the doc tests, and the opt-out shape.
+      - name: Doc-test zingolib under the nym features
+        run: cargo test -p zingolib --features nym --doc
+
+      # The opt-out shape (`--no-default-features`, run-cli's `--nakednet`)
+      # must keep building, and its typed refusals must keep rendering.
+      - name: Test zingo-cli without the default nym feature
+        run: cargo test -p zingo-cli --no-default-features --lib
+
+  run-doc-tests:
+    name: Run doc tests
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    needs: draft-state
+    if: ${{ needs.draft-state.outputs.draft != 'true' }}
+    env:
+      RUSTFLAGS: -D warnings
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v6
+
+      - name: Setup Rust and the cargo cache
+        uses: ./.github/actions/rust-setup
+
+      - name: Run doc tests
+        run: cargo test --doc
+
+  # The two test suites below pull the same ci-build image, so one job
+  # resolves its content-addressed tag and builds the image when the tag
+  # is absent. Each suite then receives the tag instead of probing, or
+  # building, on its own. The probe takes seconds and runs on drafts too,
+  # because the nym suite does.
+  ensure-image:
+    uses: ./.github/workflows/ensure-image.yaml
+    permissions:
+      contents: read
+      packages: write
+
+  test:
+    needs: [draft-state, ensure-image]
+    if: ${{ needs.draft-state.outputs.draft != 'true' }}
+    uses: ./.github/workflows/test.yaml
+    with:
+      image-tag: ${{ needs.ensure-image.outputs.image-tag }}
+    permissions:
+      contents: read
+      packages: write
+
+  # Whole lib suites, deliberately unfiltered: module-path filter lists
+  # rot as gated tests land outside them (PR #2470 review, M6). Re-running
+  # the ungated tests under the features is the price of a gate that
+  # cannot silently go dark; everything here is deterministic and
+  # mixnet-free. Unsharded on one runner the two suites took twelve
+  # minutes and set the run's wall time, so they ride the same archive
+  # shape as the normal suite across six shards of about two minutes,
+  # sized so that a shard's container start, checkout and archive download
+  # stay below the tests it runs. The suites ran on draft pull requests
+  # when the nym-feature job held them, and they keep doing so here.
+  test-nym:
+    needs: ensure-image
+    uses: ./.github/workflows/test.yaml
+    with:
+      suite: nym
+      archive-args: --package zingolib --package zingo-cli --features nym --lib
+      partitions: "[1, 2, 3, 4, 5, 6]"
+      image-tag: ${{ needs.ensure-image.outputs.image-tag }}
+    permissions:
+      contents: read
+      packages: write

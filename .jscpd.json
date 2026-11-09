@@ -1,0 +1,25 @@
+{
+	"minLines": 6,
+	"minTokens": 50,
+	"threshold": 0,
+	"format": [
+		"typescript",
+		"tsx",
+		"rust",
+		"css"
+	],
+	"ignore": [
+		"**/bindings.ts",
+		"**/node_modules/**",
+		"**/target/**"
+	],
+	"reporters": [
+		"console"
+	],
+	"absolute": false,
+	"ignorePattern": [
+		"/\\*[\\s\\S]*?\\*/",
+		"\\buse [^;]+;",
+		"={20,}\\s*\\*/"
+	]
+}

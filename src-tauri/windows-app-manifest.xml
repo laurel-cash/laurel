@@ -1,0 +1,20 @@
+<!--
+  The manifest of every Laurel binary, app and tests (see windows-manifest.rc
+  and build.rs). Tauri's webview needs Common-Controls v6; without it a
+  test binary dies at start with STATUS_ENTRYPOINT_NOT_FOUND. Same
+  content as the one tauri-build puts into the app.
+-->
+<assembly xmlns="urn:schemas-microsoft-com:asm.v1" manifestVersion="1.0">
+  <dependency>
+    <dependentAssembly>
+      <assemblyIdentity
+        type="win32"
+        name="Microsoft.Windows.Common-Controls"
+        version="6.0.0.0"
+        processorArchitecture="*"
+        publicKeyToken="6595b64144ccf1df"
+        language="*"
+      />
+    </dependentAssembly>
+  </dependency>
+</assembly>

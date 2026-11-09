@@ -1,0 +1,141 @@
+# the app, and laurel-engine beside it: one lockfile, one set of patches
+[workspace]
+members = [ "engine" ]
+
+[package]
+name = "laurel"
+version = "0.1.8"
+description = "Laurel: a fast, private Zcash wallet"
+authors = ["The Laurel authors"]
+license = "MIT"
+edition = "2021"
+
+[lib]
+# The `_lib` suffix may seem redundant but it is necessary
+# to make the lib name unique and wouldn't conflict with the bin name.
+# This seems to be only an issue on Windows, see https://github.com/rust-lang/cargo/issues/8519
+name = "laurel_lib"
+crate-type = ["staticlib", "cdylib", "rlib"]
+
+[build-dependencies]
+embed-resource = "3.0.11"
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+tauri = { version = "2", features = [] }
+tauri-plugin-opener = "2"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+
+# Wallet engine: our own copy of zingolib in vendor/zingolib, upstream
+# (the revision in scripts/engine.mjs) plus vendor/zingolib.patch, each
+# change named in docs/ENGINE.md. Its crates reference each other by path, so every one
+# of them comes from the copy.
+#
+# no-plaintext-save removes zingolib's own savers (save_task, flush, ...),
+# which write the wallet unencrypted. Laurel saves through the vault; with
+# the feature on, calling a plaintext saver by mistake doesn't compile.
+zingolib = { path = "../vendor/zingolib/zingolib", features = ["perspective", "no-plaintext-save"] }
+laurel-engine = { path = "engine" }		# what Laurel adds on the engine's public API: sweep, zcashd keys (engine/Cargo.toml)
+pepper-sync = { path = "../vendor/zingolib/pepper-sync" }
+nonempty = "0.11"		# the engine's non-empty lists (E_TransmitUnsent)
+zingo-status = { path = "../vendor/zingolib/zingo-status" }		# the engine's transaction states, read whole (Com_TxState)
+zingo-netutils = { path = "../vendor/zingolib/zingo-netutils" }
+zcash_protocol = "=0.11.0"
+zcash_address = "=0.14.0"		# same versions zingolib resolves; reading scanned codes (w_scan.rs)
+zip321 = "=0.10.0"
+zip32 = "0.3"
+# the same versions the engine resolves, so their error types can be matched
+# by type instead of by their words (Com_Classify in w_net.rs)
+tonic = { version = "0.14", default-features = false }
+rustls = { version = "0.23", default-features = false }
+zcash_client_backend = { version = "=0.25.0", default-features = false, features = [ "orchard" ] }		# orchard: decrypting a signed payment's outputs (w_offline.rs)
+zcash_primitives = "=0.31.0"		# reading a transaction signed on another computer (w_offline.rs)
+zcash_transparent = "=0.11.0"		# its public outputs' addresses (w_offline.rs)
+zcash_keys = { version = "=0.17.0", features = [ "orchard", "sapling", "transparent-inputs" ] }		# an account's viewing and spending keys, to match and sign (w_offline.rs)
+# the ZEC price (w_price.rs, opt-in): tauri already builds reqwest; rustls
+# without a provider of its own, trusting the webpki roots like the servers
+reqwest = { version = "0.13", default-features = false, features = [ "rustls-no-provider", "json", "query" ] }
+webpki-roots = "1"
+bip0039 = "0.14"
+blake2b_simd = "1"		# the same version the engine builds; a one-way print of recovery words (W_WordsPrint)
+http = "1"
+tokio = { version = "1", features = ["sync", "time", "rt-multi-thread", "macros"] }
+thiserror = "2"
+log = "0.4"
+tauri-specta = { version = "=2.0.0-rc.25", features = ["derive", "typescript"] }
+specta = { version = "=2.0.0-rc.25", features = ["derive"] }
+specta-typescript = "=0.0.12"
+argon2 = "0.5"
+zeroize = { version = "1", features = ["zeroize_derive"] }
+chacha20poly1305 = "0.10"
+base64 = "0.22"
+tauri-plugin-log = "2"
+tauri-plugin-notification = "2"
+tauri-plugin-dialog = "2"		# the sync folder's picker (w_folder.rs), from Rust: the ui gets no file access
+
+[patch.crates-io]
+time = { git = "https://github.com/time-rs/time", tag = "v0.3.47" }
+lightwallet-protocol = { git = "https://github.com/zingolabs/lightwallet-protocol-rust", rev = "02211904910a50218f8b15f6136b5b127f98e4cc" }
+
+# Trial decryption and proving dominate sync and send time. Optimize
+# dependencies even in dev builds, or the debug app is unusably slow.
+# No debug info for them either: we never step into zcash crypto, and
+# it was most of a 10 GB target dir and most of the link time.
+[profile.dev.package."*"]
+opt-level = 3
+debug = false
+
+# Tests build incrementally, like the dev profile: whole, every Rust edit
+# cost a minute. Their caches once grew to most of 37 GB (2026-09-27),
+# many sessions' worth: `cargo clean -p laurel --profile test` takes
+# them back.
+
+# Read the optimization guideline for more details: https://tauri.app/concept/size/#cargo-configuration
+[profile.release]
+codegen-units = 1
+lto = true
+opt-level = 3
+panic = "abort"
+strip = true
+
+# A build for trying the app on this machine (npm run app), never shipped.
+# The release optimizes the whole program as one, on one core, again after
+# every change (about 90 s for any edit); this one optimizes each crate on
+# its own, over every core, and keeps what didn't change (about 17 s).
+# Every build re-embeds the ui, so Laurel's own crate always recompiles.
+# Its program is target/local/laurel.exe, apart from target/release/ where
+# release.mjs looks; check_release.mjs keeps [profile.release] as is.
+[profile.local]
+inherits = "release"
+lto = false
+codegen-units = 16
+incremental = true
+
+[target.'cfg(not(any(target_os = "android", target_os = "ios")))'.dependencies]
+tauri-plugin-single-instance = "2"
+
+[target."cfg(windows)".dependencies]
+windows-sys = { version = "0.59", features = ["Win32_Foundation", "Win32_Security_Cryptography", "Win32_Storage_FileSystem"] }
+
+[target."cfg(unix)".dependencies]
+libc = "0.2"
+
+[dev-dependencies]
+proptest = "1"
+bs58 = { version = "0.5", features = [ "check" ] }
+pepper-sync = { path = "../vendor/zingolib/pepper-sync", features = [ "test-features" ] }		# real transactions and coins in tests
+
+[features]
+# the Play beta's build: test coins only. Mainnet is refused by the engine
+# (NETWORKS, W_NetworkOffered), not only left out of the ui:
+#   scripts/android.ps1 build --target aarch64 --features testnet-only
+testnet-only = []
+# the KDF probe (w_probe.rs): a debug test build's only, never Play's
+# (a release with it doesn't compile; check_release.mjs and play_bundle.mjs refuse it)
+kdf-probe = []
+
+# lib.rs refuses to build when getrandom's backend is overridden: name the cfg
+# so rustc knows it
+[lints.rust]
+unexpected_cfgs = { level = "warn", check-cfg = [ 'cfg(getrandom_backend, values("custom", "extern_impl", "rdrand", "rndr", "efi_rng", "wasm_js", "unsupported", "linux_getrandom", "linux_raw", "windows_legacy"))' ] }

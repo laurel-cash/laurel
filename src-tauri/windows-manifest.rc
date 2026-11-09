@@ -1,0 +1,4 @@
+// windows-manifest.rc -- windows-app-manifest.xml as the manifest resource
+// (id 1, type 24 = RT_MANIFEST) of every binary: the app and the tests.
+// See build.rs for why tauri's own is switched off.
+1 24 "windows-app-manifest.xml"

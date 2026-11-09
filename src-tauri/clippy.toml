@@ -1,0 +1,51 @@
+# clippy.toml -- rules the compiler enforces for Laurel
+#
+# The sync engine holds its wallet lock across network requests while it
+# syncs. Waiting on that lock without a limit froze the ui ("Getting your
+# address..." forever). Every way to reach the lock, directly or inside an
+# engine call, is banned here and allowed only in src/w_engine.rs, which
+# offers forms that say how they wait. `npm run check` treats a hit as an
+# error.
+
+disallowed-methods = [
+	{ path = "bip0039::Mnemonic::to_seed",								reason = "forgets the passphrase: keys come from the engine's WalletSeed" },
+	{ path = "bip0039::AnyMnemonic::to_seed",							reason = "forgets the passphrase: keys come from the engine's WalletSeed" },
+	{ path = "zingolib::lightclient::LightClient::wallet",					reason = "the engine's lock: use w_engine.rs (E_TryRead, E_Read, E_Write, E_Idle)" },
+	{ path = "zingolib::lightclient::LightClient::account_balance",		reason = "locks the wallet: read a guard from w_engine.rs and call LightWallet::account_balance" },
+	{ path = "zingolib::lightclient::LightClient::transaction_summaries",	reason = "locks the wallet: go through w_engine.rs" },
+	{ path = "zingolib::lightclient::LightClient::recovery_info",			reason = "locks the wallet: use E_RecoveryInfo" },
+	{ path = "zingolib::lightclient::LightClient::create_account",			reason = "locks the wallet: use E_CreateAccount" },
+	{ path = "zingolib::lightclient::LightClient::propose_shield",			reason = "locks the wallet and can't be abandoned: use E_ProposeShield" },
+	{ path = "zingolib::lightclient::LightClient::send_stored_proposal",	reason = "use E_SendProposal" },
+	{ path = "zingolib::lightclient::LightClient::transmit_calculated",		reason = "locks the wallet: use E_TransmitUnsent" },
+	{ path = "zingolib::lightclient::LightClient::retransmit_calculated",	reason = "locks the wallet: use E_RetransmitUnsent" },
+	{ path = "zingolib::lightclient::LightClient::rebroadcast_pending",		reason = "locks the wallet: use E_RebroadcastPending" },
+	{ path = "zingolib::lightclient::LightClient::clear_proposal",			reason = "use E_ClearProposal" },
+	{ path = "zingolib::lightclient::LightClient::sync",					reason = "use E_StartSync" },
+	{ path = "zingolib::lightclient::LightClient::rescan",					reason = "use E_Rescan" },
+	{ path = "zingolib::lightclient::LightClient::rescan_and_await",		reason = "waits for a whole rescan: never from a request" },
+	{ path = "zingolib::lightclient::LightClient::stop_sync",				reason = "use E_StopAndWait" },
+	{ path = "zingolib::lightclient::LightClient::poll_sync",				reason = "use E_StopAndWait" },
+	{ path = "zingolib::lightclient::LightClient::plan_immediate_migration",	reason = "use E_PlanMigration" },
+	{ path = "zingolib::lightclient::LightClient::quick_immediate_migration",	reason = "use E_MigrateNow" },
+	{ path = "zingolib::lightclient::LightClient::migrate_immediately",		reason = "syncs and waits on its own: use E_MigrateNow" },
+	{ path = "zingolib::lightclient::LightClient::migration_status",			reason = "use E_MigrationStatus" },
+	{ path = "zingolib::lightclient::LightClient::plan_ironwood_migration",	reason = "locks the wallet: add an E_ form first" },
+	{ path = "zingolib::lightclient::LightClient::start_ironwood_migration",	reason = "locks the wallet: add an E_ form first" },
+	{ path = "zingolib::lightclient::LightClient::migrate_to_ironwood",		reason = "syncs and waits on its own for days of rounds: never from a request" },
+	{ path = "zingolib::lightclient::LightClient::continue_note_splitting",	reason = "locks the wallet: add an E_ form first" },
+	{ path = "zingolib::lightclient::LightClient::reconcile_migration",		reason = "locks the wallet: add an E_ form first" },
+	{ path = "zingolib::lightclient::LightClient::transmit_due_parts",		reason = "locks the wallet: add an E_ form first" },
+	{ path = "zingolib::lightclient::LightClient::auto_transmit_if_due",		reason = "locks the wallet: add an E_ form first" },
+	{ path = "zingolib::lightclient::LightClient::catch_up_migration",		reason = "locks the wallet: add an E_ form first" },
+	{ path = "zingolib::lightclient::LightClient::reschedule_parts",			reason = "locks the wallet: add an E_ form first" },
+	{ path = "zingolib::lightclient::LightClient::cancel_ironwood_migration",	reason = "locks the wallet: add an E_ form first" },
+]
+
+# A slot's lock guarded a 20-second send, and every read of that wallet
+# waited behind it. Holding a slot or wallet guard across an await is the
+# shape of that bug; take the handles out and let the lock go first.
+await-holding-invalid-types = [
+	{ path = "tokio::sync::RwLockReadGuard",	reason = "a slot or wallet guard held across an await makes others wait for it: clone the handles out, drop the guard, then await" },
+	{ path = "tokio::sync::RwLockWriteGuard",	reason = "a slot or wallet guard held across an await makes others wait for it: clone the handles out, drop the guard, then await" },
+]

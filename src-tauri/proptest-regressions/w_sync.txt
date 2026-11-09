@@ -1,0 +1,7 @@
+# Seeds for failure cases proptest has generated in the past. It is
+# automatically read and these particular cases re-run before any
+# novel cases are generated.
+#
+# It is recommended to check this file in to source control so that
+# everyone who runs the test benefits from these saved cases.
+cc b37e862d47d9838f20cfff2f5cb96dd2b95f2baa8295d8a8f199cffd61efc103 # shrinks to accounts = [[], [historyItem_t { txid: "a", time: 0, kind: TX_RECEIVED, amount: 1, fee: None, pending: false, from: [], into: [], counterparty: None, memo: None }]]

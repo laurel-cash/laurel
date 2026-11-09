@@ -1,0 +1,8 @@
+{
+	"app": {
+		"windows": [ {
+			"label": "main", "create": false, "title": "Laurel"
+		} ]
+	},
+	"bundle": { "android": { "minSdkVersion": 28 } }
+}

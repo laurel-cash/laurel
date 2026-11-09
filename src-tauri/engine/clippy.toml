@@ -1,0 +1,13 @@
+# clippy.toml -- rules for laurel-engine (clippy reads the nearest file)
+#
+# Not the app's: src-tauri/clippy.toml sends every wallet lock through
+# w_engine.rs, the app's gateway, which a library on the engine's API and
+# a command-line harness have no use for. What holds everywhere keys are
+# handled holds here too: BIP-39 derives a wallet from the phrase AND its
+# passphrase, and deriving from the phrase alone silently makes a
+# different, empty wallet. Keys come only from the engine's WalletSeed.
+
+disallowed-methods = [
+	{ path = "bip0039::Mnemonic::to_seed",		reason = "forgets the passphrase: keys come from the engine's WalletSeed" },
+	{ path = "bip0039::AnyMnemonic::to_seed",	reason = "forgets the passphrase: keys come from the engine's WalletSeed" },
+]

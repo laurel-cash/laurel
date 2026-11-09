@@ -1,0 +1,11 @@
+# clippy.toml -- Laurel's rules for its vendored engine (docs/ENGINE.md)
+#
+# BIP-39 derives a wallet from the phrase AND its passphrase. Deriving from
+# the phrase alone silently makes a different, empty wallet for anyone who
+# set a passphrase. Keys come only from WalletSeed::to_seed
+# (zingolib/src/wallet/keys/seed.rs), which carries the passphrase.
+
+disallowed-methods = [
+	{ path = "bip0039::Mnemonic::to_seed",		reason = "forgets the passphrase: derive through WalletSeed::to_seed" },
+	{ path = "bip0039::AnyMnemonic::to_seed",	reason = "forgets the passphrase: derive through WalletSeed::to_seed" },
+]

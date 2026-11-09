@@ -1,0 +1,228 @@
+name: Binding Layer for Android
+
+# Builds the Binding Layer's Android libraries and Kotlin Binding Sets on
+# the commit the caller names, and publishes them as a Maven repository
+# layout. The build runs the builder of tools/workbench in the builder's
+# own image. The package job compiles no Rust and installs no NDK: the
+# builder strips every library, and the Gradle library packages them as
+# they are. The Gradle library takes the prebuilt output, compiles the
+# Kotlin Binding Sets, and publishes the AAR with its POM into a
+# repository directory, versioned by the caller.
+# The caller passes every artifact name and the Maven version from one run
+# of `build-binding-layer artifact`, so the jobs of one run agree on the
+# names whatever commit they build.
+
+on:
+  workflow_call:
+    inputs:
+      # A JSON list of the ABIs to build and package.
+      abis:
+        required: true
+        type: string
+      # The runner of the per-ABI build job: the Linux runner that the
+      # CI_LINUX_RUNNER repository variable names, falling back to
+      # WarpBuild's sixteen-core label. Each ABI compiles the wallet, the
+      # proxy and the bindgen for its target, all under the mobile profile.
+      # cargo compiles independent crates in parallel. The profile sets
+      # codegen-units to 1, which keeps each crate's own codegen serial.
+      # Measured on 2026-10-16, when the wallet built under the mobile
+      # profile and the proxy under a plain release profile with the
+      # default codegen units: the x86_64 build took 7.3 minutes on sixteen
+      # cores against 11 to 17 on four. The proxy's share of that time
+      # under the mobile profile is unmeasured.
+      runner:
+        required: false
+        type: string
+        default: ${{ vars.CI_LINUX_RUNNER || 'warp-ubuntu-2404-x64-16x' }}
+      # The commit to build. The publish workflow passes the commit it was
+      # dispatched at, which its relay makes the commit that triggered it.
+      ref:
+        required: false
+        type: string
+        default: ${{ github.sha }}
+      # The artifact names, from one run of `build-binding-layer artifact`
+      # in the caller, so that every job of one run agrees on them whatever
+      # commit it builds: the per-ABI artifact of each ABI as a JSON object,
+      # the pattern that matches them all, the Maven repository directory
+      # that Gradle publishes into, the Maven version of the publication,
+      # and the bundle this workflow uploads.
+      abi_artifacts:
+        required: true
+        type: string
+      abi_pattern:
+        required: true
+        type: string
+      repository:
+        required: true
+        type: string
+      version:
+        required: true
+        type: string
+      bundle:
+        required: true
+        type: string
+
+jobs:
+  # The job runs in the image that bindings/android/docker/Dockerfile
+  # describes and build-n-push-android-image.yaml publishes: the builder's
+  # own image, with the libraries, the pinned toolchain, every Android
+  # target, bindgen-cli, and cargo-ndk already installed. The builder runs
+  # its plan here with --in-image instead of starting a container. The
+  # output holds the ABI's two libraries and the Kotlin Binding Sets.
+  build:
+    name: Build ${{ matrix.abi }}
+    runs-on: ${{ inputs.runner }}
+    timeout-minutes: 45
+    strategy:
+      fail-fast: false
+      matrix:
+        abi: ${{ fromJSON(inputs.abis) }}
+    container:
+      # The workbench pins this tag: binding_layer::PUBLISHED_ANDROID_IMAGE.
+      image: ghcr.io/zingolabs/android_builder:019
+      credentials:
+        username: ${{ github.actor }}
+        password: ${{ secrets.GITHUB_TOKEN }}
+    env:
+      ABI: ${{ matrix.abi }}
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v6
+        with:
+          ref: ${{ inputs.ref }}
+
+      # A container job's workspace belongs to another user, and git refuses
+      # to read a repository it does not own.
+      - name: Trust the workspace
+        run: git config --global --add safe.directory "$GITHUB_WORKSPACE"
+
+      # The action installs the toolchain rust-toolchain.toml pins, with
+      # its components; the image holds that toolchain until the pin moves,
+      # and the builder adds the ABI's target to it itself. The cache holds
+      # the dependencies of the wallet, the proxy, and the bindgen, built
+      # once for this ABI into the one target directory the wallet and the
+      # proxy share, and the workbench's own build. The image already
+      # holds the cargo-installed tools, so the cache leaves CARGO_HOME/bin
+      # out. The builder's plan clears only its output directory, never
+      # target/binding-layer, so a restored cache stays usable.
+      - name: Setup Rust and the cargo cache
+        uses: ./.github/actions/rust-setup
+        with:
+          key: ${{ matrix.abi }}
+          cache-bin: "false"
+          workspaces: |
+            . -> target/binding-layer
+            tools/workbench -> target
+
+      - name: Build the Binding Layer
+        run: |
+          cargo run \
+            --manifest-path tools/workbench/Cargo.toml \
+            --bin build-binding-layer -- \
+            android --in-image --abi "$ABI" \
+            --out bindings/android/build/binding-layer
+
+      - name: Upload the Binding Layer
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ fromJSON(inputs.abi_artifacts)[matrix.abi] }}
+          path: bindings/android/build/binding-layer
+          retention-days: 3
+          overwrite: true
+
+  # A push to dev or stable reruns ci-pr on the merge commit whose pull
+  # request already packaged the layout, so the push skips this job. The
+  # build job still runs on a push: its cargo cache lands on the base
+  # branch, which is the cache every pull request restores from.
+  package:
+    name: Package the Maven layout
+    if: ${{ github.event_name != 'push' }}
+    needs: build
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    # Gradle reads ORG_GRADLE_PROJECT_<name> as the project property <name>.
+    # The prebuilt path makes the Binding Layer build skip its own build,
+    # and the version comes from the caller's run of the workbench, so
+    # Gradle never computes it.
+    env:
+      ABIS: ${{ join(fromJSON(inputs.abis), ' ') }}
+      OUTPUT: bindings/android/build/binding-layer
+      REPOSITORY: ${{ inputs.repository }}
+      ORG_GRADLE_PROJECT_bindingLayerPrebuilt: ${{ github.workspace }}/bindings/android/build/binding-layer
+      ORG_GRADLE_PROJECT_bindingLayerVersion: ${{ inputs.version }}
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v6
+        with:
+          ref: ${{ inputs.ref }}
+
+      # The ABIs share one output directory.
+      - name: Download the Binding Layer
+        uses: actions/download-artifact@v4
+        with:
+          pattern: ${{ inputs.abi_pattern }}
+          path: bindings/android/build/binding-layer
+          merge-multiple: true
+
+      - name: Verify the Binding Layer is present
+        run: |
+          set -eu
+          for abi in $ABIS; do
+            test -f "$OUTPUT/jniLibs/$abi/libuniffi_zingo.so"
+            test -f "$OUTPUT/jniLibs/$abi/libzingo_nym_proxy_ffi.so"
+          done
+          test -f "$OUTPUT/kotlin/uniffi/zingo/zingo.kt"
+          test -f "$OUTPUT/kotlin/uniffi/zingo_nym_proxy_ffi/zingo_nym_proxy_ffi.kt"
+          test -f "$OUTPUT/descriptor.txt"
+
+      - name: Setup Gradle
+        uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: '8.14.3'
+
+      # One Gradle invocation publishes the AAR and its POM into the Maven
+      # repository directory and runs the Kotlin wire-contract test of the
+      # proxy crate in one task graph. The test compiles against the Kotlin
+      # Binding Set that the AAR ships and asserts it against the crate's
+      # golden pins, which the Rust and Swift suites share. The runner image
+      # preinstalls the platform and the build tools the library compiles
+      # against; sdkDownload=false makes the Android Gradle plugin fail on a
+      # missing component instead of downloading it, so a bump of
+      # bindingCompileSdk past the image shows as a missing component, never
+      # as a download that corrupts or rate-limits on every pull request.
+      - name: Package the Maven layout and run the Kotlin wire-contract test
+        run: |
+          gradle --project-dir bindings/android \
+            -Pandroid.builder.sdkDownload=false \
+            publish testReleaseUnitTest
+
+      # The layout holds one AAR beside one POM, and the POM declares JNA,
+      # which the AAR needs and does not contain.
+      - name: Verify the layout holds the AAR, its POM, and every ABI
+        run: |
+          set -eu
+          aar="$(find "$REPOSITORY" -name '*.aar')"
+          test -n "$aar"
+          test "$(printf '%s\n' "$aar" | wc -l)" -eq 1
+          pom="${aar%.aar}.pom"
+          test -f "$pom"
+          grep --quiet '<artifactId>jna</artifactId>' "$pom"
+          entries="$(unzip -Z1 "$aar")"
+          for abi in $ABIS; do
+            for library in libuniffi_zingo.so libzingo_nym_proxy_ffi.so; do
+              echo "$entries" | grep --quiet --line-regexp "jni/$abi/$library"
+            done
+          done
+
+      # The publish workflow archives this directory, with the descriptor
+      # the builder read from the wallet build, as the Android Prebuilt
+      # Bundle.
+      - name: Upload the Maven layout and the descriptor
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ inputs.bundle }}
+          path: |
+            ${{ env.REPOSITORY }}
+            ${{ env.OUTPUT }}/descriptor.txt
+          retention-days: 3
+          overwrite: true

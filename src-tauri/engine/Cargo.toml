@@ -1,0 +1,43 @@
+# laurel-engine -- what Laurel adds to the wallet engine, on its public API
+#
+# zingolib is vendored at vendor/zingolib with the least change it can
+# carry (docs/ENGINE.md). Anything that only needs the engine's public API
+# lives here instead, in Laurel's own code: sweeping a private key,
+# importing zcashd keys, and the live testnet harness (examples/live.rs).
+# A crate of this workspace (src-tauri/Cargo.toml), so it shares Laurel's
+# lockfile and patches; the harness builds it alone, without the app.
+
+[package]
+name = "laurel-engine"
+version = "0.1.0"
+edition = "2024"
+license = "MIT"
+publish = false
+
+[dependencies]
+zingolib = { path = "../../vendor/zingolib/zingolib" }
+pepper-sync = { path = "../../vendor/zingolib/pepper-sync" }
+bs58 = { version = "0.5", features = [ "check" ] }
+rand = "0.10"
+sapling-crypto = "0.9.0"
+# the version zcash_transparent signs with (sweep.rs builds its keys)
+secp256k1 = "0.33"
+secrecy = "0.8"
+thiserror = "2"
+zcash_address = "=0.14.0"
+zcash_encoding = "0.5.0"
+zcash_keys = { version = "=0.17.0", features = [ "transparent-inputs", "sapling", "orchard" ] }
+zcash_primitives = "=0.31.0"
+zcash_protocol = "=0.11.0"
+zcash_transparent = "=0.11.0"
+zip32 = "0.3"
+
+[dev-dependencies]
+# the live harness (examples/live.rs) and the zcashd tests
+bip0039 = { version = "0.14", features = [ "rand" ] }
+hex = "0.4"
+nonempty = "0.11.0"
+tokio = { version = "1", features = [ "full" ] }
+zcash_client_backend = { version = "=0.25.0", features = [ "orchard", "transparent-inputs" ] }
+zingo-netutils = { path = "../../vendor/zingolib/zingo-netutils" }
+zingo-status = { path = "../../vendor/zingolib/zingo-status" }

@@ -1,0 +1,14 @@
+.helix
+build/
+cobertura.xml
+target
+wallets/*
+zingolib/proptest-regressions
+test-logs/
+libtonode-tests/store_all_checkpoints_test
+.zingo-cli/
+.DS_Store
+.agent-plans/
+
+# Local corpus of real wallet files (live seed material — never commit)
+/data_wallets/

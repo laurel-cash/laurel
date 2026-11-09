@@ -1,0 +1,92 @@
+# The Publication Record, defined in zingolib/CONTEXT.md#consumers:
+# one entry per Published Commit, oldest first. Each entry records what the
+# registry holds for its commit. The publish workflow, started by
+# `gh workflow run publish-bindings.yaml`,
+# pushes the bundles, appends the entry with its digests and its audited
+# crates, regenerates bindings/CHANGELOG.md in the same commit on the branch
+# record/<commit>, and opens the pull request that merges it. An entry is
+# complete when it is written, and no entry is written by hand. The
+# manifest check is a required check that reconciles this record against
+# the registry. It passes only when the registry holds every named
+# platform's Prebuilt Bundle at the entry's digest. The registry is the one
+# source a consumer reads, and a consumer never reads this file. An entry
+# never changes after its merge. The workbench tool binding-manifest reads
+# this file, and binding-changelog takes the commits and the audited crates
+# of bindings/CHANGELOG.md from it.
+#
+# An entry names every platform that binding-manifest requires. The
+# required set lives in REQUIRED_PLATFORMS of
+# tools/workbench/src/binding_manifest.rs alone, and it names both
+# platforms (zingolib#2833, decision 6): a consumer ships both from one
+# commit, and an entry never changes after its merge, so an entry that
+# lacked one digest could never gain it. The publish workflow asks the
+# tool rather than naming a platform itself, and the tool refuses to push
+# anything when a required platform's build produced no bundle.
+#
+# [[entry]]
+# commit = "<the full zingolib commit>"
+# since = "<the commit the first entry's changelog section starts after; the first entry alone>"
+# android = "sha256:<the digest of ghcr.io/zingolabs/zingolib/binding-layer-android:<commit>>"
+# ios = "sha256:<the digest of ghcr.io/zingolabs/zingolib/binding-layer-ios:<commit>>"
+# audited = ["<package> (<directory>)", ...]
+#
+# The audited crates are the two Binding Layer crates and their direct
+# dependencies in this repository at the entry's commit, as binding-manifest
+# reads them from `cargo metadata` there, each as its package name and its
+# directory. The manifest check reads them again at the commit and rejects
+# an entry whose array differs.
+
+[[entry]]
+commit = "ba7336710419c9ac1e9362ac1b4e5b0073ff477e"
+since = "6d037df7a4f4f72f219fbadd8c6fe34d8c8ea97c"
+audited = ["zingo (zingo-ffi/lib)", "pepper-sync (pepper-sync)", "zingolib (zingolib)", "zingo-nym-proxy-ffi (zingo-netutils/nym-proxy-ffi)", "zingo-netutils (zingo-netutils)"]
+android = "sha256:9c950b9c10ce62e85de894f73139d9770caa844705c01bfcde4154d2404a50de"
+ios = "sha256:045aa74c2bb591325969fcdbf6923bcd7c9b023665ea2c3cc8e2b2ffbacd1f41"
+
+[[entry]]
+commit = "502a453fe3329ecded1872f0c856b56f141c8d6a"
+audited = ["zingo (zingo-ffi/lib)", "pepper-sync (pepper-sync)", "zingolib (zingolib)", "zingo-nym-proxy-ffi (zingo-netutils/nym-proxy-ffi)", "zingo-netutils (zingo-netutils)"]
+android = "sha256:edbd449168cc993635098a03388cddf3d078021b739cc6198a19ff64b71cf701"
+ios = "sha256:62c016314e10eb7dbb17fb35e4d20b47b4664df3ec4b9440d2981431a6a3df44"
+
+[[entry]]
+commit = "d4ac5772d7fc5d4ca621e57523d28f1b24ac24c5"
+audited = ["zingo (zingo-ffi/lib)", "pepper-sync (pepper-sync)", "zingolib (zingolib)", "zingo-nym-proxy-ffi (zingo-netutils/nym-proxy-ffi)", "zingo-netutils (zingo-netutils)"]
+android = "sha256:efae0b719a80805006d6d9ab79f298fbf76fe65ed99c7ec8371ed16073086782"
+ios = "sha256:0fb7f6fc6baa6e99ac58018ae8bbc8d10f7effd8a0415a99734a1d19656fd2fb"
+
+[[entry]]
+commit = "4f04d38c16cb032edffe1823d07bfc75bcf9103b"
+audited = ["zingo (zingo-ffi/lib)", "pepper-sync (pepper-sync)", "zingolib (zingolib)", "zingo-nym-proxy-ffi (zingo-netutils/nym-proxy-ffi)", "zingo-netutils (zingo-netutils)"]
+android = "sha256:4303c0f64686824316a8fa1cb808c8e35935d3e27a2af2877ae66ad2520be034"
+ios = "sha256:47f954b37da9b182eeb2828481916b4b079bb368538a9effe6eaeb974f692810"
+
+[[entry]]
+commit = "c060a45041adeeb3f36571bbbdc645a582701bcc"
+audited = ["zingo (zingo-ffi/lib)", "pepper-sync (pepper-sync)", "zingolib (zingolib)", "zingo-nym-proxy-ffi (zingo-netutils/nym-proxy-ffi)", "zingo-netutils (zingo-netutils)"]
+android = "sha256:ffa8e20e3ca4f5934d6daf37f76f81407eb661163848ea72fdc9b67305c09e92"
+ios = "sha256:ac219448a0cb070facd351cca14903c7e48f40210935f31a58bfae80c3519d42"
+
+[[entry]]
+commit = "625f617b63070855d1a4b2a2f61d071cb27c6f82"
+audited = ["zingo (zingo-ffi/lib)", "pepper-sync (pepper-sync)", "zingolib (zingolib)", "zingo-nym-proxy-ffi (zingo-netutils/nym-proxy-ffi)", "zingo-netutils (zingo-netutils)"]
+android = "sha256:3b4884c448854abb540d17e6fe5e9d5f517f5b4250ceba98a850531a8759eceb"
+ios = "sha256:5175312fa492e9e76bc6640019633e76075b810951747438a65c82c0a45a5934"
+
+[[entry]]
+commit = "755c3adaea5906cf55357e69ad1b0a27d746cdb8"
+audited = ["zingo (zingo-ffi/lib)", "pepper-sync (pepper-sync)", "zingolib (zingolib)", "zingo-nym-proxy-ffi (zingo-netutils/nym-proxy-ffi)", "zingo-netutils (zingo-netutils)"]
+android = "sha256:13d4dc60a75919026025e37d6388851a3ccf547e1ab7e511916ffd146a590080"
+ios = "sha256:d851f057ff7cb3b3b802da5341c2245971240920d9d0c646c43f276c2ff62879"
+
+[[entry]]
+commit = "3fb32d277ef956e75da124c1442526fb4d91d97a"
+audited = ["zingo (zingo-ffi/lib)", "pepper-sync (pepper-sync)", "zingolib (zingolib)", "zingo-nym-proxy-ffi (zingo-netutils/nym-proxy-ffi)", "zingo-netutils (zingo-netutils)"]
+android = "sha256:f78a8bce0f300fe2bfbd78964c27d0661cd874f3a84121024fbd4b00f405a78b"
+ios = "sha256:e1c629971678fd713439880ef2be848c383cb40da34fde78fb47d0648d8a8521"
+
+[[entry]]
+commit = "d496bea8c7c476f2dd54f437674f7b4d1cc19b87"
+audited = ["zingo (zingo-ffi/lib)", "pepper-sync (pepper-sync)", "zingolib (zingolib)", "zingo-nym-proxy-ffi (zingo-netutils/nym-proxy-ffi)", "zingo-netutils (zingo-netutils)"]
+android = "sha256:830af8fcfcebb24ebc968cad749937af261a6dc2e7d73fb64b51e684e01d09c7"
+ios = "sha256:6b26c296643f318f74e8bef99e0c5451f1acff5d4a459ef363eb0efa8fc557a9"
