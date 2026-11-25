@@ -146,6 +146,30 @@ pub async fn W_SaveSlot( slot: &slotRef_t ) -> wresult_t< () > {
 
 /*
 ==================
+W_SaveAll
+
+Every open wallet, now, its engine left running. iOS never says it's
+ending an app: one it has suspended is killed without notice, so going
+out of sight is the last sure moment to write (M_Hidden). Every wallet at
+once, as in W_Shutdown: the system gives a hidden app only seconds. A
+failure stays on the wallet (saveError), as from the saver
+==================
+*/
+#[cfg( target_os = "ios" )]
+pub async fn W_SaveAll() {
+	let mut all = tokio::task::JoinSet::new();
+	for ( id, slot ) in W_Slots().await {
+		all.spawn( async move {
+			if let Err( e ) = W_SaveSlot( &slot ).await {
+				log::warn!( "W_SaveAll: {id}: {}", e.LogText() );
+			}
+		} );
+	}
+	while ( all.join_next().await.is_some() ) {}
+}
+
+/*
+==================
 W_StartSaver
 
 Every SAVE_INTERVAL, until the app closes; the shutdown does the last save
