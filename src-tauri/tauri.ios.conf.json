@@ -1,0 +1,9 @@
+{
+	"identifier": "cash.laurel.wallet",
+	"app": {
+		"windows": [ {
+			"label": "main", "create": false, "title": "Laurel"
+		} ]
+	},
+	"bundle": { "iOS": { "minimumSystemVersion": "15.0" } }
+}

@@ -9,6 +9,7 @@ a Rust engine on zingolib, and a React UI. Testnet only for now.
 |---|---|
 | [DEVELOPMENT.md](DEVELOPMENT.md) | setting up a machine, building and running the desktop app, and the build problems already solved |
 | [ANDROID.md](ANDROID.md) | building, testing and releasing for Android |
+| [IOS.md](IOS.md) | the iPhone build: what replaces each Android native part, and CI |
 | [ARCHITECTURE.md](ARCHITECTURE.md) | you need to know how the engine, bindings, store and UI fit together |
 | [../STYLE.md](../STYLE.md) | before writing code: the style, single ownership, the `npm run check` gate |
 

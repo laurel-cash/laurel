@@ -1,0 +1,71 @@
+# The iPhone build (docs/IOS.md): GitHub's macOS runners do what this tree can't do
+# on Windows. Runs on the `ios` branch and by hand; nothing here signs or uploads yet.
+name: iOS
+
+on:
+  push:
+    branches: [ ios ]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ios-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  CARGO_TERM_COLOR: always
+  LAUREL_FEATURES: v1
+
+jobs:
+  # 1. Does the engine build for iOS at all: the library alone, for the simulator
+  rust:
+    name: Library (simulator)
+    runs-on: macos-15
+    timeout-minutes: 120
+    steps:
+      - uses: actions/checkout@v4
+      - name: Rust targets
+        run: |
+          rustup toolchain install stable --profile minimal
+          rustup target add aarch64-apple-ios-sim aarch64-apple-ios
+          rustc --version
+      - name: Build the library
+        working-directory: src-tauri
+        run: cargo build --lib --target aarch64-apple-ios-sim --features v1
+
+  # 2. The Xcode project and a simulator app. gen/apple is uploaded either way, to be
+  #    committed once it builds
+  app:
+    name: App (simulator)
+    needs: rust
+    runs-on: macos-15
+    timeout-minutes: 120
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - name: Tools
+        run: |
+          rustup toolchain install stable --profile minimal
+          rustup target add aarch64-apple-ios-sim aarch64-apple-ios
+          brew install xcodegen
+          npm ci
+      - name: Xcode project
+        run: npx tauri ios init --ci
+      - name: Simulator build
+        run: npx tauri ios build --target aarch64-sim --debug --ci --features v1
+      - name: Keep the Xcode project
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: gen-apple
+          path: |
+            src-tauri/gen/apple
+            !src-tauri/gen/apple/build
+            !src-tauri/gen/apple/Externals
+          if-no-files-found: warn
+          retention-days: 14
