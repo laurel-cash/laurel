@@ -51,11 +51,15 @@ same on both phones and is checked by the Android gate first.
 
 ## What CI does, step by step
 
-1. `rust`: the library for the simulator (`aarch64-apple-ios-sim`, `--features v1`).
-   The first thing to learn: does the engine build for iOS at all.
-2. `app`: `tauri ios init` makes `src-tauri/gen/apple` on the runner (uploaded, then
-   committed here once it builds), then a simulator build.
+1. The simulator app (`aarch64-sim`, `--features v1`) from the Xcode project in
+   `src-tauri/gen/apple`. That project is `tauri ios init`'s, made on a runner and
+   committed as `gen/android` is; `project.yml` is its source (XcodeGen).
+2. A first start in a simulator: a screenshot and the app's log, uploaded as the
+   run's `first-start` artifact.
 3. Later: a signed device build to TestFlight, with the API key.
+
+`src-tauri/Info.ios.plist` is merged into the app's Info.plist: the camera's purpose
+string (QR codes) lives there, not in the generated file.
 
 ## Order
 

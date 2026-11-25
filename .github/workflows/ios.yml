@@ -19,27 +19,10 @@ env:
   LAUREL_FEATURES: v1
 
 jobs:
-  # 1. Does the engine build for iOS at all: the library alone, for the simulator
-  rust:
-    name: Library (simulator)
-    runs-on: macos-15
-    timeout-minutes: 120
-    steps:
-      - uses: actions/checkout@v4
-      - name: Rust targets
-        run: |
-          rustup toolchain install stable --profile minimal
-          rustup target add aarch64-apple-ios-sim aarch64-apple-ios
-          rustc --version
-      - name: Build the library
-        working-directory: src-tauri
-        run: cargo build --lib --target aarch64-apple-ios-sim --features v1
-
-  # 2. The Xcode project and a simulator app. gen/apple is uploaded either way, to be
-  #    committed once it builds
-  app:
-    name: App (simulator)
-    needs: rust
+  # the simulator app from the Xcode project in src-tauri/gen/apple, then a first start:
+  # a screenshot and the app's log, uploaded to be looked at
+  simulator:
+    name: Simulator
     runs-on: macos-15
     timeout-minutes: 120
     steps:
@@ -54,18 +37,40 @@ jobs:
           rustup target add aarch64-apple-ios-sim aarch64-apple-ios
           brew install xcodegen
           npm ci
-      - name: Xcode project
-        run: npx tauri ios init --ci
-      - name: Simulator build
+      - uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            src-tauri/target
+          key: ios-sim-${{ hashFiles( 'src-tauri/Cargo.lock' ) }}
+          restore-keys: ios-sim-
+      - name: Build
         run: npx tauri ios build --target aarch64-sim --debug --ci --features v1
-      - name: Keep the Xcode project
+      - name: First start
+        run: |
+          UDID=$( xcrun simctl list devices available -j | python3 -c '
+          import json, sys
+          d = json.load( sys.stdin )[ "devices" ]
+          print( next( x[ "udid" ] for k, v in sorted( d.items(), reverse = True ) if "iOS" in k for x in v if x[ "name" ].startswith( "iPhone" ) ) )' )
+          echo "device $UDID"
+          xcrun simctl boot "$UDID"
+          xcrun simctl bootstatus "$UDID" -b
+          xcrun simctl install "$UDID" src-tauri/gen/apple/build/arm64-sim/Laurel.app
+          xcrun simctl launch --console-pty "$UDID" cash.laurel.wallet > app-console.log 2>&1 &
+          sleep 40
+          mkdir -p out
+          xcrun simctl io "$UDID" screenshot out/first-start.png
+          xcrun simctl spawn "$UDID" launchctl list | grep -i laurel > out/running.txt || echo "not running" > out/running.txt
+          xcrun simctl spawn "$UDID" log show --last 3m --style compact --predicate 'process == "Laurel"' > out/app.log || true
+          cp app-console.log out/ || true
+          cat out/running.txt
+          tail -n 40 out/app.log
+      - name: Keep the screenshot and logs
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: gen-apple
-          path: |
-            src-tauri/gen/apple
-            !src-tauri/gen/apple/build
-            !src-tauri/gen/apple/Externals
+          name: first-start
+          path: out
           if-no-files-found: warn
           retention-days: 14
