@@ -34,7 +34,7 @@ const engine = vi.hoisted( () => ( {
 } ) );
 
 function Quote( amount: number ): sendQuote_t {
-	return { to: TO, kind: "unified", amount: amount, fee: 10_000, from: [ "ironwood" ], steps: 1, memo: "rent", feeNote: null, also: [] };
+	return { to: TO, kind: "unified", amount: amount, fee: 10_000, from: [ "ironwood" ], steps: 1, memo: "rent", feeNote: null, also: [], publicAddresses: 0 };
 }
 
 vi.mock( "./bindings", async () => ( {

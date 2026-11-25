@@ -1,15 +1,15 @@
 # Laurel
 
-> **Testnet only. Not audited. Never use a real recovery phrase.**
-> This build works only with Zcash test coins (TAZ), which have no value.
+> **Real ZEC. Not independently audited.** Start with small amounts, and keep
+> your recovery phrase safe: nobody, Laurel included, can recover it.
 
-Laurel is a self-custodial Zcash wallet for Android, Windows and Linux, built
-with Tauri 2, a Rust engine on [zingolib](https://github.com/zingolabs/zingolib)
+Laurel is a self-custodial Zcash wallet for Android and Windows, built with
+Tauri 2, a Rust engine on [zingolib](https://github.com/zingolabs/zingolib)
 and a React UI. Keys are made and kept on the user's device; nobody else can
 see, freeze, reverse or recover a payment.
 
-The Google Play testnet build **0.1.6 (version code 1006)** is built from
-this repository's first commit.
+Since 0.2.0 the released app (`v1`) uses Zcash mainnet alone. Builds with the
+`testnet-only` feature use test coins (TAZ), which have no value.
 
 ## What it talks to
 
@@ -18,7 +18,8 @@ reporter. On Android, Google Play shows the publisher crash reports from phones
 that share diagnostics with Google, as for any Play app.
 [docs/CONTROL-MAP.md](docs/CONTROL-MAP.md) lists every connection Laurel makes
 and what each party can see; the main one is the lightwalletd server
-(`testnet.zec.rocks` by default), which sees the device's IP address.
+(chosen from a list of public operators, or the user's own), which sees the
+device's IP address.
 
 ## Building
 
@@ -29,8 +30,8 @@ style. [docs/README.md](docs/README.md) indexes the rest.
 
 ## How Laurel is built
 
-Laurel is testnet-only and unaudited; the code is public so you can
-check it.
+Laurel hasn't had an independent security audit; the code is public so you
+can check it.
 
 What holds it together, all in this repository:
 
@@ -41,8 +42,9 @@ What holds it together, all in this repository:
   passphrase: keys only come from the engine (`src-tauri/clippy.toml`).
 - A build that refuses to compile if anything overrides getrandom's random
   source (`src-tauri/src/lib.rs`, `src-tauri/Cargo.toml`).
-- The `testnet-only` feature: the Play build can't reach mainnet, and tests
-  hold it to that (`src-tauri/src/w_local.rs`, `src-tauri/src/w_main.rs`).
+- Two builds that can't cross: `v1` reaches mainnet alone and `testnet-only`
+  testnet alone, and tests hold each to that (`src-tauri/src/w_local.rs`,
+  `src-tauri/src/w_main.rs`, `scripts/release_rules.mjs`).
 
 ## Security
 

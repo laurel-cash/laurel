@@ -60,8 +60,10 @@ cargo test -q --profile local --lib a_wallet_with_history_opens_fast -- --nocapt
 | `%APPDATA%\ZcashParams\` | Sapling proving parameters (about 50 MB), downloaded by zingolib's build. Only the output key (3.6 MB) is compiled in; the app also uses the spend key here when it finds one |
 | `src-tauri/target/` | Rust build output (about 4.5 GB in debug) |
 
-Laurel currently runs on **testnet** only (`NETWORK` in `src/ui_local.ts`).
-Testnet coins come from a Zcash testnet faucet.
+Which networks a build opens is set by its Cargo features: none named, both
+mainnet and testnet (development); `testnet-only`, testnet alone (the beta);
+`v1`, mainnet alone (the release, D-033). Testnet coins come from a Zcash
+testnet faucet.
 
 ## Build problems we already hit, and the fixes
 

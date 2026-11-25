@@ -21,13 +21,15 @@ import { RUST_WORDS, T } from "./ui_text";
 import { useAction, useTextScale } from "./ui_hooks";
 import { St_Start, useAppScreen, useStore } from "./ui_store";
 import { UI_Alert, UI_Spinner, UI_TipProvider, UI_Waiting } from "./ui_widgets";
-import { UI_WhatsNewSheet, useWhatsNew } from "./ui_notes";
+import { UI_BetaWalletsSheet, UI_WhatsNewSheet, useBetaWallets, useWhatsNew } from "./ui_notes";
 import { UI_FailedWallets } from "./ui_wallets";
 import { UI_TitleBar } from "./ui_chrome";
 import { UI_Welcome } from "./ui_onboard";
+import { UI_TermsScreen, useTerms } from "./ui_terms";
 import { QUERY } from "./ui_query";
 import { UI_Backup } from "./ui_backup";
-import { method_t, UI_Restore } from "./ui_restore";
+import { UI_Restore } from "./ui_restore";
+import type { method_t } from "./ui_restore_state";
 import { UI_Home } from "./ui_home";
 import { UI_NameSheet } from "./ui_sheets";
 import { UI_Documents } from "./ui_documents";
@@ -178,7 +180,14 @@ function UI_Screen() {
 	const [ naming, setNaming ]	= useState( false );
 	const retry = useAction( refresh );
 	// what's new after an update, once the screen knows whether this is a first run
-	const whatsNew = useWhatsNew( app.kind === "firstRun" || app.kind === "wallets" || app.kind === "allFailed", app.kind === "firstRun" );
+	const known = app.kind === "firstRun" || app.kind === "wallets" || app.kind === "allFailed";
+	// v1's terms come before everything past the lock, the notes and the beta's notice too (T-049)
+	const terms = useTerms( known );
+	const past = known && terms.terms === "agreed";
+	const whatsNew = useWhatsNew( past, app.kind === "firstRun" );
+	// v1 on a device that ran the beta: told once its test wallets are kept, unopened (D-033)
+	const beta = useBetaWallets( past );
+	const betaSheet = <UI_BetaWalletsSheet open={beta.open} onOpenChange={beta.onOpenChange} />;
 
 	// rust's words first (errors, notifications), so even the vault's first error is in this language
 	useEffect( () => {
@@ -247,6 +256,18 @@ function UI_Screen() {
 		return Com_Unreachable( app );
 	}
 
+	// nothing past the lock before the terms: no wallet made, opened or restored
+	switch ( terms.terms ) {
+	case "checking":
+		return <div className="boot"><UI_Spinner size={24} /></div>;
+	case "due":
+		return <UI_TermsScreen onAgreed={terms.agreed} />;
+	case "agreed":
+		break;
+	default:
+		return Com_Unreachable( terms.terms );
+	}
+
 	switch ( visit.kind ) {
 	case "passwordOffer":
 		return <UI_PasswordOffer onDone={done} />;
@@ -261,16 +282,17 @@ function UI_Screen() {
 	}
 
 	if ( app.kind === "firstRun" ) {
-		return <UI_Welcome onCreated={Created} onRestore={restore} />;
+		return <><UI_Welcome onCreated={Created} onRestore={restore} />{betaSheet}</>;		// v1's first start on a beta phone: no mainnet wallet yet
 	}
 	if ( app.kind === "allFailed" ) {
-		return <UI_WalletsFailed failed={app.failed} onRestore={restore} />;
+		return <><UI_WalletsFailed failed={app.failed} onRestore={restore} />{betaSheet}</>;
 	}
 
 	return (
 		<>
 			<UI_Home onAddWallet={AddWallet} onBackup={( id ) => setVisit( { kind: "backup", walletId: id, recovery: null } )} />
 			<UI_WhatsNewSheet open={whatsNew.open} onOpenChange={whatsNew.onOpenChange} />
+			{betaSheet}
 			<UI_NameSheet
 				open={naming}
 				onOpenChange={setNaming}

@@ -56,6 +56,7 @@ logged under its name and the next one comes all the same. The one
 loop the background watchers share (repeating payments, price alerts).
 ==================
 */
+#[cfg_attr( not( any( feature = "folder-sync", feature = "prices", feature = "repeat-payments" ) ), allow( dead_code ) )]		// the modules' watches only (D-031)
 pub fn Com_Every< F, R >( name: &'static str, secs: u64, look: F )
 where
 	F: Fn() -> R + Send + 'static,
@@ -90,6 +91,8 @@ pub fn Com_CivilFromDays( days: i64 ) -> ( i64, u32, u32 ) {
 	( yoe + era * 400 + i64::from( month <= 2 ), month, day )
 }
 
+// a calendar's; the app uses it for repeat payments only (a build without them, D-031: its tests)
+#[cfg_attr( not( feature = "repeat-payments" ), allow( dead_code ) )]
 pub fn Com_DaysFromCivil( year: i64, month: u32, day: u32 ) -> i64 {
 	let y = if month <= 2 { year - 1 } else { year };
 	let era = y.div_euclid( 400 );
@@ -100,6 +103,7 @@ pub fn Com_DaysFromCivil( year: i64, month: u32, day: u32 ) -> i64 {
 	era * 146_097 + doe - 719_468
 }
 
+#[cfg_attr( not( feature = "repeat-payments" ), allow( dead_code ) )]
 fn Com_DaysInMonth( year: i64, month: u32 ) -> u32 {
 	let next = if month == 12 { Com_DaysFromCivil( year + 1, 1, 1 ) } else { Com_DaysFromCivil( year, month + 1, 1 ) };
 	( next - Com_DaysFromCivil( year, month, 1 ) ) as u32
@@ -115,6 +119,7 @@ Always from the anchor's own day, so a 31st doesn't drift to the 28th
 after February: the caller keeps the anchor and counts months.
 ==================
 */
+#[cfg_attr( not( feature = "repeat-payments" ), allow( dead_code ) )]
 pub fn Com_AddMonths( unix: u32, months: u32, anchorDay: u32 ) -> u32 {
 	let ( year, month, _ ) = Com_CivilFromDays( i64::from( unix / DAY_SECS ) );
 	let total = i64::from( month - 1 ) + i64::from( months );
@@ -123,6 +128,7 @@ pub fn Com_AddMonths( unix: u32, months: u32, anchorDay: u32 ) -> u32 {
 	( Com_DaysFromCivil( y, m, d ) * i64::from( DAY_SECS ) ) as u32 + unix % DAY_SECS
 }
 
+#[cfg_attr( not( feature = "repeat-payments" ), allow( dead_code ) )]
 pub fn Com_DayOfMonth( unix: u32 ) -> u32 {
 	Com_CivilFromDays( i64::from( unix / DAY_SECS ) ).2
 }

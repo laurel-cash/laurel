@@ -12,14 +12,14 @@ See the LICENSE file for details.
 // are (Scan, Send, review), and typed or pasted as a list (bulk payouts).
 // Every one is shown whole: its address, its amount, its memo.
 
-import { useEffect, useState } from "react";
-import { X } from "lucide-react";
+import { useState } from "react";
+import { ChevronLeft, Users, X } from "lucide-react";
 
 import { amount_t, Com_ErrorOf, Com_ParseZec, commands, payTo_t } from "./ui_local";
 import { T } from "./ui_text";
 import { useAction } from "./ui_hooks";
 import { useStore } from "./ui_store";
-import { sheetProps_t, UI_Alert, UI_Amount, UI_Sheet, UI_SheetButtons } from "./ui_widgets";
+import { UI_Alert, UI_Amount, UI_SheetButtons } from "./ui_widgets";
 import { Com_AmountProblem } from "./ui_payment";
 import { UI_AddressLine } from "./ui_receive";
 
@@ -58,26 +58,20 @@ type checkedLine_t = { n: number; pay: payTo_t | null; problem: string | null };
 
 /*
 ==================
-UI_PayListSheet
+UI_PayListPanel
 
 Pay several people: a list typed or pasted, each line checked (the
 address by the engine, the way Scan reads one; the amount the way Send
 reads one), every problem said by its line, nothing dropped quietly.
-room: how many more payments this one can hold.
+It takes Send's place in the same sheet while it's open, never a second
+sheet over it; Back returns to Send as it was. room: how many more
+payments this one can hold.
 ==================
 */
-export function UI_PayListSheet( props: sheetProps_t & { room: number; onAdd: ( pays: payTo_t[] ) => void } ) {
+export function UI_PayListPanel( props: { open: boolean; room: number; onAdd: ( pays: payTo_t[] ) => void; onBack: () => void } ) {
 	const [ text, setText ]			= useState( "" );
 	const [ checked, setChecked ]	= useState< checkedLine_t[] | null >( null );
 	const [ nudge, setNudge ]		= useState< string | null >( null );
-
-	useEffect( () => {
-		if ( props.open ) {
-			setText( "" );
-			setChecked( null );
-			setNudge( null );
-		}
-	}, [ props.open ] );
 
 	// action, not a load: it reads what was just typed
 	const check = useAction( async () => {
@@ -105,7 +99,7 @@ export function UI_PayListSheet( props: sheetProps_t & { room: number; onAdd: ( 
 		}
 		setChecked( out );
 		setNudge( null );
-	}, props.open );
+	}, props.open );		// Send's sheet: each opening starts with no error from the last
 
 	function Add() {
 		if ( !checked || !checked.length ) {
@@ -116,28 +110,42 @@ export function UI_PayListSheet( props: sheetProps_t & { room: number; onAdd: ( 
 			setNudge( T.pays.tooMany( props.room ) );
 		} else {
 			props.onAdd( checked.map( ( c ) => c.pay! ) );
-			props.onOpenChange( false );
 		}
 	}
 
 	return (
-		<UI_Sheet open={props.open} onOpenChange={props.onOpenChange} title={T.pays.title} description={T.pays.lede} busy={check.busy}>
-			<label className="label" htmlFor="pay-list">{T.pays.label}</label>
+		<div className="pay-panel">
+			<button className="nav-back" disabled={check.busy} onClick={props.onBack}>
+				<ChevronLeft aria-hidden="true" />{T.pays.back}
+			</button>
+			<h3 className="pay-panel-title"><Users aria-hidden="true" />{T.pays.title}</h3>
+			<p className="pay-panel-lede">{T.pays.lede}</p>
+
+			<div className="pay-format" aria-hidden="true">
+				<span className="pay-format-col">{T.pays.colAddress}</span>
+				<span className="pay-format-col">{T.pays.colAmount}</span>
+				<span className="pay-format-col quiet">{T.pays.colNote}</span>
+			</div>
+			<label className="sr-only" htmlFor="pay-list">{T.pays.label}</label>
 			<textarea
 				id="pay-list"
 				className="field pay-list-text"
-				rows={6}
+				rows={7}
 				spellCheck={false}
 				placeholder={T.pays.placeholder}
 				value={text}
 				onChange={( e ) => { setText( e.target.value ); setChecked( null ); }}
 			/>
+			<p className="hint">{T.pays.howTo}</p>
+
 			{checked && (
 				<ul className="pay-check">
 					{checked.map( ( c ) => (
 						<li key={c.n} className={c.problem ? "bad" : ""}>
-							<span className="pay-check-n">{T.pays.line( c.n )}</span>
-							{c.pay ? <><UI_AddressLine address={c.pay.to} /><UI_Amount zats={c.pay.zats} unit /></> : <span>{c.problem}</span>}
+							<span className="pay-check-n">{c.n}</span>
+							{c.pay
+								? <><span className="pay-check-to"><UI_AddressLine address={c.pay.to} /></span><span className="pay-check-amount"><UI_Amount zats={c.pay.zats} unit /></span></>
+								: <span className="pay-check-problem">{c.problem}</span>}
 						</li>
 					) )}
 				</ul>
@@ -146,10 +154,11 @@ export function UI_PayListSheet( props: sheetProps_t & { room: number; onAdd: ( 
 			{nudge && <p className="hint bad">{nudge}</p>}
 			<UI_SheetButtons
 				busy={check.busy}
-				onCancel={() => props.onOpenChange( false )}
+				onCancel={props.onBack}
+				cancel={T.pays.back}
 				action={checked ? { label: T.pays.add( checked.length ), onRun: Add } : { label: T.pays.check, onRun: () => void check.run() }}
 			/>
-		</UI_Sheet>
+		</div>
 	);
 }
 

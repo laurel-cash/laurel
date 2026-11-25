@@ -6,7 +6,12 @@
  ui_main.tsx   picks the screen       lib.rs     Sys_: startup, bindings,     LightClient per wallet:
  ui_home.tsx   switcher, balances                shutdown                     keys, sync (pepper-sync),
  ui_backup.tsx backup flow            w_cmds.rs  W_*_f: the commands          balances, transactions
- ui_restore    restore flow           w_main.rs  wallet registry, accounts
+ ui_restore    restore flow           w_main.rs  data folder, loading at start
+                                      w_registry.rs the open wallets, names
+                                      w_import.rs create, restore, import
+                                      w_lifecycle.rs close, lock, remove
+                                      w_persist.rs the disk: every write
+                                      w_public.rs which public coins are spent
  ui_sheets     dialogs                w_sync.rs  one engine per wallet,
  ui_store.ts   cache of engine state             progress events
  ui_text.ts    every sentence         w_net.rs   server, block times, errors

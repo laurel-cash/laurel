@@ -20,38 +20,56 @@ See the LICENSE file for details.
 //
 // The numbered edge cases are docs/SYNC.md's.
 
-use std::collections::BTreeMap;
-use std::path::{ Path, PathBuf };
-use std::sync::{ LazyLock, Mutex };
-
-use serde::{ Deserialize, Serialize };
+use serde::Serialize;
 use specta::Type;
 use tauri::AppHandle;
 use tauri_specta::Event;
-use zeroize::Zeroizing;
 
-use crate::w_contacts::{ contact_t, Ct_Edit };
-use crate::w_date::{ Com_Every, Com_Now };
-use crate::w_disk::Com_MakeFolderFor;
-use crate::w_documents::{ Doc_List, Doc_Read, Doc_RemoveChild, Doc_WriteChild, DOCUMENT_MAX_BYTES };
 use crate::w_local::*;
-use crate::w_main::Com_CleanName;
-use crate::w_notes::{ Com_CleanNote, noteEntry_t, Nt_Edit };
-use crate::w_scan::W_ParseScan;
-use crate::w_vault::{ purpose_t, Com_RandomHex, Com_RandomKey, V_OpenWith, V_ReadSealed, V_SealWith, V_WriteSealed };
 
+#[cfg( feature = "folder-sync" )]
+use {
+	std::collections::BTreeMap,
+	std::path::{ Path, PathBuf },
+	std::sync::{ LazyLock, Mutex },
+	serde::Deserialize,
+	zeroize::Zeroizing,
+	crate::w_contacts::{ contact_t, Ct_Edit },
+	crate::w_date::{ Com_Every, Com_Now },
+	crate::w_disk::Com_MakeFolderFor,
+	crate::w_documents::{ Doc_List, Doc_Read, Doc_RemoveChild, Doc_WriteChild, DOCUMENT_MAX_BYTES },
+	crate::w_main::Com_CleanName,
+	crate::w_notes::{ Com_CleanNote, noteEntry_t, Nt_Edit },
+	crate::w_scan::W_ParseScan,
+	crate::w_vault::{ purpose_t, Com_RandomHex, Com_RandomKey, V_OpenWith, V_ReadSealed, V_SealWith, V_WriteSealed },
+};
+
+// in the library only with this code (release_rules.mjs MODULES: a v1 build refuses it)
+#[cfg( feature = "folder-sync" )]
+pub const MODULE_MARK: &str	= "laurel-module:folder-sync";
+#[cfg( feature = "folder-sync" )]
 const STATE_FILE_NAME: &str	= "sync-state.json";		// this computer's, sealed with the vault key
+#[cfg( feature = "folder-sync" )]
 const FILE_PREFIX: &str		= "laurel-sync-";
+#[cfg( feature = "folder-sync" )]
 const FILE_SUFFIX: &str		= ".lsync";
+#[cfg( feature = "folder-sync" )]
 const FORMAT: u32			= 1;						// a file of a higher format is a newer Laurel's (10)
+#[cfg( feature = "folder-sync" )]
 const DEVICE_BYTES: usize	= 8;						// 16 hex digits
+#[cfg( feature = "folder-sync" )]
 const KEY_BYTES: usize		= 32;
+#[cfg( feature = "folder-sync" )]
 const CHECK_BYTES: usize	= 3;						// the code's checksum: 32 + 3 bytes are 56 base32 letters
+#[cfg( feature = "folder-sync" )]
 const CODE_GROUP: usize		= 4;
+#[cfg( feature = "folder-sync" )]
 const WATCH_SECS: u64		= 60;						// how often the folder is looked at
+#[cfg( feature = "folder-sync" )]
 const B32: &[ u8; 32 ]		= b"ABCDEFGHIJKLMNOPQRSTUVWXYZ234567";		// RFC 4648
 
 // which record is newer: the counter first, the device to break a tie
+#[cfg( feature = "folder-sync" )]
 #[derive( Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize )]
 struct stamp_t {
 	version:	u64,
@@ -59,6 +77,7 @@ struct stamp_t {
 }
 
 // a record as it travels: its value, or none for a deletion (a tombstone)
+#[cfg( feature = "folder-sync" )]
 #[derive( Clone, Debug, PartialEq, Serialize, Deserialize )]
 struct record_t< T > {
 	stamp:	stamp_t,
@@ -66,6 +85,7 @@ struct record_t< T > {
 }
 
 // a contact as it travels: its kind is read again from the address on arrival (8)
+#[cfg( feature = "folder-sync" )]
 #[derive( Clone, Debug, PartialEq, Serialize, Deserialize )]
 struct syncContact_t {
 	name:		String,
@@ -75,6 +95,7 @@ struct syncContact_t {
 }
 
 // the settings that travel (docs/SYNC.md says why only these)
+#[cfg( feature = "folder-sync" )]
 #[derive( Clone, Debug, PartialEq, Serialize, Deserialize )]
 struct syncSettings_t {
 	notifyInApp:	bool,
@@ -83,6 +104,7 @@ struct syncSettings_t {
 }
 
 // one network's records (7)
+#[cfg( feature = "folder-sync" )]
 #[derive( Clone, Debug, Default, PartialEq, Serialize, Deserialize )]
 struct section_t {
 	contacts:	BTreeMap< String, record_t< syncContact_t > >,
@@ -90,6 +112,7 @@ struct section_t {
 }
 
 // everything merged so far: what each computer's file holds
+#[cfg( feature = "folder-sync" )]
 #[derive( Clone, Debug, Default, PartialEq, Serialize, Deserialize )]
 struct known_t {
 	clock:		u64,
@@ -98,6 +121,7 @@ struct known_t {
 }
 
 // a computer's file in the folder
+#[cfg( feature = "folder-sync" )]
 #[derive( Serialize, Deserialize )]
 struct syncFile_t {
 	format:	u32,
@@ -107,6 +131,7 @@ struct syncFile_t {
 }
 
 // this computer's sync, sealed with the vault key
+#[cfg( feature = "folder-sync" )]
 #[derive( Clone, Serialize, Deserialize )]
 struct state_t {
 	key:		Vec< u8 >,
@@ -142,7 +167,9 @@ pub struct syncStatus_t {
 pub struct folderSyncedEvent_t {}
 
 // one sync at a time; the last one's outcome
+#[cfg( feature = "folder-sync" )]
 static f_running: LazyLock< tokio::sync::Mutex< () > > = LazyLock::new( || tokio::sync::Mutex::new( () ) );
+#[cfg( feature = "folder-sync" )]
 static f_status: LazyLock< Mutex< Option< syncStatus_t > > > = LazyLock::new( || Mutex::new( None ) );
 
 
@@ -154,6 +181,7 @@ THE SYNC CODE
 =========================================================================
 */
 
+#[cfg( feature = "folder-sync" )]
 fn Com_Base32( bytes: &[ u8 ] ) -> String {
 	let mut out = String::new();
 	let ( mut acc, mut bits ) = ( 0u32, 0u32 );
@@ -171,6 +199,7 @@ fn Com_Base32( bytes: &[ u8 ] ) -> String {
 	out
 }
 
+#[cfg( feature = "folder-sync" )]
 fn Com_Unbase32( text: &str ) -> Option< Vec< u8 > > {
 	let mut out = Vec::new();
 	let ( mut acc, mut bits ) = ( 0u32, 0u32 );
@@ -185,6 +214,7 @@ fn Com_Unbase32( text: &str ) -> Option< Vec< u8 > > {
 	Some( out )
 }
 
+#[cfg( feature = "folder-sync" )]
 fn Com_CodeCheck( key: &[ u8 ] ) -> Vec< u8 > {
 	crate::w_vault::Com_Hash( b"Laurel_SyncCode_", CHECK_BYTES, key )
 }
@@ -199,11 +229,13 @@ joined (11). Case, spaces and dashes don't matter. An error never
 repeats the code (19).
 ==================
 */
+#[cfg( feature = "folder-sync" )]
 fn Com_SyncCode( key: &[ u8 ] ) -> String {
 	let letters = Com_Base32( &[ key, &Com_CodeCheck( key ) ].concat() );
 	letters.as_bytes().chunks( CODE_GROUP ).map( |g| String::from_utf8_lossy( g ).into_owned() ).collect::< Vec< _ > >().join( "-" )
 }
 
+#[cfg( feature = "folder-sync" )]
 fn Com_ParseSyncCode( text: &str ) -> wresult_t< Zeroizing< Vec< u8 > > > {
 	let letters: String = text.chars().filter( |c| c.is_ascii_alphanumeric() ).map( |c| c.to_ascii_uppercase() ).collect();
 	let bytes = Zeroizing::new( Com_Unbase32( &letters ).ok_or( werr_t::WERR_SYNC_CODE )? );
@@ -237,6 +269,7 @@ one elsewhere this computer hadn't seen: the person's latest edit isn't
 lost to an older one arriving late.
 ==================
 */
+#[cfg( feature = "folder-sync" )]
 fn Com_Stamp< T: Clone + PartialEq >( known: &mut BTreeMap< String, record_t< T > >, local: &BTreeMap< String, T >, me: &str, clock: &mut u64 ) {
 	let ids: Vec< String > = local.keys().chain( known.keys() ).cloned().collect::< std::collections::BTreeSet< _ > >().into_iter().collect();
 	for id in ids {
@@ -258,6 +291,7 @@ can't keep (valid false, by its id and value) is left out and counted
 (8, 9). Only what arrives is judged: what is already here stays as it is.
 ==================
 */
+#[cfg( feature = "folder-sync" )]
 fn Com_Adopt< T: Clone >( known: &mut BTreeMap< String, record_t< T > >, theirs: &BTreeMap< String, record_t< T > >, valid: impl Fn( &str, &T ) -> bool, skipped: &mut u32 ) {
 	for ( id, r ) in theirs {
 		if ( known.get( id ).is_some_and( |k| k.stamp >= r.stamp ) ) {
@@ -278,6 +312,7 @@ Two contacts for one address (added on two computers apart): the newer
 stays, the other is deleted, by the same rule everywhere (6)
 ==================
 */
+#[cfg( feature = "folder-sync" )]
 fn Com_OneNamePerAddress( contacts: &mut BTreeMap< String, record_t< syncContact_t > >, me: &str, clock: &mut u64 ) {
 	let mut best: BTreeMap< String, ( stamp_t, String ) > = BTreeMap::new();
 	for ( id, r ) in contacts.iter() {
@@ -296,6 +331,7 @@ fn Com_OneNamePerAddress( contacts: &mut BTreeMap< String, record_t< syncContact
 	}
 }
 
+#[cfg( feature = "folder-sync" )]
 fn Com_NetKey( net: network_t ) -> &'static str {
 	match net {
 		network_t::NET_MAINNET => "mainnet",
@@ -303,11 +339,13 @@ fn Com_NetKey( net: network_t ) -> &'static str {
 	}
 }
 
+#[cfg( feature = "folder-sync" )]
 fn Com_Traveling( c: &contact_t ) -> syncContact_t {
 	syncContact_t { name: c.name.clone(), address: c.address.clone(), note: c.note.clone(), lastPaid: c.lastPaid }
 }
 
 // a contact that arrived, as this Laurel would have saved it; none when it can't (8)
+#[cfg( feature = "folder-sync" )]
 fn Com_Arrived( net: network_t, id: &str, c: &syncContact_t ) -> Option< contact_t > {
 	let target = W_ParseScan( net, &c.address ).ok()?;
 	let name = Com_CleanName( &c.name ).ok()?;
@@ -315,6 +353,7 @@ fn Com_Arrived( net: network_t, id: &str, c: &syncContact_t ) -> Option< contact
 	Some( contact_t { id: id.to_string(), name: name, address: target.address, kind: target.kind, note: note, lastPaid: c.lastPaid } )
 }
 
+#[cfg( feature = "folder-sync" )]
 fn Com_NoteKeeps( n: &noteEntry_t ) -> bool {
 	n.text.as_deref().is_none_or( |t| Com_CleanNote( t ).is_ok_and( |kept| kept.as_deref() == Some( t ) ) )
 }
@@ -328,21 +367,25 @@ THE FOLDER
 =========================================================================
 */
 
+#[cfg( feature = "folder-sync" )]
 fn Com_FileName( device: &str ) -> String {
 	format!( "{FILE_PREFIX}{device}{FILE_SUFFIX}" )
 }
 
 // the device a file name says wrote it; none for anything else in the folder (1)
+#[cfg( feature = "folder-sync" )]
 fn Com_DeviceOf( name: &str ) -> Option< &str > {
 	let device = name.strip_prefix( FILE_PREFIX )?.strip_suffix( FILE_SUFFIX )?;
 	( device.len() == DEVICE_BYTES * 2 && device.bytes().all( |b| b.is_ascii_hexdigit() && !b.is_ascii_uppercase() ) ).then_some( device )
 }
 
+#[cfg( feature = "folder-sync" )]
 fn Com_ComputerName() -> String {
 	std::env::var( "COMPUTERNAME" ).or_else( |_| std::env::var( "HOSTNAME" ) ).unwrap_or_else( |_| if cfg!( target_os = "android" ) { "Android device" } else { "A computer" }.to_string() )
 }
 
 // what one file in the folder gave: its computer, and its records when it could be read
+#[cfg( feature = "folder-sync" )]
 struct read_t {
 	computer:	syncComputer_t,
 	file:		Option< syncFile_t >,
@@ -359,6 +402,7 @@ it (10). A folder that isn't there is an error, and nothing here changes
 (13).
 ==================
 */
+#[cfg( feature = "folder-sync" )]
 fn F_ReadFolder( folder: &Path, key: &[ u8; KEY_BYTES ], me: &str ) -> wresult_t< Vec< read_t > > {
 	let entries = Doc_List( folder, FILE_PREFIX )?;
 	let mut out = Vec::new();
@@ -384,19 +428,23 @@ fn F_ReadFolder( folder: &Path, key: &[ u8; KEY_BYTES ], me: &str ) -> wresult_t
 	Ok( out )
 }
 
+#[cfg( feature = "folder-sync" )]
 fn F_StatePath() -> wresult_t< PathBuf > {
 	Com_DataPath( STATE_FILE_NAME ).ok_or_else( Com_NoDataFolder )
 }
 
 // this computer's sync; none when it isn't syncing. Locked, it can't be read (12)
+#[cfg( feature = "folder-sync" )]
 fn F_ReadState() -> wresult_t< Option< state_t > > {
 	V_ReadSealed::< Option< state_t > >( &F_StatePath()?, purpose_t::PURPOSE_SYNC, file_t::FILE_SYNC )
 }
 
+#[cfg( feature = "folder-sync" )]
 fn F_WriteState( state: &state_t ) -> wresult_t< () > {
 	V_WriteSealed( &F_StatePath()?, purpose_t::PURPOSE_SYNC, state )
 }
 
+#[cfg( feature = "folder-sync" )]
 fn Com_Key( state: &state_t ) -> wresult_t< Zeroizing< [ u8; KEY_BYTES ] > > {
 	let key: [ u8; KEY_BYTES ] = state.key.as_slice().try_into().map_err( |_| werr_t::WERR_CORRUPT( file_t::FILE_SYNC ) )?;
 	Ok( Zeroizing::new( key ) )
@@ -422,6 +470,7 @@ computer's file written again when anything changed. Not syncing, or
 locked: nothing to do.
 ==================
 */
+#[cfg( feature = "folder-sync" )]
 pub async fn F_Sync() -> wresult_t< syncStatus_t > {
 	let _running = f_running.lock().await;
 	let Some( mut state ) = F_ReadState()? else {
@@ -441,11 +490,13 @@ pub async fn F_Sync() -> wresult_t< syncStatus_t > {
 	Ok( F_Remember( status ) )
 }
 
+#[cfg( feature = "folder-sync" )]
 fn F_Remember( status: syncStatus_t ) -> syncStatus_t {
 	*f_status.lock().unwrap() = Some( status.clone() );
 	status
 }
 
+#[cfg( feature = "folder-sync" )]
 async fn F_SyncWith( state: &mut state_t ) -> wresult_t< syncStatus_t > {
 	let key = Com_Key( state )?;
 	let files = F_ReadFolder( &state.folder, &key, &state.device )?;
@@ -558,6 +609,7 @@ The first computer: a new sync key, shown once as the code the others
 join with. Only one sync at a time on a computer.
 ==================
 */
+#[cfg( feature = "folder-sync" )]
 pub async fn F_Start( folder: &str ) -> wresult_t< String > {
 	let key = Zeroizing::new( Com_RandomKey() );
 	F_Begin( folder, &key[..] ).await?;
@@ -572,11 +624,13 @@ Another computer, with the code the first one showed: typos are caught
 by the code's checksum before anything is kept (11)
 ==================
 */
+#[cfg( feature = "folder-sync" )]
 pub async fn F_Join( folder: &str, code: &str ) -> wresult_t< syncStatus_t > {
 	let key = Com_ParseSyncCode( code )?;
 	F_Begin( folder, &key ).await
 }
 
+#[cfg( feature = "folder-sync" )]
 async fn F_Begin( folder: &str, key: &[ u8 ] ) -> wresult_t< syncStatus_t > {
 	if ( F_ReadState()?.is_some() ) {
 		return Err( werr_t::WERR_SYNC_ON );
@@ -597,6 +651,7 @@ This computer forgets the key and takes its own file out of the folder;
 the others keep theirs, and contacts and notes stay as they are (17)
 ==================
 */
+#[cfg( feature = "folder-sync" )]
 pub async fn F_Stop() -> wresult_t< () > {
 	let _running = f_running.lock().await;
 	if let Some( state ) = F_ReadState()? {
@@ -615,6 +670,7 @@ A computer that is gone for good: its file leaves the folder; what it
 changed stays merged here (18). Not this computer's own: that is Stop.
 ==================
 */
+#[cfg( feature = "folder-sync" )]
 pub async fn F_Forget( device: &str ) -> wresult_t< () > {
 	let _running = f_running.lock().await;
 	let state = F_ReadState()?.ok_or( werr_t::WERR_SYNC_FOLDER )?;
@@ -633,10 +689,12 @@ the first look is still to come), what the state says: on, and where.
 Never "off" for a computer that is syncing.
 ==================
 */
+#[cfg( feature = "folder-sync" )]
 fn F_FolderName( state: &state_t ) -> String {
 	state.folderName.clone().unwrap_or_else( || state.folder.display().to_string() )
 }
 
+#[cfg( feature = "folder-sync" )]
 pub fn F_Status() -> wresult_t< syncStatus_t > {
 	if let Some( s ) = f_status.lock().unwrap().clone() {
 		return Ok( s );
@@ -657,7 +715,9 @@ there is nothing to do; any other failure is in the status for Settings
 to say. The ui hears each one.
 ==================
 */
+#[cfg( feature = "folder-sync" )]
 pub fn F_Watch( app: AppHandle ) {
+	log::info!( "F_Watch: {MODULE_MARK}" );
 	Com_Every( "F_Watch", WATCH_SECS, move || {
 		let app = app.clone();
 		async move {
@@ -672,7 +732,50 @@ pub fn F_Watch( app: AppHandle ) {
 }
 
 
-#[cfg( test )]
+/*
+==================
+Without the module (D-031)
+
+Every command says this build hasn't it; the watch never starts. Nothing
+is read or written: a folder an earlier build chose, its files and this
+computer's sync state stay as they were, for a build with the module.
+==================
+*/
+#[cfg( not( feature = "folder-sync" ) )]
+pub async fn F_Sync() -> wresult_t< syncStatus_t > {
+	Err( werr_t::WERR_NOT_IN_BUILD )
+}
+
+#[cfg( not( feature = "folder-sync" ) )]
+pub async fn F_Start( _folder: &str ) -> wresult_t< String > {
+	Err( werr_t::WERR_NOT_IN_BUILD )
+}
+
+#[cfg( not( feature = "folder-sync" ) )]
+pub async fn F_Join( _folder: &str, _code: &str ) -> wresult_t< syncStatus_t > {
+	Err( werr_t::WERR_NOT_IN_BUILD )
+}
+
+#[cfg( not( feature = "folder-sync" ) )]
+pub async fn F_Stop() -> wresult_t< () > {
+	Err( werr_t::WERR_NOT_IN_BUILD )
+}
+
+#[cfg( not( feature = "folder-sync" ) )]
+pub async fn F_Forget( _device: &str ) -> wresult_t< () > {
+	Err( werr_t::WERR_NOT_IN_BUILD )
+}
+
+#[cfg( not( feature = "folder-sync" ) )]
+pub fn F_Status() -> wresult_t< syncStatus_t > {
+	Err( werr_t::WERR_NOT_IN_BUILD )
+}
+
+#[cfg( not( feature = "folder-sync" ) )]
+pub fn F_Watch( _app: AppHandle ) {}
+
+
+#[cfg( all( test, feature = "folder-sync" ) )]
 mod tests {
 	use super::*;
 
@@ -910,5 +1013,34 @@ mod tests {
 		Com_Adopt( &mut a, &b0, |_, _| true, &mut skipped );
 		Com_Adopt( &mut b, &a0, |_, _| true, &mut skipped );
 		assert_eq!( a, b );
+	}
+}
+
+
+#[cfg( all( test, not( feature = "folder-sync" ) ) )]
+mod left_out {
+	use super::*;
+
+	// every command answers that this build has no folder sync; a folder an earlier
+	// build chose is neither read nor changed, its files nor their bytes
+	#[tokio::test( flavor = "multi_thread" )]
+	async fn every_command_says_not_in_this_build_and_leaves_the_folder_be() {
+		let folder = Com_TestDir( "folder-left-out" );
+		let file = folder.join( "laurel-sync-00000000000000ab.lsync" );
+		std::fs::write( &file, b"sealed by an earlier build" ).unwrap();
+		let before = std::fs::metadata( &file ).unwrap().modified().unwrap();
+		let f = folder.to_str().unwrap();
+
+		assert!( matches!( F_Start( f ).await, Err( werr_t::WERR_NOT_IN_BUILD ) ) );
+		assert!( matches!( F_Join( f, "AAAA-BBBB" ).await, Err( werr_t::WERR_NOT_IN_BUILD ) ) );
+		assert!( matches!( F_Sync().await, Err( werr_t::WERR_NOT_IN_BUILD ) ) );
+		assert!( matches!( F_Forget( "00000000000000ab" ).await, Err( werr_t::WERR_NOT_IN_BUILD ) ) );
+		assert!( matches!( F_Stop().await, Err( werr_t::WERR_NOT_IN_BUILD ) ) );
+		assert!( matches!( F_Status(), Err( werr_t::WERR_NOT_IN_BUILD ) ) );
+
+		let names: Vec< _ > = std::fs::read_dir( &folder ).unwrap().map( |e| e.unwrap().file_name() ).collect();
+		assert_eq!( names, vec![ std::ffi::OsString::from( "laurel-sync-00000000000000ab.lsync" ) ], "nothing written or taken out" );
+		assert_eq!( std::fs::read( &file ).unwrap(), b"sealed by an earlier build" );
+		assert_eq!( std::fs::metadata( &file ).unwrap().modified().unwrap(), before );
 	}
 }

@@ -19,12 +19,12 @@ import { useMemo, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { Bell, CloudOff, EyeOff, FlaskConical, LineChart, TrendingDown, TrendingUp } from "lucide-react";
 
-import { accountValue_t, commands, Com_Ago, Com_DateTicks, Com_FormatDate, Com_FormatUsd, pricePoint_t, priceRange_t } from "./ui_local";
+import { accountValue_t, commands, Com_Ago, Com_DateTicks, Com_FormatDate, Com_FormatUsd, pricePoint_t, priceRange_t, ZATS_PER_ZEC } from "./ui_local";
 import { T } from "./ui_text";
 import { KEYS } from "./ui_query";
 import { useAppSettings } from "./ui_hooks";
 import { useStore } from "./ui_store";
-import { UI_Alert, UI_Empty, UI_LoadFailed, UI_Spinner, UI_Switch } from "./ui_widgets";
+import { UI_Alert, UI_Empty, UI_LoadFailed, UI_SettingSwitch, UI_Spinner } from "./ui_widgets";
 import { UI_PriceAlertSheet } from "./ui_alert";
 
 // a point with its price: Rust's f64 may arrive as null (JSON has no NaN)
@@ -184,7 +184,7 @@ export function UI_PriceView( props: { of: dollars_t; range: priceRange_t; width
 			? { kind: "series", series: await commands.pSeriesF( props.range ) }
 			: commands.wValueHistoryF( of.walletId, of.account, props.range ),
 		enabled:			!!settings && ( on || of.kind === "value" ),
-		refetchInterval:	props.range === "1h" || props.range === "1d" ? LIVE_MSEC : SLOW_MSEC,
+		refetchInterval:	Com_RefetchFor( props.range ),
 	} );
 	const answer = series.data;
 	const points = useMemo( () => answer?.kind === "series" ? Com_Priced( answer.series.points ) : null, [ answer ] );
@@ -243,32 +243,105 @@ export function UI_PriceView( props: { of: dollars_t; range: priceRange_t; width
 
 /*
 ==================
+usePricePoints / UI_UsdSaid
+
+One range's prices, asked once for every reader (the chart's key, in its
+shape), and only with prices on, on mainnet: test coins have none. Null
+until answered. UI_UsdSaid says an amount in dollars in its sentence,
+and nothing when there's no price or amounts are hidden.
+==================
+*/
+function Com_RefetchFor( range: priceRange_t ): number {
+	return range === "1h" || range === "1d" ? LIVE_MSEC : SLOW_MSEC;
+}
+
+function usePricePoints( range: priceRange_t ): pricePoint_t[] | null {
+	const { settings } = useAppSettings();
+	const network = useStore( ( s ) => s.network );
+	const on = settings?.showPrice === true && network === "mainnet";
+	const series = useQuery( {
+		queryKey:			KEYS.price( range ),
+		queryFn:			async (): Promise< accountValue_t > => ( { kind: "series", series: await commands.pSeriesF( range ) } ),
+		enabled:			on,
+		refetchInterval:	Com_RefetchFor( range ),
+	} );
+	// off is off at once: a query turned off keeps its last answer, which would go on saying dollars
+	return on && series.data?.kind === "series" ? series.data.series.points : null;
+}
+
+function UI_UsdSaid( props: { zats: number; usd: number | null; say: ( usd: string ) => string; className: string; title?: string } ) {
+	const hidden = useStore( ( s ) => s.hideAmounts );
+	if ( props.usd === null || hidden ) {
+		return null;
+	}
+	return <span className={props.className} title={props.title}>{props.say( Com_FormatUsd( props.zats / ZATS_PER_ZEC * props.usd ) )}</span>;
+}
+
+/*
+==================
+useZecUsd / UI_Usd
+
+The newest dollar price of one ZEC, from the day's series (the one the
+dashboard's chart shows), or null; and an amount at it, beside its ZEC
+("≈ $36.80"). A price over an hour old is none: a failed refresh keeps
+the last answer, and an old price said as today's is a wrong balance
+==================
+*/
+export function Com_NowPrice( points: pricePoint_t[], now: number ): number | null {
+	const priced = Com_Priced( points );
+	const last = priced[priced.length - 1];
+	return last && now - last.time <= HOUR_SECS ? last.usd : null;
+}
+
+export function useZecUsd(): number | null {
+	return Com_NowPrice( usePricePoints( "1d" ) ?? [], Math.floor( Date.now() / 1000 ) );
+}
+
+export function UI_Usd( props: { zats: number; className?: string } ) {
+	const usd = useZecUsd();
+	return <UI_UsdSaid zats={props.zats} usd={usd} say={T.price.about} className={props.className ?? "usd"} title={usd === null ? undefined : T.price.per( Com_FormatUsd( usd ) )} />;
+}
+
+/*
+==================
+Com_RangeFor / Com_UsdAt / UI_UsdThen
+
+What an amount was worth when it moved: the price nearest its time, from
+the shortest range that still reaches back to it. A price more than
+THEN_SECS from the time isn't that day's, and says nothing. The
+constants live in the functions: a build without prices keeps nothing
+of this file (D-031), and a module constant computed from another stays
+in the bundle.
+==================
+*/
+export function Com_RangeFor( age: number ): priceRange_t {
+	const DAY_SECS = 86400;
+	return age < DAY_SECS ? "1d" : age < 7 * DAY_SECS ? "1w" : age < 30 * DAY_SECS ? "1m" : age < 365 * DAY_SECS ? "1y" : "all";
+}
+
+export function Com_UsdAt( points: pricePoint_t[], time: number ): number | null {
+	const THEN_SECS = 3 * 86400;
+	let best: point_t | null = null;
+	for ( const p of Com_Priced( points ) ) {
+		if ( !best || Math.abs( p.time - time ) < Math.abs( best.time - time ) ) {
+			best = p;
+		}
+	}
+	return best && Math.abs( best.time - time ) <= THEN_SECS ? best.usd : null;
+}
+
+export function UI_UsdThen( props: { zats: number; time: number } ) {
+	const points = usePricePoints( Com_RangeFor( Math.floor( Date.now() / 1000 ) - props.time ) );
+	return <UI_UsdSaid zats={props.zats} usd={points ? Com_UsdAt( points, props.time ) : null} say={T.price.then} className="usd usd-then" />;
+}
+
+/*
+==================
 UI_PriceSetting
 
 For Settings > General: the yes, taken back or given
 ==================
 */
 export function UI_PriceSetting() {
-	const { settings, save } = useAppSettings();
-	if ( !settings ) {
-		return null;
-	}
-	return (
-		<section className="settings-section">
-			<h2 className="section-title">{T.price.settingTitle}</h2>
-			<ul className="pool-list settings-list">
-				<li className="set-row">
-					<span className="set-icon"><LineChart aria-hidden="true" /></span>
-					<span className="set-text">
-						<span className="set-label">{T.price.settingLabel}</span>
-						<span className="set-sub">{T.price.settingHint}</span>
-					</span>
-					<span className="set-actions">
-						<UI_Switch label={T.price.settingLabel} checked={settings.showPrice} busy={save.busy} onChange={( on ) => { save.run( { showPrice: on } ); }} />
-					</span>
-				</li>
-			</ul>
-			{save.error && <UI_Alert title={T.common.cantSaveSetting} message={save.error} />}
-		</section>
-	);
+	return <UI_SettingSwitch field="showPrice" icon={<LineChart aria-hidden="true" />} title={T.price.settingTitle} label={T.price.settingLabel} hint={T.price.settingHint} />;
 }

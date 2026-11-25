@@ -147,6 +147,7 @@ The offline signer's Sk_Ensure: a copy here or a clear word on where to
 put one, never a download
 ==================
 */
+#[cfg_attr( not( feature = "offline-signing" ), allow( dead_code ) )]		// offline signing's alone (D-031)
 pub async fn Sk_EnsureOffline() -> wresult_t< () > {
 	if ( Sk_Here().await ) {
 		return Ok( () );
@@ -176,6 +177,7 @@ For a signer about to spend Sapling notes: where to copy the key, when
 it isn't here yet (the review says so before Sign is pressed)
 ==================
 */
+#[cfg_attr( not( feature = "offline-signing" ), allow( dead_code ) )]
 pub async fn Sk_CopyInto( from: &[ pool_t ] ) -> Option< String > {
 	( Sk_Needed( from ) && !Sk_Here().await ).then( Sk_Folder )
 }

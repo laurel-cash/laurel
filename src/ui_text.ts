@@ -23,7 +23,7 @@ See the LICENSE file for details.
 // (check_owners). Engine errors are here too, by code (errors, below).
 
 import { Com_ListIn, Com_Plural, Com_Pseudo, LOCALE, locale_t, widen_t } from "./ui_locale";
-import { Com_ReleaseNotes, Com_Unit } from "./ui_local";
+import { Com_NoteTagsHere, Com_ReleaseNotes, Com_Unit } from "./ui_local";
 import { ERRORS_EN } from "./generated/errors";
 import NOTES_TEXT from "../docs/RELEASE-NOTES.md?raw";
 import { useStore } from "./ui_store";
@@ -110,6 +110,9 @@ const EN = {
 		failed:				"Couldn't Load the Notices",
 		notes:				"What's New",
 		notesHint:			"What changed in each version",
+		terms:				"Terms of Use",
+		termsHint:			"What you agree to by using Laurel, on laurel.cash",
+		open:				"Open",
 	},
 
 	notes: {
@@ -118,6 +121,35 @@ const EN = {
 		version:			( v: string ) => `Laurel ${v}`,
 		released:			( date: string ) => `Released ${date}`,
 		gotIt:				"Got It",
+	},
+
+	// D-033: v1 opens mainnet alone; told once, on a device that ran the beta
+	betaWallets: {
+		title:				"This version uses real ZEC.",
+		text:				"Your test wallets from the beta are kept on this device but not opened here. Test coins have no value.",
+		ok:					"OK",
+	},
+
+	// T-049: v1's first screen; the words the Operator approved
+	terms: {
+		title:				"Before you start",
+		lede:				"Laurel is a wallet for real ZEC. It hasn't been independently audited, so start with small amounts.",
+		points: [
+			"Only you hold your recovery phrase. If you lose it, no one can restore your wallet, not even us.",
+			"Payments can't be cancelled or reversed.",
+			"Laurel is free software, provided as is.",
+		],
+		// one sentence, its two links between the pieces
+		read: {
+			before:			"I've read and agree to the ",
+			between:		" and the ",
+			after:			".",
+		},
+		termsLink:			"Terms of use",
+		privacyLink:		"Privacy policy",
+		agree:				"Agree and continue",
+		agreeing:			"Saving…",
+		failed:				"Couldn't Save Your Agreement",
 	},
 
 	wallets: {
@@ -175,6 +207,8 @@ const EN = {
 		synced:				"Up to date",
 		syncing:			( pct: number ) => `Syncing ${pct}%`,
 		connecting:			"Connecting…",
+		preparing:			"Getting ready…",
+		preparingText:		"Before checking blocks, Laurel gets the network's current state and looks up your public addresses' payments. This can take a few minutes, then the count starts.",
 		retrying:			"Trying to connect…",
 		paused:				"Paused",
 		repairing:			"Repairing…",
@@ -575,9 +609,14 @@ const EN = {
 	pays: {
 		open:				"Pay Several People…",
 		title:				"Pay Several People",
-		lede:				"One payment to many: one line each, the address, the amount, and a note for them if you like. Everyone is paid in one transaction, reviewed before anything is sent.",
+		lede:				"Everyone is paid in one transaction, and you review it before anything is sent.",
 		label:				"One per line: address, amount, note",
-		placeholder:		"utest1…, 0.5, Rent\ntm…; 1,25",
+		placeholder:		"u1…, 0.5, Rent\nt1…, 1.25",
+		colAddress:			"Address",
+		colAmount:			"Amount",
+		colNote:			"Note (optional)",
+		howTo:				"One person per line, the parts split by commas. A list pasted from a spreadsheet works too.",
+		back:				"Back to Send",
 		check:				"Check the List",
 		add:				( n: number ) => plural( n, { one: "Add 1 Payment", other: `Add ${n} Payments` } ),
 		line:				( n: number ) => `Line ${n}`,
@@ -616,6 +655,9 @@ const EN = {
 	},
 
 	price: {
+		about:				( usd: string ) => `≈ ${usd}`,		// an amount in dollars, beside its ZEC
+		per:				( usd: string ) => `1 ZEC ≈ ${usd}, from CoinGecko`,		// the price an amount in dollars was worked out at
+		then:				( usd: string ) => `≈ ${usd} when it moved`,		// a past payment, at that day's price
 		title:				"ZEC price in US dollars",
 		askTitle:			"See the ZEC Price?",
 		ask:				"Laurel asks CoinGecko for it. CoinGecko sees this device's IP address, but nothing about your wallets. Nothing is asked until you say yes, and you can turn it off in Settings.",
@@ -625,7 +667,7 @@ const EN = {
 		failed:				"Couldn't Get the Price",
 		settingTitle:		"Price",
 		settingLabel:		"Show the ZEC Price",
-		settingHint:		"In the dashboard's chart. Laurel asks CoinGecko, which sees this device's IP address, never anything about your wallets.",
+		settingHint:		"Under your balance and in the dashboard's chart. Laurel asks CoinGecko, which sees this device's IP address, never anything about your wallets.",
 		valueTitle:			"This account's value in US dollars",
 		valueNote:			"What this account held, at the price of each moment. It changes with money that came in or went out, not only with the price.",
 		valueFailed:		"Couldn't Work Out the Value",
@@ -703,11 +745,12 @@ const EN = {
 		cantLoad:			"Couldn't Load History",
 		syncing:			"Still syncing. Older payments may still appear.",
 		// detail
-		confirmed:			( when: string ) => `Confirmed · ${when}`,
-		pendingLong:		"Pending: waiting for the network to confirm it, usually a few minutes.",
-		expiresBy:			( time: string ) => `If it isn't confirmed by about ${time}, it expires and nothing is paid. A pending payment can't be cancelled: don't send it again.`,
+		expiresBy:			( time: string ) => `If it isn't confirmed by about ${time}, it expires and nothing is paid. It can't be cancelled, so don't send it again.`,
 		expiresNow:			"It's past its expiry. Once Laurel checks the next block, it shows as not gone through and nothing is paid. Don't send it again before then.",
 		noExpiry:			"A pending payment can't be cancelled: don't send it again.",
+		arrivesBy:			( time: string ) => `If it isn't confirmed by about ${time}, it expires and nothing arrives.`,
+		arrivesNow:			"It's past its expiry. Once Laurel checks the next block, it shows as not gone through, and nothing arrives.",
+		arrivesNone:		"It counts in your balance once the network confirms it.",
 		unsent:				"Not sent yet",
 		unsentLong:			"Laurel can't tell yet whether this payment went out: Laurel closed or the connection dropped while sending. It goes out as soon as this wallet catches up. Don't send it again.",
 		failed:				"Didn't go through",
@@ -731,6 +774,29 @@ const EN = {
 		from:				"From",
 		into:				"Into",
 		message:			"Message",
+		// the detail sheet
+		sentTo:				( name: string ) => `Sent to ${name}`,
+		confirmedChip:		"Confirmed",
+		confirmations:		( n: number ) => plural( n, { one: "1 confirmation", other: `${n.toLocaleString( LOCALE )} confirmations` } ),
+		hiddenSender:		"Private sender",
+		hiddenSenderSub:	"Private payments don't say who sent them",
+		publicSender:		"Sender not kept",
+		publicSenderSub:	"Laurel doesn't record a public payment's sender",
+		unknownRecipient:	"Recipient not known",
+		unknownRecipientSub:	"This wallet couldn't read who it paid",
+		yourWallet:			"Your wallet",
+		theirAddress:		"Their address",
+		dust:				"Too small to spend: spending it would cost as much in fees as it holds, so it isn't counted in your balance.",
+		publicAddresses:	( n: number ) => `${n} public addresses`,
+		when:				"Date",
+		block:				"Block",
+		addNote:			"Add note",
+		actions:			"Actions",
+		sendAgainShort:		"Send Again",
+		explorer:			"Explorer",
+		saveContact:		"Save Contact",
+		pendingCount:		( n: number ) => plural( n, { one: "1 pending", other: `${n} pending` } ),
+		pendingSee:			"See pending payments in History",
 	},
 
 	settings: {
@@ -746,7 +812,7 @@ const EN = {
 		about:				"About",
 		notifications:		"Notifications",
 		help:				"Help & Support",
-		developer:			"Developer",
+		developer:			"Advanced",
 		ledes: {
 			general:		"How Laurel looks, and whether it shows the ZEC price.",
 			security:		"How your wallets are protected on this device, and when Laurel locks.",
@@ -757,13 +823,15 @@ const EN = {
 			offline:		"Pay from a wallet whose recovery phrase lives on a computer that is never online.",
 			network:		"Real money or test coins, and the server Laurel asks about the blockchain.",
 			storage:		"What Laurel keeps on this device, and how much room it takes.",
-			developer:		"The facts for troubleshooting, a report for support, and checking a wallet again.",
+			developer:		"Sending public money as it is, the facts for troubleshooting, a report for support, and checking a wallet again.",
 			help:			"Answers to common questions, and where to ask for more.",
 			about:			"The version you're running, and the work it's built on.",
 		} satisfies Record< settingsPane_t, string >,
 	},
 
 	developer: {
+		fromPublic:			"Send From Public Money",
+		fromPublicHint:		"Lets Send spend public money as it is, without shielding it first. For an exchange that wants payments from a public address. Everyone can see the amount and that your public addresses belong together. Change goes to your private balance.",
 		version:			"Version",
 		network:			"Network",
 		server:				"Server",
@@ -785,6 +853,7 @@ const EN = {
 		recheckAsk:			"Check Again…",
 		recheckSure:		"Check again from the start? It takes as long as a restore.",
 		recheck:			"Check Again",
+		lookFurther:		"Also look further for public addresses (up to 100 unused in a row). For a phrase from another wallet that may have left gaps. Slower, and the server sees more of your addresses.",
 		recheckStarted:		"Checking again from the birthday. Progress shows in the sync status.",
 		cantRecheck:		"Couldn't Start Checking Again",
 	},
@@ -881,9 +950,25 @@ const EN = {
 		saveAddress:		"Save to Address Book",
 	},
 
+	progress: {
+		sent:				"Sent",
+		seen:				"Seen",
+		confirming:			"Confirming",
+		confirmed:			"Confirmed",
+		waitHead:			"Waiting for the network",
+		waitSub:			"Usually a few minutes. This updates on its own.",
+		doneHead:			"Confirmed",
+		doneSub:			"It's on the blockchain for good.",
+		failedHead:			"It didn't go through",
+		failedSub:			"Nothing was paid, and the money is back in your balance.",
+	},
+
 	receipt: {
 		txid:				"Transaction",
 		copy:				"Copy ID",
+		explorer:			"View in Explorer",
+		explorerHint:		"Opens the payment on zcashexplorer.app in your browser. That site sees your IP address and which payment you looked at.",
+		cantOpen:			"Laurel couldn't open your browser.",
 		done:				"Done",
 	},
 
@@ -901,17 +986,25 @@ const EN = {
 		fromInfo:			"Automatic spends your newest private money first and keeps everything shielded. Choose a pool when you want to empty it, for example to leave an older pool behind.",
 		publicTitle:		"Public money",
 		publicHint:			"Shield it first to send it privately",
+		publicSend:			"Sent publicly: everyone sees the amount",
+		publicChange:		"Anything left over from your public money goes to your private balance.",
+		linksAddresses:		( n: number ) => `This spends from ${n} of your public addresses, so anyone can see they belong together, for good. To avoid it, send less than one address holds, or shield first.`,
 		amount:				"Amount",
 		max:				"Max",
 		maxHint:			"Everything in the chosen pool, minus the fee",
-		allOf:				"Everything",
 		maxOff:				"Type an amount instead",
 		maxAfterFee:		( pools: string, fee: string ) => `Everything in ${pools}, after the ${fee} ${Unit()} network fee.`,
-		maxNeedsAddress:	"Everything in the chosen pool, after the network fee. The exact amount shows once there's an address, since the fee depends on it.",
+		maxAbout:			( pools: string, fee: string ) => `Everything in ${pools}, after about ${fee} ${Unit()} in network fees. Exact once you enter an address.`,
 		maxWorking:			"Working out the exact amount…",
+		maxNone:			"—",		// Max has no amount: the line under it says why
+		onlyPublic:			"All the money in this account is public, and Automatic only spends private money.",
+		publicHow:			"How it pays: from one public address when one holds enough (the smallest that does), so your addresses stay apart. Only when none can pay alone does it combine several, and the review says how many. Max spends them all.",
+		shieldFirst:		"Shield It First",
+		useTransparent:		"Send It Publicly",
 		badAmount:			"Enter an amount like 1.5 (up to 8 decimals).",
 		paidBefore:			"someone you paid",
 		lookAlike:			( who: string, address: string ) => `This address looks like ${who}'s (${address}) but isn't the same. Look-alike addresses are a common trick: check every character before sending.`,
+		viewOnlyCant:		"This wallet can only view. It can't send.",
 		stillPending:		"A payment from this account is still waiting for the network. It can't be cancelled, and sending this one is a second payment, not a retry.",
 		ambiguousAmount:	"Is the comma a thousands separator or a decimal point? Pick one:",
 		memo:				"Message",
@@ -928,11 +1021,12 @@ const EN = {
 		total:				"Total",
 		twoSteps:			"This takes two transactions: this address only accepts public money, so it moves through your public address first.",
 		publicWarn:			"This is a public address. The amount and the payment are visible to anyone, forever.",
+		dust:				( amount: string ) => `${amount} ${Unit()} is too small to spend: a payment this size costs its recipient as much in fees as it holds, so most wallets, Laurel included, won't count it.`,
 		back:				"Back",
 		action:				( amount: string ) => `Send ${amount} ${Unit()}`,
 		actionHidden:		"Send",
 		changed:			"The numbers changed since you looked, because the network moved on. Check them, then send again.",
-		doneTitle:			"Sent",
+		doneTitle:			"Payment Sent",
 		done:				"On its way. It shows as pending until the network confirms it, usually within a few minutes.",
 		failed:				"Couldn't Send",
 		cantReview:			"Can't Prepare This Payment",
@@ -951,11 +1045,15 @@ const EN = {
 		nothingTitle:		"Nothing to Shield",
 		get nothing(): string { return `There's no public money in this account. When ${Unit()} arrives at your public address, shield it here to make it private.`; },
 		actionHidden:		"Shield",
+		get ledeOne(): string { return `Move the ${Unit()} at one public address into your private balance, where the blockchain doesn't show it.`; },
+		onlyThis:			( address: string ) => `Only this address: ${address}. Your other public addresses stay as they are.`,
+		links:				( n: number ) => `None of your public addresses holds enough to pay its own fee, so this shields ${n} of them together: anyone can see they belong together, for good.`,
+		more:				( n: number ) => `This shields one public address. ${plural( n, { one: "One more holds", other: `${n} more hold` } )} public money: shield again for ${plural( n, { one: "it", other: "each" } )}, so a single transaction never ties your public addresses together.`,
 	},
 
 	move: {
 		title:				"Move Sapling to Ironwood",
-		lede:				"Move everything in Sapling into Ironwood, Zcash's newest private pool. It stays private the whole way: the blockchain doesn't show the amount.",
+		lede:				"Move everything in Sapling into Ironwood, Zcash's newest private pool. Your addresses stay hidden the whole way. The amount moving between the pools is visible on the blockchain, as it is for every move between pools.",
 		from:				"From Sapling",
 		to:					"To Ironwood",
 		action:				( amount: string ) => `Move ${amount} ${Unit()}`,
@@ -982,7 +1080,8 @@ const EN = {
 
 	// what every payment's review says alike (Send, Shield; ui_payment.tsx)
 	review: {
-		from:				( network: string, account: string, wallet: string ) => `${network} · ${account} · ${wallet}`,
+		realMoney:			( network: string ) => `${network} · Real money`,
+		where:				( account: string, wallet: string ) => `${account} · ${wallet}`,
 		preparing:			"Preparing…",
 		offline:			"Laurel is offline, so this can't be sent until it reconnects.",
 		proving:			"Building the private proof on this device, then sending",
@@ -1004,7 +1103,9 @@ const EN = {
 		from:				"Private Key",
 		to:					"To Public",
 		fromAddress:		"Key's address",
+		toAddress:			"Arrives at",
 		coins:				"Coins",
+		coinsSeen:			"The coins are as the server reports them. If it's wrong, the network refuses the sweep and nothing moves.",
 		left:				( n: number ) => plural( n, { one: "One more coin stays at the key. Sweep again afterwards to move it.", other: `${n} more coins stay at the key. Sweep again afterwards to move them.` } ),
 		get arrives(): string { return `It arrives as public ${Unit()}. Shield it afterwards to make it private.`; },
 		action:				( amount: string ) => `Sweep ${amount} ${Unit()}`,
@@ -1108,6 +1209,7 @@ const EN = {
 		publicTitle:		"Some money is public.",
 		public:				( amount: string ) => `${amount} ${Unit()} sits in Transparent, where anyone can see it. Shielding moves it to Ironwood.`,
 		publicAction:		"Shield It",
+		seeAddresses:		"See Addresses",
 		arriving:			( amount: string ) => `${amount} ${Unit()} is arriving at your public address, where anyone can see it. Shield it once it's here.`,
 		retiringTitle:		"Some money is in a retiring pool.",
 		retiring:			( amount: string ) => `${amount} ${Unit()} sits in Orchard, which Zcash is moving on from. It's private; move it to Ironwood once and it stays private.`,
@@ -1152,8 +1254,10 @@ const EN = {
 		copyNext:			"Copy Address…",		// it opens Receive, where the copying is
 		copied:				"Copied",
 		newAddress:			"New Address",
+		cantNew:			"No New Address Yet",
 		newTitle:			"Why a new address?",
 		newHint:			"Give each person or service its own address, so nobody can tell your payments belong together. Every address pays into this same account; old ones keep working.",
+		newPublicHint:		"Give each exchange its own public address, so their payments don't share one public record. A new one is made only after the current one has received money, so restoring your phrase in any wallet still finds everything. The server Laurel syncs with can still tell your addresses belong together.",
 		showFull:			"Show full address",
 		showLess:			"Show less",
 		noPublic:			"This wallet has no public address (it was added with a viewing key that doesn't include one).",
@@ -1203,6 +1307,21 @@ const EN = {
 		hidden:				"Hidden on the blockchain",
 		visible:			"Visible to anyone on the blockchain",
 		shield:				"Shield It",
+		// the public pool's own addresses, each with what it holds (UI_PublicSpread, UI_PublicAddressesPanel)
+		addresses: {
+			title:			"Public Addresses",
+			spread:			( n: number ) => plural( n, { one: "At one public address", other: `Spread over ${n} public addresses` } ),
+			see:			( n: number ) => plural( n, { one: "See It", other: "See Them" } ),
+			one:			"Anyone can see this address and what it holds. Shield It moves the money into your private balance.",
+			many:			"Anyone can see each address and what it holds. Shield It takes them one at a time, so a single shield never shows they belong together.",
+			arriving:		"Money still arriving shows here once the network confirms it.",
+			cantRead:		"Couldn't read your public addresses.",
+			find:			"Find an address",
+			noMatch:		"No address matches.",
+			showAll:		( n: number ) => `Show All ${n}`,
+			shieldOne:		"Shield This One",
+			back:			"Back",
+		},
 		sendFrom:			( pool: string ) => `Send from ${pool}`,
 		// a pool's tiles (ui_pool.tsx): what each does, or why it can't, in a few words
 		tile: {
@@ -1358,7 +1477,7 @@ const EN = {
 
 	// each version's changes (docs/RELEASE-NOTES.md, the English); a translation
 	// brings its own per version, and English shows for one it lacks (ui_notes.tsx)
-	releaseNotes: Object.fromEntries( Com_ReleaseNotes( NOTES_TEXT ).map( ( n ) => [ n.version, n.items ] ) ) as Readonly< Record< string, readonly string[] > >,
+	releaseNotes: Object.fromEntries( Com_ReleaseNotes( NOTES_TEXT, Com_NoteTagsHere ).map( ( n ) => [ n.version, n.items ] ) ) as Readonly< Record< string, readonly string[] > >,
 
 	// what rust says went wrong, by its error's name (w_local.rs werr_t), in
 	// this language: {0}, {1} are its values. Handed to rust as Laurel starts

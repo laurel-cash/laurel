@@ -1437,6 +1437,211 @@ mod built_transaction_shape {
         );
     }
 
+    /// LAUREL PATCH (proposal hooks): a send the caller builds to spend the
+    /// account's transparent coins and nothing shielded, stored as any
+    /// proposal is. Which addresses' coins is the caller's to say; here,
+    /// any of the account's.
+    async fn propose_from_transparent_coins(
+        client: &mut LightClient,
+        request: zcash_client_backend::zip321::TransactionRequest,
+    ) -> Result<crate::data::proposal::ProportionalFeeProposal, crate::wallet::error::ProposeSendError> {
+        use zcash_client_backend::data_api::wallet::input_selection::{SpendPolicy, TransparentSpendPolicy};
+
+        let coins_only =
+            SpendPolicy::shielded_pools([]).with_transparent(TransparentSpendPolicy::any_account_addr());
+        client
+            .propose_send_built(zip32::AccountId::ZERO, |wallet| {
+                wallet.create_send_proposal_with(request, zip32::AccountId::ZERO, &coins_only, false)
+            })
+            .await
+    }
+
+    /// LAUREL PATCH (proposal hooks): a payment built to come from
+    /// transparent coins spends the account's transparent coins and nothing
+    /// shielded (the backend left their gathering `unimplemented!`). The
+    /// exchange sees a transparent sender; the change goes private (the
+    /// payment pool). The wallet's Ironwood note stays unspent.
+    #[tokio::test]
+    async fn a_send_from_the_transparent_pool_spends_only_transparent_coins() {
+        use zcash_client_backend::zip321::{Payment, TransactionRequest};
+        use zcash_protocol::value::Zatoshis;
+
+        let wallet = SyntheticWalletBuilder::new(zingo_test_vectors::seeds::HOSPITAL_MUSEUM_SEED)
+            .transparent_coin(200_000)
+            .transparent_coin(300_000)
+            .ironwood_note(1_000_000)
+            .build();
+        let mut client = LightClient::new_for_test(wallet).await;
+
+        let request = TransactionRequest::new(vec![Payment::without_memo(
+            synthetic_wallet::external_zcash_address(PoolType::Transparent),
+            Zatoshis::const_from_u64(400_000),
+        )])
+        .unwrap();
+        let proposal = propose_from_transparent_coins(&mut client, request)
+            .await
+            .expect("transparent coins fund a transparent-sourced send");
+        let txids = client
+            .wallet()
+            .write()
+            .await
+            .calculate_transactions(proposal, zip32::AccountId::ZERO)
+            .await
+            .unwrap();
+        assert_eq!(txids.len(), 1);
+
+        let wallet = client.wallet();
+        let wallet = wallet.read().await;
+        let transaction = wallet.wallet_transactions.get(&txids[0]).unwrap().transaction();
+        let transparent = transaction.transparent_bundle().expect("transparent coins spent");
+        assert_eq!(transparent.vin.len(), 2, "both coins gathered for 400_000");
+        assert_eq!(transparent.vout.len(), 1, "one payment out, no transparent change");
+        assert_eq!(u64::from(transparent.vout[0].value()), 400_000);
+        assert!(transaction.sapling_bundle().is_none(), "no sapling spent");
+        assert!(transaction.orchard_bundle().is_none(), "no orchard spent");
+        // Value flows only INTO the shielded pool (the change), never out
+        // of it: the Ironwood note isn't spent.
+        let ironwood = transaction.ironwood_bundle().expect("the change goes private");
+        assert!(i64::from(ironwood.value_balance()) < 0);
+    }
+
+    /// LAUREL PATCH (proposal hooks): a send of transparent coins that's
+    /// built (and not yet mined) has spent its coins: a second one never
+    /// spends them again, it takes other coins or finds too little
+    #[tokio::test]
+    async fn a_built_public_send_leaves_its_coins_spent() {
+        use zcash_client_backend::zip321::{Payment, TransactionRequest};
+        use zcash_protocol::value::Zatoshis;
+
+        let wallet = SyntheticWalletBuilder::new(zingo_test_vectors::seeds::HOSPITAL_MUSEUM_SEED)
+            .transparent_coin(200_000)
+            .transparent_coin(300_000)
+            .build();
+        let mut client = LightClient::new_for_test(wallet).await;
+        let request = || {
+            TransactionRequest::new(vec![Payment::without_memo(
+                synthetic_wallet::external_zcash_address(PoolType::Transparent),
+                Zatoshis::const_from_u64(150_000),
+            )])
+            .unwrap()
+        };
+
+        let first = propose_from_transparent_coins(&mut client, request()).await.unwrap();
+        let spent: Vec<_> = first.steps().first().transparent_inputs().iter().map(|c| c.outpoint().clone()).collect();
+        client
+            .wallet()
+            .write()
+            .await
+            .calculate_transactions(first, zip32::AccountId::ZERO)
+            .await
+            .unwrap();
+
+        match propose_from_transparent_coins(&mut client, request()).await {
+            Ok(second) => {
+                for coin in second.steps().first().transparent_inputs() {
+                    assert!(!spent.contains(coin.outpoint()), "a coin spent twice");
+                }
+            }
+            Err(_) => {} // too little left: refused, nothing spent twice
+        }
+    }
+
+    /// LAUREL PATCH (proposal hooks): an exchange-only (TEX) address paid
+    /// from transparent coins: in one step or two, the exchange gets exactly
+    /// the payment from a transaction with transparent inputs only, and no
+    /// private money is spent on the way
+    #[tokio::test]
+    async fn a_public_send_pays_an_exchange_only_address() {
+        use zcash_client_backend::zip321::{Payment, TransactionRequest};
+        use zcash_protocol::value::Zatoshis;
+        use zcash_transparent::address::TransparentAddress;
+
+        let wallet = SyntheticWalletBuilder::new(zingo_test_vectors::seeds::HOSPITAL_MUSEUM_SEED)
+            .transparent_coin(300_000)
+            .ironwood_note(1_000_000)
+            .build();
+        let mut client = LightClient::new_for_test(wallet).await;
+        let exchange = TransparentAddress::PublicKeyHash(synthetic_wallet::external_transparent_pubkey_hash());
+
+        let request = TransactionRequest::new(vec![Payment::without_memo(
+            zcash_address::ZcashAddress::try_from_encoded(&synthetic_wallet::external_tex_address()).unwrap(),
+            Zatoshis::const_from_u64(100_000),
+        )])
+        .unwrap();
+        let proposal = propose_from_transparent_coins(&mut client, request)
+            .await
+            .expect("transparent coins pay an exchange-only address");
+        let txids = client
+            .wallet()
+            .write()
+            .await
+            .calculate_transactions(proposal, zip32::AccountId::ZERO)
+            .await
+            .unwrap();
+
+        let wallet = client.wallet();
+        let wallet = wallet.read().await;
+        let mut paid = 0;
+        for txid in &txids {
+            let tx = wallet.wallet_transactions.get(txid).unwrap().transaction();
+            assert!(tx.sapling_bundle().is_none() && tx.orchard_bundle().is_none(), "nothing private spent");
+            if let Some(ironwood) = tx.ironwood_bundle() {
+                assert!(i64::from(ironwood.value_balance()) <= 0, "ironwood only takes change in");
+            }
+            let Some(bundle) = tx.transparent_bundle() else { continue };
+            for out in &bundle.vout {
+                if out.recipient_address() == Some(exchange) {
+                    assert!(!bundle.vin.is_empty(), "the exchange is paid from transparent inputs");
+                    paid += u64::from(out.value());
+                }
+            }
+        }
+        assert_eq!(paid, 100_000, "the exchange gets exactly the payment");
+    }
+
+    /// LAUREL PATCH (proposal hooks): a shield the caller builds takes the
+    /// coins at the addresses it names, and is stored as any shield is;
+    /// with no address named there is nothing to shield
+    #[tokio::test]
+    async fn a_built_shield_takes_the_addresses_named() {
+        use zcash_protocol::consensus::Parameters as _;
+
+        let wallet = SyntheticWalletBuilder::new(zingo_test_vectors::seeds::HOSPITAL_MUSEUM_SEED)
+            .transparent_coin(200_000)
+            .build();
+        let named = crate::wallet::keys::transparent_address_from_encoded(
+            wallet.chain_type().network_type(),
+            wallet.transparent_addresses().values().next().unwrap(),
+        )
+        .unwrap();
+        let mut client = LightClient::new_for_test(wallet).await;
+
+        let none = client
+            .propose_shield_built(zip32::AccountId::ZERO, |wallet| {
+                wallet.create_shield_proposal_from(zip32::AccountId::ZERO, &[])
+            })
+            .await;
+        assert!(none.is_err(), "no address named, nothing shielded");
+
+        let proposal = client
+            .propose_shield_built(zip32::AccountId::ZERO, |wallet| {
+                wallet.create_shield_proposal_from(zip32::AccountId::ZERO, &[named])
+            })
+            .await
+            .expect("the named address's coin is shielded");
+        let inputs = proposal.steps().first().transparent_inputs();
+        assert_eq!(inputs.len(), 1);
+        assert_eq!(*inputs[0].recipient_address(), named);
+        let txids = client
+            .wallet()
+            .write()
+            .await
+            .calculate_transactions(proposal, zip32::AccountId::ZERO)
+            .await
+            .unwrap();
+        assert_eq!(txids.len(), 1, "what was stored builds");
+    }
+
     /// Gap-1b cell of the remediation plan, mirroring the live
     /// multi_input_sapling_send_with_orchard_change_no_panic offline: a
     /// payment that no single sapling note covers builds (proves) a

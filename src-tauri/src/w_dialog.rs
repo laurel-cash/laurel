@@ -37,6 +37,7 @@ pub async fn D_PickFolder( app: &AppHandle ) -> wresult_t< Option< PathBuf > > {
 }
 
 // a file of one kind (what: its name in the picker; ext: without the dot)
+#[cfg_attr( not( feature = "offline-signing" ), allow( dead_code ) )]		// offline signing's files alone (D-031)
 #[cfg( desktop )]
 pub async fn D_PickFile( app: &AppHandle, what: &str, ext: &str ) -> wresult_t< Option< PathBuf > > {
 	let ( tx, rx ) = tokio::sync::oneshot::channel();
@@ -45,6 +46,7 @@ pub async fn D_PickFile( app: &AppHandle, what: &str, ext: &str ) -> wresult_t< 
 }
 
 // where to save a file, starting from a suggested name
+#[cfg_attr( not( feature = "offline-signing" ), allow( dead_code ) )]
 #[cfg( desktop )]
 pub async fn D_SaveFile( app: &AppHandle, what: &str, ext: &str, name: &str ) -> wresult_t< Option< PathBuf > > {
 	let ( tx, rx ) = tokio::sync::oneshot::channel();
@@ -58,11 +60,13 @@ pub async fn D_PickFolder( _: &AppHandle ) -> wresult_t< Option< PathBuf > > {
 	Err( werr_t::WERR_NO_FILES )
 }
 
+#[cfg_attr( not( feature = "offline-signing" ), allow( dead_code ) )]		// offline signing's files alone (D-031)
 #[cfg( target_os = "ios" )]
 pub async fn D_PickFile( _: &AppHandle, _: &str, _: &str ) -> wresult_t< Option< PathBuf > > {
 	Err( werr_t::WERR_NO_FILES )
 }
 
+#[cfg_attr( not( feature = "offline-signing" ), allow( dead_code ) )]
 #[cfg( target_os = "ios" )]
 pub async fn D_SaveFile( _: &AppHandle, _: &str, _: &str, _: &str ) -> wresult_t< Option< PathBuf > > {
 	Err( werr_t::WERR_NO_FILES )
@@ -95,11 +99,13 @@ pub async fn D_PickFolder( app: &AppHandle ) -> wresult_t< Option< PathBuf > > {
 	D_AndroidPick( app, "folder", "" ).await
 }
 
+#[cfg_attr( not( feature = "offline-signing" ), allow( dead_code ) )]		// offline signing's files alone (D-031)
 #[cfg( target_os = "android" )]
 pub async fn D_PickFile( app: &AppHandle, _: &str, _: &str ) -> wresult_t< Option< PathBuf > > {
 	D_AndroidPick( app, "read", "" ).await
 }
 
+#[cfg_attr( not( feature = "offline-signing" ), allow( dead_code ) )]
 #[cfg( target_os = "android" )]
 pub async fn D_SaveFile( app: &AppHandle, _: &str, _: &str, name: &str ) -> wresult_t< Option< PathBuf > > {
 	D_AndroidPick( app, "save", name ).await

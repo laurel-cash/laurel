@@ -126,8 +126,31 @@ async fn W_Sweep( id: &str, account: u32, text: &str ) -> wresult_t< sweep_t > {
 			total:	plan.total.into_u64(),
 			fee:	plan.fee.into_u64(),
 			amount:	plan.amount.into_u64(),
+			coinsPrint:	Com_CoinsPrint( &found.address_utxos.iter().map( |u| ( u.txid.clone(), u.index, u.value_zat ) ).collect::< Vec< _ > >() ),
 		},
 	} )
+}
+
+/*
+==================
+Com_CoinsPrint
+
+The coins a server reported at a key, as one print: each outpoint and its
+value, in any order the server gave them. A review binds to these coins,
+not only to their total (W2-13): other coins, even of the same value, are
+a changed sweep
+==================
+*/
+fn Com_CoinsPrint( coins: &[ ( Vec< u8 >, i32, i64 ) ] ) -> String {
+	let mut each: Vec< Vec< u8 > > = coins.iter().map( |( txid, index, value )| {
+		let mut b = txid.clone();
+		b.extend( index.to_le_bytes() );
+		b.extend( value.to_le_bytes() );
+		b
+	} ).collect();
+	each.sort();
+	let data: Vec< u8 > = each.iter().flat_map( |b| ( b.len() as u32 ).to_le_bytes().into_iter().chain( b.iter().copied() ) ).collect();
+	crate::w_vault::Com_Hash( b"laurel-sweep-cns", 16, &data ).iter().map( |b| format!( "{b:02x}" ) ).collect()
 }
 
 /*
@@ -151,10 +174,10 @@ and sends only what the person saw; new numbers go back for a look
 ==================
 */
 pub async fn W_SweepNow( id: &str, account: u32, key: &str, intent: &str, seen: sweepQuote_t ) -> wresult_t< sweepResult_t > {
-	E_TakeIntent( intent, id, account )?;
+	let quoted = E_TakeIntent( intent, id, account )?;
 	let net = w_registry.read().await.network;
 	let sweep = W_Sweep( id, account, key ).await?;
-	if ( sweep.quote != seen ) {
+	if ( !crate::w_engine::Com_StillSeen( &quoted, &sweep.quote, &seen ) ) {
 		return Ok( sweepResult_t::CHANGED { quoted: E_Intend( id, account, sweep.quote ) } );
 	}
 
@@ -193,6 +216,18 @@ mod tests {
 			let e = Com_SweepError( e, network_t::NET_TESTNET );
 			assert!( !e.UiMessage().contains( "cVwrong" ) && !e.LogText().contains( "cVwrong" ) );
 		}
+	}
+
+	// W2-13: the review is of these coins, whatever order the server lists them in
+	#[test]
+	fn a_sweep_is_bound_to_its_coins() {
+		let a = ( vec![ 1u8; 32 ], 0, 50_000i64 );
+		let b = ( vec![ 2u8; 32 ], 1, 70_000i64 );
+		let print = Com_CoinsPrint( &[ a.clone(), b.clone() ] );
+		assert_eq!( print, Com_CoinsPrint( &[ b.clone(), a.clone() ] ), "the server's order" );
+		assert_ne!( print, Com_CoinsPrint( &[ a.clone(), ( vec![ 3u8; 32 ], 1, 70_000 ) ] ), "another coin of the same value" );
+		assert_ne!( print, Com_CoinsPrint( &[ a.clone(), ( b.0.clone(), 2, 70_000 ) ] ), "another output of the same transaction" );
+		assert_ne!( print, Com_CoinsPrint( &[ a.clone() ] ) );
 	}
 
 	#[tokio::test]

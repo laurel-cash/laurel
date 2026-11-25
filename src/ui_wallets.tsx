@@ -23,7 +23,7 @@ import { KEYS, QUERY } from "./ui_query";
 import type { addWalletKind_t } from "./ui_switcher";
 import { UI_AddAccountSheet, UI_NameSheet } from "./ui_sheets";
 import { UI_AskPassword } from "./ui_security";
-import { sheetProps_t, UI_Alert, UI_Amount, UI_Sheet, UI_SheetButtons, UI_SheetClose } from "./ui_widgets";
+import { sheetProps_t, UI_Alert, UI_Amount, UI_Callout, UI_Sheet, UI_SheetButtons, UI_SheetClose } from "./ui_widgets";
 
 
 /*
@@ -175,7 +175,7 @@ function UI_RemoveSheet( props: sheetProps_t & { wallet: walletSummary_t; onBack
 		<UI_Sheet open={props.open} onOpenChange={props.onOpenChange} title={T.wallets.removeTitle( w.name )} busy={remove.busy}>
 			{risky ? (
 				<>
-					<div className="warn-note"><ShieldAlert aria-hidden="true" /><span>{T.wallets.removeUnsafe}</span></div>
+					<UI_Callout kind="warn" icon={ShieldAlert}>{T.wallets.removeUnsafe}</UI_Callout>
 					<button className="btn primary wide" onClick={() => { props.onOpenChange( false ); props.onBackup(); }}>
 						<KeyRound aria-hidden="true" />{T.wallets.backUpFirst}
 					</button>

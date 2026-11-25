@@ -20,8 +20,8 @@ import { commands, Com_FormatBytes, Com_FormatDate, Com_SyncState, Com_Unreachab
 import { useStore } from "./ui_store";
 import { T } from "./ui_text";
 import { useAction } from "./ui_hooks";
-import { sheetProps_t, UI_Alert, UI_Info, UI_Sheet, UI_SheetClose, UI_Spinner } from "./ui_widgets";
-import { UI_Logo } from "./ui_chrome";
+import { sheetProps_t, UI_Alert, UI_Callout, UI_Info, UI_Sheet, UI_SheetClose, UI_Spinner } from "./ui_widgets";
+import { Com_SyncWords, UI_Logo } from "./ui_chrome";
 import { useStorage } from "./ui_storage";
 
 const RING_SIZE		= 132;
@@ -30,35 +30,20 @@ const RING_STROKE	= 10;
 
 /*
 ==================
-Com_SyncWords
-
-The title and sentence for each state
-==================
-*/
-function Com_SyncWords( state: syncState_t, p: syncProgress_t | undefined ): { title: string; text: string } {
-	const from = p?.birthdayTime ? Com_FormatDate( p.birthdayTime ) : T.sync.fromBirthday;
-
-	switch ( state ) {
-	case "syncing":		return { title: T.sync.titleSyncing,	text: p?.repairing ? T.sync.repairingText( from ) : T.sync.syncingText( from ) };
-	case "synced":		return { title: T.sync.titleSynced,		text: T.sync.syncedText( from ) };
-	case "paused":		return { title: T.sync.titlePaused,		text: T.sync.pausedText };
-	case "offline":		return { title: T.sync.titleOffline,	text: p?.error?.message ?? T.sync.offlineText };
-	case "retrying":	return { title: T.sync.titleOffline,	text: T.sync.retrying };
-	case "connecting":	return { title: T.sync.titleConnecting,	text: T.sync.connectingText };
-	default:			return Com_Unreachable( state );
-	}
-}
-
-/*
-==================
 UI_Ring
 
-A progress ring with the leaf in the middle
+A progress ring with the leaf in the middle. While the engine prepares
+(nothing scanned yet) a short arc turns instead, with no number: a 0%
+that sat for minutes read as stuck.
 ==================
 */
+const PREPARING_ARC = 25;		// the turning arc's length, in percent of the ring
+
 function UI_Ring( props: { percent: number; state: syncState_t } ) {
-	const r		= ( RING_SIZE - RING_STROKE ) / 2;
-	const len	= 2 * Math.PI * r;
+	const r			= ( RING_SIZE - RING_STROKE ) / 2;
+	const len		= 2 * Math.PI * r;
+	const preparing	= props.state === "preparing";
+	const shown		= preparing ? PREPARING_ARC : props.percent;
 
 	return (
 		<div className={"sync-ring " + props.state} style={{ width: RING_SIZE, height: RING_SIZE }}>
@@ -71,13 +56,13 @@ function UI_Ring( props: { percent: number; state: syncState_t } ) {
 					r={r}
 					strokeWidth={RING_STROKE}
 					strokeDasharray={len}
-					strokeDashoffset={len * ( 1 - props.percent / 100 )}
+					strokeDashoffset={len * ( 1 - shown / 100 )}
 					transform={`rotate(-90 ${RING_SIZE / 2} ${RING_SIZE / 2})`}
 				/>
 			</svg>
 			<span className="ring-center">
 				<UI_Logo size={40} />
-				<span className="ring-percent">{props.percent}%</span>
+				{!preparing && <span className="ring-percent">{props.percent}%</span>}
 			</span>
 		</div>
 	);
@@ -108,6 +93,7 @@ export function UI_CatchingUp( props: { walletId: string } ) {
 
 	let text: string;
 	switch ( state ) {
+	case "preparing":
 	case "syncing":
 	case "connecting":
 	case "synced":		text = T.catchUp.syncing; break;		// synced: for the moment before the sheet moves on
@@ -129,7 +115,7 @@ export function UI_CatchingUp( props: { walletId: string } ) {
 				</button>
 			)}
 			{resume.error && <UI_Alert title={T.sync.failed} message={resume.error} />}
-			<div className="info-note"><ShieldCheck aria-hidden="true" /><span>{T.catchUp.safe}</span></div>
+			<UI_Callout kind="info" icon={ShieldCheck}>{T.catchUp.safe}</UI_Callout>
 		</div>
 	);
 }
@@ -154,7 +140,7 @@ export function UI_SyncSheet( props: sheetProps_t & { walletId: string; progress
 		}
 	}, props.open );
 
-	const canToggle = state === "paused" || ( state === "syncing" && p?.running );
+	const canToggle = state === "paused" || ( ( state === "syncing" || state === "preparing" ) && p?.running );
 
 	return (
 		<UI_Sheet open={props.open} onOpenChange={props.onOpenChange} title={T.sync.details}>

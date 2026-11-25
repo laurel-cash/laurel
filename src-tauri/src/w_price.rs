@@ -15,22 +15,41 @@ See the LICENSE file for details.
 // browser: one request path, no browser fingerprint, a cache per range,
 // and the same trust as the Zcash servers (the webpki roots only), so an
 // antivirus that intercepts is caught here the same way, not trusted.
-
-use std::collections::HashMap;
-use std::sync::{ LazyLock, Mutex, OnceLock };
-use std::time::Duration;
+//
+// A module a build may leave out (D-031, feature prices, w_alert.rs with
+// it). Left out, its types stay (the ui's bindings are the same in every
+// build) and its commands answer "not in this build" (the end of this
+// file): the price source isn't named in the library, let alone asked.
+// The showPrice setting stays, kept for a build with the module.
 
 use serde::{ Deserialize, Serialize };
 use specta::Type;
 
-use crate::w_date::Com_Now;
 use crate::w_local::*;
-use crate::w_net::Com_Classify;
-use crate::w_settings::S_Get;
 
+#[cfg( feature = "prices" )]
+use {
+	std::collections::HashMap,
+	std::sync::{ LazyLock, Mutex, OnceLock },
+	std::time::Duration,
+	crate::w_date::Com_Now,
+	crate::w_net::Com_Classify,
+	crate::w_settings::S_Get,
+};
+
+// in the library only with this code, w_alert.rs's too (release_rules.mjs MODULES: a v1 build refuses it)
+#[cfg( feature = "prices" )]
+pub const MODULE_MARK: &str	= "laurel-module:prices";
+#[cfg( feature = "prices" )]
 const PRICE_SOURCE: &str	= "https://api.coingecko.com/api/v3/coins/zcash/market_chart";
+#[cfg( feature = "prices" )]
 const PRICE_WAIT_SECS: u64	= 15;
+#[cfg( feature = "prices" )]
 const HOUR_SECS: u64		= 3600;
+// ALL, every day since 2016, is some 150 KB: an answer past this is read no
+// further, so a broken or hostile one can't fill this computer's memory
+#[cfg( feature = "prices" )]
+const PRICE_MAX_BYTES: usize	= 4 * 1024 * 1024;
 
 #[derive( Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize, Type )]
 pub enum priceRange_t {
@@ -56,12 +75,15 @@ pub struct priceSeries_t {
 }
 
 // what CoinGecko answers: [ milliseconds, price ] pairs
+#[cfg( feature = "prices" )]
 #[derive( Deserialize )]
 struct marketChart_t {
 	prices:	Vec< [ f64; 2 ] >,
 }
 
+#[cfg( feature = "prices" )]
 static p_cache: LazyLock< Mutex< HashMap< priceRange_t, priceSeries_t > > > = LazyLock::new( || Mutex::new( HashMap::new() ) );
+#[cfg( feature = "prices" )]
 static p_client: OnceLock< reqwest::Client > = OnceLock::new();
 
 /*
@@ -72,6 +94,7 @@ How much history each range asks for, and how long an answer stays good:
 the last hour moves by the minute, a year by the day
 ==================
 */
+#[cfg( feature = "prices" )]
 fn Com_Days( range: priceRange_t ) -> &'static str {
 	match range {
 		priceRange_t::RANGE_1H | priceRange_t::RANGE_1D	=> "1",
@@ -82,6 +105,7 @@ fn Com_Days( range: priceRange_t ) -> &'static str {
 	}
 }
 
+#[cfg( feature = "prices" )]
 fn Com_FreshSecs( range: priceRange_t ) -> u64 {
 	match range {
 		priceRange_t::RANGE_1H							=> 120,
@@ -101,6 +125,7 @@ CoinGecko's pairs as points, oldest first; the last hour is cut from a
 day's answer. Anything that isn't a price is left out.
 ==================
 */
+#[cfg( feature = "prices" )]
 fn Com_Points( chart: marketChart_t, range: priceRange_t ) -> Vec< pricePoint_t > {
 	let mut points: Vec< pricePoint_t > = chart.prices.iter()
 		.filter( |p| p[0].is_finite() && p[0] > 0.0 && p[1].is_finite() && p[1] > 0.0 )
@@ -121,6 +146,7 @@ P_Client
 One client, trusting what the Zcash connections trust (Com_Https)
 ==================
 */
+#[cfg( feature = "prices" )]
 fn P_Client() -> wresult_t< reqwest::Client > {
 	if let Some( c ) = p_client.get() {
 		return Ok( c.clone() );
@@ -140,7 +166,9 @@ The price over a range, from the cache while it's fresh. Refused while
 prices are off: nothing is asked without the person's yes.
 ==================
 */
+#[cfg( feature = "prices" )]
 pub async fn P_Series( range: priceRange_t ) -> wresult_t< priceSeries_t > {
+	log::debug!( "P_Series: {MODULE_MARK}" );
 	if ( !S_Get().showPrice ) {
 		return Err( werr_t::WERR_PRICE_OFF );
 	}
@@ -158,8 +186,15 @@ pub async fn P_Series( range: priceRange_t ) -> wresult_t< priceSeries_t > {
 	if ( answer.status() == reqwest::StatusCode::TOO_MANY_REQUESTS ) {
 		return Err( werr_t::WERR_PRICE_BUSY );
 	}
-	let answer = answer.error_for_status().map_err( |e| P_Error( &e ) )?;
-	let chart: marketChart_t = answer.json().await.map_err( |e| werr_t::WERR_PRICE( e.to_string() ) )?;
+	let mut answer = answer.error_for_status().map_err( |e| P_Error( &e ) )?;
+	let mut body = Vec::new();
+	while let Some( chunk ) = answer.chunk().await.map_err( |e| P_Error( &e ) )? {
+		if ( body.len() + chunk.len() > PRICE_MAX_BYTES ) {
+			return Err( werr_t::WERR_PRICE( "the answer was longer than any price chart".to_string() ) );
+		}
+		body.extend_from_slice( &chunk );
+	}
+	let chart: marketChart_t = serde_json::from_slice( &body ).map_err( |e| werr_t::WERR_PRICE( e.to_string() ) )?;
 
 	let series = priceSeries_t { range: range, points: Com_Points( chart, range ), fetchedAt: Com_Now() };
 	if ( series.points.len() < 2 ) {
@@ -179,6 +214,7 @@ the price then. The same shape as a price series, its usd the account's
 value, so one chart draws both.
 ==================
 */
+#[cfg( feature = "prices" )]
 pub fn Com_ValueSeries( balance: &[ balancePoint_t ], prices: &[ pricePoint_t ] ) -> Vec< pricePoint_t > {
 	let mut at = 0;
 	let mut held = 0u64;
@@ -203,6 +239,7 @@ That is a fact of the network, not a failure, and was once shown as one
 */
 #[derive( Clone, Debug, Serialize, Type )]
 #[serde( tag = "kind" )]
+#[cfg_attr( not( feature = "prices" ), allow( dead_code ) )]		// the type stays, for the ui's bindings; only W_ValueHistory makes one (D-031)
 pub enum accountValue_t {
 	#[serde( rename = "series" )]
 	AV_SERIES { series: priceSeries_t },
@@ -220,6 +257,7 @@ are asked for (nobody is asked); the series only with prices on, like
 every price. It changes with money moved in and out, not the price alone.
 ==================
 */
+#[cfg( feature = "prices" )]
 pub async fn W_ValueHistory( id: &str, account: u32, range: priceRange_t ) -> wresult_t< accountValue_t > {
 	if ( w_registry.read().await.network == network_t::NET_TESTNET ) {
 		return Ok( accountValue_t::AV_NO_PRICE );
@@ -230,6 +268,7 @@ pub async fn W_ValueHistory( id: &str, account: u32, range: priceRange_t ) -> wr
 }
 
 // an antivirus in the way and a slow answer say so, as for the Zcash servers
+#[cfg( feature = "prices" )]
 fn P_Error( e: &reqwest::Error ) -> werr_t {
 	if ( e.is_timeout() ) {
 		return werr_t::WERR_SERVER_SLOW;
@@ -241,7 +280,26 @@ fn P_Error( e: &reqwest::Error ) -> werr_t {
 }
 
 
-#[cfg( test )]
+/*
+==================
+Left out (D-031)
+
+What the commands answer in a build without prices: the same names,
+nothing behind them. No price source is named or asked, nothing logged
+==================
+*/
+#[cfg( not( feature = "prices" ) )]
+pub async fn P_Series( _range: priceRange_t ) -> wresult_t< priceSeries_t > {
+	Err( werr_t::WERR_NOT_IN_BUILD )
+}
+
+#[cfg( not( feature = "prices" ) )]
+pub async fn W_ValueHistory( _id: &str, _account: u32, _range: priceRange_t ) -> wresult_t< accountValue_t > {
+	Err( werr_t::WERR_NOT_IN_BUILD )
+}
+
+
+#[cfg( all( test, feature = "prices" ) )]
 mod tests {
 
 	/*
@@ -272,5 +330,18 @@ mod tests {
 
 		let hour = Com_Points( chart(), priceRange_t::RANGE_1H );
 		assert_eq!( hour.iter().map( |p| p.time ).collect::< Vec< _ > >(), [ 7200, 10_000 ] );		// within 3600 s of the last
+	}
+}
+
+
+#[cfg( all( test, not( feature = "prices" ) ) )]
+mod left_out {
+	use super::*;
+
+	// no price is asked for, and none said: the build has no prices (D-031)
+	#[tokio::test( flavor = "multi_thread" )]
+	async fn every_command_says_not_in_this_build() {
+		assert!( matches!( P_Series( priceRange_t::RANGE_1D ).await, Err( werr_t::WERR_NOT_IN_BUILD ) ) );
+		assert!( matches!( W_ValueHistory( "w", 0, priceRange_t::RANGE_1D ).await, Err( werr_t::WERR_NOT_IN_BUILD ) ) );
 	}
 }

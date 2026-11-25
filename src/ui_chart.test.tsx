@@ -15,7 +15,7 @@ See the LICENSE file for details.
 import { describe, expect, it } from "vitest";
 
 import type { balancePoint_t, poolZats_t } from "./bindings";
-import { Com_Layers, Com_Plot, Com_Ticks } from "./ui_chart";
+import { Com_AxisZec, Com_Layers, Com_Plot, Com_Ticks } from "./ui_chart";
 
 const DAY = 86400;
 const NOW = 1_000 * DAY;
@@ -55,5 +55,17 @@ describe( "the balance chart", () => {
 		expect( Com_Ticks( 3 * ZEC, 3 ) ).toEqual( [ 1 * ZEC, 2 * ZEC, 3 * ZEC ] );
 		expect( Com_Ticks( 0.7 * ZEC, 3 ) ).toEqual( [ 0.25 * ZEC, 0.5 * ZEC ] );
 		expect( Com_Ticks( 2, 3 ) ).toEqual( [ 1, 2 ] );		// never a fraction of a zatoshi
+	} );
+
+	// gate E: a 0.0015 ZEC wallet's axis read 0.000, 0.001, 0.001
+	it( "labels each line with the decimals its step needs, so no two read alike", () => {
+		const ZEC = 100_000_000;
+		const Labels = ( max: number ) => { const g = Com_Ticks( max, 3 ); return g.map( ( z ) => Com_AxisZec( z, g[0] ) ); };
+		const small = Labels( 0.0015 * ZEC );
+		expect( new Set( small ).size ).toBe( small.length );
+		expect( small ).toEqual( [ "0.0005", "0.0010", "0.0015" ] );
+		expect( Labels( 3 * ZEC ) ).toEqual( [ "1.00", "2.00", "3.00" ] );
+		expect( Labels( 0.7 * ZEC ) ).toEqual( [ "0.25", "0.50" ] );
+		expect( Labels( 750 * ZEC ) ).toEqual( [ "250", "500", "750" ] );
 	} );
 } );

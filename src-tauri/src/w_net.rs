@@ -299,6 +299,11 @@ pub fn Com_Classify( e: &( dyn std::error::Error + 'static ) ) -> werr_t {
 			TransmitVerdict::Unsure			=> werr_t::WERR_SENT_UNSURE( text.clone() ),		// may have gone out: kept, sent again
 		};
 	}
+	// the server took the bytes and named another txid (W2-07): it may have gone out, as
+	// that or as ours; kept and sent again, the same bytes, so never a second payment
+	if let Some( TransmissionError::IncorrectTxidFromServer( .. ) ) = Com_Find::< TransmissionError >( e ) {
+		return werr_t::WERR_SENT_UNSURE( why );
+	}
 	// zingolib 8: a send with no server is refused before anything is built (where an
 	// empty draw of servers once failed the broadcast): no server, as that was
 	if let Some( zingolib::lightclient::error::LightClientError::Offline ) = Com_Find::< zingolib::lightclient::error::LightClientError >( e ) {
@@ -543,6 +548,19 @@ mod tests {
 	no server answered, the connection's problem.
 	==================
 	*/
+	// W2-07: the server took the bytes and answered with another txid: it was sent, or may
+	// have been, so unsure (kept, and sent again soon), never an engine fault
+	#[test]
+	fn a_wrong_txid_from_the_server_is_a_send_that_may_have_gone_out() {
+		use zingolib::lightclient::error::{ LightClientError, SendError, TransmissionError };
+
+		let ours = zcash_protocol::TxId::from_bytes( [ 1; 32 ] );
+		let theirs = zcash_protocol::TxId::from_bytes( [ 2; 32 ] );
+		let sent: Result< (), LightClientError > = Err( SendError::TransmissionError( TransmissionError::IncorrectTxidFromServer( ours, theirs ) ).into() );
+		let read = sent.engine();
+		assert!( matches!( read, Err( werr_t::WERR_SENT_UNSURE( _ ) ) ), "{read:?}" );
+	}
+
 	#[test]
 	fn a_refused_broadcast_says_so_through_the_engine_door() {
 		use zingolib::lightclient::error::{ LightClientError, SendError, TransmissionError, TransmitVerdict };

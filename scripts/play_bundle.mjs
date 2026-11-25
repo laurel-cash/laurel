@@ -20,17 +20,26 @@ See the LICENSE file for details.
 // test one). Then it's copied to D:\Android\releases\ under the commit,
 // and the line to run is printed.
 //
-//   scripts\android.ps1 build --target aarch64 --aab --features testnet-only
-//   node scripts/play_bundle.mjs
+//   scripts\android.ps1 build --target aarch64 --aab --features testnet-only,full
+//   node scripts/play_bundle.mjs --line testnet
+//
+//   scripts\android.ps1 build --target aarch64 --aab --features v1
+//   node scripts/play_bundle.mjs --line v1
+//
+// The line is always named, never assumed (D-033): the testnet line, the
+// beta, carries every module for its testers (D-031); v1, real money, is
+// mainnet alone with none. Each is checked from the build's feature list
+// (the stamp's: its ui was built from the same, vite.config.ts) and from
+// its library (release_rules.mjs)
 
 import { execFileSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import { copyFileSync, existsSync, mkdtempSync, readFileSync, readdirSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { Com_LibraryProblems } from "./release_rules.mjs";
+import { Com_LibraryProblems, Com_LineProblems } from "./release_rules.mjs";
 
-// what android.ps1 wrote once its build succeeded: the commit, clean or dirty, the bundle's hash and path
+// what android.ps1 wrote once its build succeeded: the commit, clean or dirty, the bundle's hash and path, its --features
 const STAMP		= "src-tauri/gen/android/app/build/outputs/bundle/built-from.txt";
 const LIBRARY	= "src-tauri/target-android/aarch64-linux-android/release/liblaurel_lib.so";
 const RELEASES	= "D:/Android/releases";
@@ -47,6 +56,14 @@ function Sha256( path ) {
 }
 const Git = ( ...args ) => execFileSync( "git", args, { encoding: "utf8" } ).trim();
 
+// which of Play's lines this bundle is for: named, or nothing is checked (D-033)
+const LINE = process.argv[ process.argv.indexOf( "--line" ) + 1 ];
+const named = Com_LineProblems( process.argv.includes( "--line" ) ? LINE : undefined, "" );
+if ( named.length && named[0].startsWith( "name the line" ) ) {
+	console.error( `play_bundle: ${named[0]} (see the top of this file)` );
+	process.exit( 2 );
+}
+
 // what in the tree isn't built into the app: a change to it needs no new bundle. Of docs/,
 // what the page imports (as ui_notes.tsx does RELEASE-NOTES.md) is built in
 const IMPORTED = new Set( readdirSync( "src" ).filter( ( f ) => /\.tsx?$/.test( f ) ).flatMap( ( f ) =>
@@ -58,10 +75,13 @@ if ( Git( "status", "--porcelain", "--untracked-files=no" ) ) {
 }
 // the bundle android.ps1 built, unchanged since; the commit it was built from, whole; and
 // nothing built into the app changed since
-const [ from, state, built, AAB ] = existsSync( STAMP ) ? readFileSync( STAMP, "utf8" ).trim().split( " " ) : [];
-if ( !AAB || !existsSync( AAB ) || Sha256( AAB ) !== built ) {
+const [ from, state, built, AAB, features ] = existsSync( STAMP ) ? readFileSync( STAMP, "utf8" ).trim().split( " " ) : [];
+if ( !AAB || !existsSync( AAB ) || Sha256( AAB ) !== built || !features ) {
 	console.error( `play_bundle: no bundle that scripts/android.ps1 built and recorded (${STAMP}): build it (see the top of this file)` );
 	process.exit( 1 );
+}
+for ( const problem of Com_LineProblems( LINE, features === "-" ? "" : features ) ) {
+	Fail( `it was built with --features ${features}: ${problem}` );
 }
 if ( state !== "clean" ) {
 	Fail( `it was built from ${from.slice( 0, 7 )} with uncommitted changes: commit, then build again` );
@@ -102,8 +122,8 @@ if ( Sha256( join( dir, "cargo.so" ) ) !== Sha256( join( dir, PHONE_LIB ) ) ) {
 	Fail( `${PHONE_LIB} isn't ${LIBRARY} stripped: the bundle holds another build's library` );
 }
 const library = readFileSync( join( dir, PHONE_LIB ) ).toString( "latin1" );
-for ( const problem of Com_LibraryProblems( library ) ) {
-	Fail( problem );		// the testnet build, never the KDF probe's (release_rules.mjs)
+for ( const problem of Com_LibraryProblems( library, LINE ) ) {
+	Fail( problem );		// its line's build, never the KDF probe's (release_rules.mjs)
 }
 
 // the manifest, as Play reads it (protobuf, its strings plain)
@@ -121,11 +141,12 @@ rmSync( dir, { recursive: true, force: true } );
 if ( bad ) {
 	process.exit( 1 );
 }
-const out = `${RELEASES}/laurel-testnet-${sha}-unsigned.aab`;
+const out = `${RELEASES}/laurel-${LINE}-${sha}-unsigned.aab`;
 copyFileSync( AAB, out );
 const hash = Sha256( out );
 const others = readdirSync( RELEASES ).filter( ( f ) => f.endsWith( "-unsigned.aab" ) ).length;
 console.log( `play_bundle: ${version} (${a * 1000000 + b * 1000 + c}), ${sha}, checked; ${others} unsigned bundles in ${RELEASES}` );
 console.log( `  ${out.replaceAll( "/", "\\" )}` );
 console.log( `  unsigned SHA-256 ${hash}` );
-console.log( `  .\\scripts\\laurel-release.ps1 -Sha ${sha} -Sha256 ${hash} -Track alpha` );
+// the testnet line ships on open testing (beta, since 0.1.8); v1's track is the Operator's to name, never a default here
+console.log( `  .\\scripts\\laurel-release.ps1 -Sha ${sha} -Sha256 ${hash} -Track ${LINE === "testnet" ? "beta" : "<the v1 track>"}` );

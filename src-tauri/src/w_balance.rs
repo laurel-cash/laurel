@@ -10,7 +10,7 @@ See the LICENSE file for details.
 */
 // w_balance.rs -- what each account holds, per pool, as the engine says
 //
-// Lived in w_main.rs, the registry, which is about which wallets are open
+// Lived in the registry (now w_registry.rs), which is about which wallets are open
 // and where they are kept, not what is in them.
 
 use zcash_protocol::value::Zatoshis;

@@ -29,6 +29,15 @@ describe( "release notes", () => {
 		] );
 	} );
 
+	it( "keeps a tagged change only where its build or system has it", () => {
+		const text = "## 0.3.0 · 2026-11-17\n\n- [prices] Dollars.\n- [windows] Notifications.\n- Both.\n";
+		const items = ( prices: boolean, windows: boolean ) => Com_ReleaseNotes( text, ( tag ) => ( tag === "prices" && prices ) || ( tag === "windows" && windows ) )[0].items;
+		expect( items( true, true ) ).toEqual( [ "Dollars.", "Notifications.", "Both." ] );
+		expect( items( false, false ), "an Android build without prices" ).toEqual( [ "Both." ] );
+		expect( items( false, true ) ).toEqual( [ "Notifications.", "Both." ] );
+		expect( Com_ReleaseNotes( "## 0.1.0 · 2026-09-28\n\n- [unknown] Kept, tag and all.\n" )[0].items, "only the known tags are tags" ).toEqual( [ "[unknown] Kept, tag and all." ] );
+	} );
+
 	it( "carries notes for the version it is", () => {
 		expect( RELEASE_NOTES[0].version ).toBe( APP_VERSION );
 		expect( RELEASE_NOTES[0].items.length ).toBeGreaterThan( 0 );
@@ -44,7 +53,7 @@ describe( "release notes", () => {
 	it( "lists every version in About, as plain text", () => {
 		render( <UI_ReleaseNotesSheet open onOpenChange={() => {}} /> );
 		expect( screen.getByText( T.notes.version( RELEASE_NOTES[0].version ) ) ).toBeTruthy();
-		expect( screen.getByText( Com_NoteDate( RELEASE_NOTES[0].date ) ) ).toBeTruthy();
+		expect( screen.getAllByText( Com_NoteDate( RELEASE_NOTES[0].date ) ).length ).toBeGreaterThan( 0 );		// two versions can share a day
 		expect( screen.getByText( RELEASE_NOTES[0].items[0] ) ).toBeTruthy();
 	} );
 

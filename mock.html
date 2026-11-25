@@ -25,7 +25,7 @@
 			if ( Flag( "behind" ) ) Object.assign( progress, { running: true, complete: false, percent: 62, walletHeight: 4401200, etaSecs: 95 } );
 			const wallet = ( id, name, accounts ) => ( { seq: 1, id, name, kind: "seed", can: { spend: true, receive: true, moveWithin: true, addAccount: true }, backedUp: true, saveError: null, sameWords: [], progress, accounts } );
 			const now = Math.floor( Date.now() / 1000 );
-			const item = ( txid, kind, amount, memo, t ) => ( { txid: txid.repeat( 64 ).slice( 0, 64 ), time: now - t, kind, amount, fee: kind === "received" ? null : 10000, state: { kind: "confirmed", height: 1 }, from: [ "ironwood" ], into: [ "ironwood" ], counterparty: kind === "sent" ? "utest1qqpxw4r9aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa7kd2" : null, memo, note: null, category: null } );
+			const item = ( txid, kind, amount, memo, t ) => ( { txid: txid.repeat( 64 ).slice( 0, 64 ), time: now - t, kind, amount, fee: kind === "received" ? null : 10000, state: { kind: "confirmed", height: 1 }, from: [ "ironwood" ], fromAddresses: kind === "sent" ? [ "tm" + "d".repeat( 33 ) ] : [], into: [ "ironwood" ], counterparty: kind === "sent" ? "utest1qqpxw4r9aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa7kd2" : null, memo, note: null, category: null } );
 			// a public bip-39 test phrase, holding nothing
 			const RECOVERY = { seedPhrase: "abandon ".repeat( 23 ) + "art", passphrase: null, birthday: 4465000, birthdayTime: now - 86400 };
 			const TO = "utest1qqpxw4r9aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa7kd2";
@@ -34,7 +34,7 @@
 				V_Open_f:		Flag( "locked" ) ? { state: "locked", protection: "password", osProtectionAvailable: true, minPasswordLen: 8 } : { state: "unlocked", protection: "os", osProtectionAvailable: true, minPasswordLen: 8 },
 				V_Unlock_f:		{ state: "unlocked", protection: "password", osProtectionAvailable: true, minPasswordLen: 8 },
 				V_Status_f:		{ state: "unlocked", protection: "os", osProtectionAvailable: true, minPasswordLen: 8 },
-				W_Constants_f:	{ mobile: Flag( "phone" ), phraseLengths: [ 12, 24 ], maxAccounts: 20, maxNameLen: 40, defaultWalletName: "My Wallet", defaultAccountName: "Main", blockSecs: 75, autoLockChoices: [ 1, 5, 10, 15, 30, 60 ], lockAwayChoices: [ 0, 60, 300 ], memoMaxBytes: 512, categories: [ "income", "food" ], textScales: [ 100, 115, 130, 150, 175 ] },
+				W_Constants_f:	{ mobile: Flag( "phone" ), phraseLengths: [ 12, 24 ], maxAccounts: 20, maxNameLen: 40, defaultWalletName: "My Wallet", defaultAccountName: "Main", blockSecs: 75, autoLockChoices: [ 1, 5, 10, 15, 30, 60 ], lockAwayChoices: [ 0, 60, 300 ], memoMaxBytes: 512, categories: [ "income", "food" ], textScales: [ 100, 115, 130, 150, 175 ], dustZats: 5000 },
 				// &scale=175: the text size, set as the app sets it (useTextScale: css zoom on a phone)
 				S_Get_f:		{ autoLockMinutes: null, lockAwaySecs: 60, notifyInApp: true, notifySystem: true, network: "testnet", showPrice: false, textScale: Number( QUERY.get( "scale" ) ?? 100 ) },
 				// ?sapling: some money in Sapling, to move (W_QuoteMove_f)
@@ -69,6 +69,20 @@
 					{ id: "r2", walletId: "w1", account: 0, label: "Gym", to: "utest1qqpxw4r9bbbb", zats: 0.3 * Z, memo: null, every: "week", next: now + 5 * 86400, day: 3, due: false },
 				],
 			};
+			// ?mainnet: the real-money build's look (a store's screenshots): its network,
+			// and each made-up address with a mainnet prefix. Still made up, holding nothing
+			if ( Flag( "mainnet" ) ) {
+				const MAINNET = [ [ /"testnet"/g, '"mainnet"' ], [ /"utest1/g, '"u1' ], [ /"ztestsapling1/g, '"zs1' ], [ /"tm/g, '"t1' ] ];
+				// a run of one letter (the testnet look's filler) becomes characters that vary, the same each load
+				let seed = 7;
+				const Next = ( set ) => set[( seed = ( seed * 48271 ) % 2147483647 ) % set.length];
+				const Vary = ( n, set ) => Array.from( { length: n }, () => Next( set ) ).join( "" );
+				const text = MAINNET.reduce( ( t, [ from, to ] ) => t.replace( from, to ), JSON.stringify( FIX ) )
+					.replace( /([a-d])\1{5,}/g, ( run ) => Vary( run.length, "qpzry9x8gf2tvdw0s3jn54khce6mua7l" ) );
+				Object.assign( FIX, JSON.parse( text ) );
+				// mined a while back, with ids that look like ids
+				FIX.W_Transactions_f.forEach( ( it, i ) => Object.assign( it, { txid: Vary( 64, "0123456789abcdef" ), state: { kind: "confirmed", height: progress.chainHeight - 40 - i * 1100 } } ) );
+			}
 			let cb = 0;
 			window.__TAURI_EVENT_PLUGIN_INTERNALS__ = { unregisterListener: () => {} };
 			window.__TAURI_INTERNALS__ = {

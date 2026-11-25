@@ -14,9 +14,13 @@ See the LICENSE file for details.
 
 import { defineConfig } from "vitest/config";
 import react from "@vitejs/plugin-react";
+import { Com_ModuleDefines, UI_MODULES } from "./vite.config";
 
 export default defineConfig( {
 	plugins: [ react() ],
+	// every module a build may leave out is in (D-031): their screens are tested here,
+	// and what a build without one leaves is held by vite.config.ts as it writes the bundle
+	define: Com_ModuleDefines( new Set( Object.keys( UI_MODULES ) ) ),
 	test: {
 		environment:	"jsdom",
 		include:		[ "src/**/*.test.{ts,tsx}" ],

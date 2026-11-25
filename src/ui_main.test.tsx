@@ -13,7 +13,7 @@ See the LICENSE file for details.
 // screens and components are the ones that ship.
 
 import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
-import { act, cleanup, render, screen } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, screen } from "@testing-library/react";
 
 import { T } from "./ui_text";
 import { Com_A11y } from "./test_a11y";
@@ -29,6 +29,10 @@ const engine = vi.hoisted( () => ( {
 	vaultError:	null as string | null,
 	list:		null as walletList_t | null,
 	closing:	null as ( () => void ) | null,	// the app's listener for the engine's closing event
+	termsDue:	false,							// v1 asks for its terms (T-049)
+	agreed:		0,
+	betaDue:	false,
+	created:	0,
 } ) );
 
 vi.mock( "./bindings", async () => ( {
@@ -45,6 +49,17 @@ vi.mock( "./bindings", async () => ( {
 		vStatusF: async () => engine.vault,
 		dResultF: async () => engine.document,
 		dClearF: async () => { engine.document = null; },
+		sTermsDueF: async () => engine.termsDue,
+		sAcceptTermsF: async () => {
+			engine.agreed++;
+			engine.termsDue = false;
+			return ( await import( "./test_engine" ) ).Test_Settings();
+		},
+		sBetaWalletsDueF: async () => engine.betaDue,
+		wCreateF: async () => {
+			engine.created++;
+			throw "not in this test";
+		},
 	},
 	events: new Proxy( ( await import( "./test_engine" ) ).TEST_EVENTS, {
 		get: ( silent, name ) => name !== "closingEventT" && name !== "vaultChangedEventT" ? Reflect.get( silent, name ) : {
@@ -82,6 +97,10 @@ beforeEach( () => {
 	engine.vaultError	= null;
 	engine.list			= { firstRun: false, wallets: [], failed: [] };
 	engine.closing		= null;
+	engine.termsDue		= false;
+	engine.agreed		= 0;
+	engine.betaDue		= false;
+	engine.created		= 0;
 
 	// jsdom has no matchMedia; motion asks it about reduced motion
 	window.matchMedia = ( ( query: string ) => ( {
@@ -136,6 +155,65 @@ describe( "startup", () => {
 	} );
 } );
 
+// T-049: v1 starts on its terms, and nothing is reached past them without agreeing
+describe( "the terms", () => {
+	it( "v1 shows them first and creates no wallet until they are agreed to", async () => {
+		engine.termsDue = true;
+		engine.betaDue = true;
+		engine.list = { firstRun: true, wallets: [], failed: [] };
+		await Start();
+		expect( await screen.findByRole( "heading", { name: T.terms.title } ) ).toBeTruthy();
+		await act( async () => {} );
+		expect( screen.queryByText( T.welcome.title ) ).toBeNull();
+		expect( screen.queryByRole( "button", { name: T.welcome.create } ) ).toBeNull();
+		expect( screen.queryByRole( "dialog", { name: T.betaWallets.title } ) ).toBeNull();
+
+		const agree = screen.getByRole( "button", { name: T.terms.agree } ) as HTMLButtonElement;
+		const box = screen.getByRole( "checkbox" ) as HTMLInputElement;
+		expect( box.checked ).toBe( false );
+		expect( agree.disabled ).toBe( true );
+		await act( async () => fireEvent.click( agree ) );
+		expect( engine.agreed ).toBe( 0 );
+		expect( screen.queryByText( T.welcome.title ) ).toBeNull();
+
+		await act( async () => fireEvent.click( box ) );
+		expect( agree.disabled ).toBe( false );
+		await act( async () => fireEvent.click( agree ) );
+		expect( engine.agreed ).toBe( 1 );
+		expect( await screen.findByText( T.welcome.title ) ).toBeTruthy();
+		expect( await screen.findByRole( "dialog", { name: T.betaWallets.title } ) ).toBeTruthy();		// the beta's notice only after
+		expect( engine.created ).toBe( 0 );
+	} );
+
+	it( "shows them to a phone with wallets too, before its wallets", async () => {
+		engine.termsDue = true;
+		engine.list = { firstRun: false, wallets: [], failed: [ { id: "w1", error: { message: "Laurel couldn't open it.", detail: null, retry: false } } ] };
+		await Start();
+		expect( await screen.findByRole( "heading", { name: T.terms.title } ) ).toBeTruthy();
+		expect( screen.queryByText( /couldn't open it/ ) ).toBeNull();
+	} );
+
+	it( "isn't asked where the engine asks none", async () => {
+		engine.list = { firstRun: true, wallets: [], failed: [] };
+		await Start();
+		expect( await screen.findByText( T.welcome.title ) ).toBeTruthy();
+		expect( screen.queryByRole( "heading", { name: T.terms.title } ) ).toBeNull();
+	} );
+
+	it( "uses the words agreed for it", () => {
+		expect( T.terms.title ).toBe( "Before you start" );
+		expect( T.terms.lede ).toBe( "Laurel is a wallet for real ZEC. It hasn't been independently audited, so start with small amounts." );
+		expect( T.terms.points ).toEqual( [
+			"Only you hold your recovery phrase. If you lose it, no one can restore your wallet, not even us.",
+			"Payments can't be cancelled or reversed.",
+			"Laurel is free software, provided as is.",
+		] );
+		const r = T.terms.read;
+		expect( r.before + T.terms.termsLink + r.between + T.terms.privacyLink + r.after ).toBe( "I've read and agree to the Terms of use and the Privacy policy." );
+		expect( T.terms.agree ).toBe( "Agree and continue" );
+	} );
+} );
+
 describe( "closing", () => {
 	// the window waits for every wallet to be saved; a quiet window looked hung
 	it( "says it is saving the wallets once the engine starts closing", async () => {
@@ -157,11 +235,13 @@ describe( "accessibility", () => {
 			[ T.welcome.title,				() => { engine.list = { firstRun: true, wallets: [], failed: [] }; } ],
 			[ T.security.lockedTitle,		() => { engine.vault = { ...UNLOCKED, state: "locked", protection: "password" }; } ],
 			[ T.security.createTitle,		() => { engine.vault = { ...UNLOCKED, state: "needsPassword", protection: null, osProtectionAvailable: false }; } ],
+			[ T.terms.title,				() => { engine.termsDue = true; engine.list = { firstRun: true, wallets: [], failed: [] }; } ],
 		];
 		for ( const [ title, set ] of screens ) {
 			cleanup();
 			engine.vault = UNLOCKED;
 			engine.list = { firstRun: false, wallets: [], failed: [] };
+			engine.termsDue = false;
 			set();
 			await Start();
 			await screen.findByText( title );

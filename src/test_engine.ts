@@ -36,7 +36,7 @@ what the test cares about on top
 export function Test_Item( patch: Partial< historyItem_t > = {} ): historyItem_t {
 	return {
 		txid: "aa", time: 1_790_000_000, kind: "received", amount: 150_000_000, fee: null, state: { kind: "confirmed", height: 100 },
-		from: [], into: [ "ironwood" ], counterparty: null, memo: null, note: null, category: null, ...patch,
+		from: [], fromAddresses: [], into: [ "ironwood" ], counterparty: null, memo: null, note: null, category: null, ...patch,
 	};
 }
 
@@ -105,13 +105,17 @@ export function Test_Can( patch: Partial< walletCan_t > = {} ): walletCan_t {
 	return { spend: true, receive: true, moveWithin: true, addAccount: true, ...patch };
 }
 
-export function Test_Summary( patch: Partial< walletSummary_t > = {}, accounts: Partial< accountSummary_t >[] = [ {} ] ): walletSummary_t {
-	const progress: syncProgress_t = {
-		running: false, complete: true, percent: 100, walletHeight: 100, chainHeight: 100, error: null, attempting: false,
-		nextRetryAt: null, paused: false, etaSecs: null, birthdayTime: null, repairing: false,
-	};
+// a sync that has reached today, at height 100, unless a test says otherwise
+export function Test_Progress( patch: Partial< syncProgress_t > = {} ): syncProgress_t {
 	return {
-		seq: 1, id: "w1", name: "Savings", kind: "seed", can: Test_Can(), backedUp: true, progress: progress, saveError: null, sameWords: [],
+		running: false, complete: true, percent: 100, walletHeight: 100, chainHeight: 100, error: null, attempting: false,
+		nextRetryAt: null, paused: false, etaSecs: null, birthdayTime: null, repairing: false, preparing: false, ...patch,
+	};
+}
+
+export function Test_Summary( patch: Partial< walletSummary_t > = {}, accounts: Partial< accountSummary_t >[] = [ {} ] ): walletSummary_t {
+	return {
+		seq: 1, id: "w1", name: "Savings", kind: "seed", can: Test_Can(), backedUp: true, progress: Test_Progress(), saveError: null, sameWords: [],
 		accounts: accounts.map( ( a, i ) => ( { index: i, name: "Main", balance: Test_Balance( {} ), ...a } ) ),
 		...patch,
 	};
@@ -128,7 +132,7 @@ the eleven by hand
 export function Test_Constants( patch: Partial< constants_t > = {} ): constants_t {
 	return {
 		mobile: false, phraseLengths: [ 12, 15, 18, 21, 24 ], maxAccounts: 20, maxNameLen: 40, defaultWalletName: "My Wallet", defaultAccountName: "Main",
-		blockEras: [ { network: "testnet", from: 0, secs: 150 }, { network: "testnet", from: 584000, secs: 75 }, { network: "testnet", from: 4465026, secs: 25 } ], autoLockChoices: [ 5, 15, 60 ], lockAwayChoices: [ 0, 60, 300 ], memoMaxBytes: 512, categories: [], textScales: [ 100, 115, 130 ], maxPayments: 50, noteMaxChars: 200, networks: [ "testnet", "mainnet" ], ...patch,
+		blockEras: [ { network: "testnet", from: 0, secs: 150 }, { network: "testnet", from: 584000, secs: 75 }, { network: "testnet", from: 4465026, secs: 25 } ], autoLockChoices: [ 5, 15, 60 ], lockAwayChoices: [ 0, 60, 300 ], memoMaxBytes: 512, categories: [], textScales: [ 100, 115, 130 ], maxPayments: 50, dustZats: 5000, noteMaxChars: 200, networks: [ "testnet", "mainnet" ], ...patch,
 	};
 }
 
@@ -142,5 +146,5 @@ Rust is a compile error here, once, not an undefined in six tests.
 ==================
 */
 export function Test_Settings( patch: Partial< appSettings_t > = {} ): appSettings_t {
-	return { autoLockMinutes: null, lockAwaySecs: 60, notifyInApp: true, notifySystem: true, network: "testnet", showPrice: false, textScale: 100, ...patch };
+	return { autoLockMinutes: null, lockAwaySecs: 60, notifyInApp: true, notifySystem: true, network: "testnet", showPrice: false, textScale: 100, betaWalletsSeen: false, termsAccepted: null, sendFromPublic: false, priceYesRealMoney: false, ...patch };
 }

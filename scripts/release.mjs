@@ -42,6 +42,9 @@ const BUNDLE	= join( ROOT, "src-tauri", "target", "release", "bundle" );
 const SUMS		= join( BUNDLE, "SHA256SUMS.txt" );
 const NOTES		= join( BUNDLE, "RELEASE-NOTES.md" );		// what the app shows after the update, beside the installers
 const INSTALLER	= /\.(msi|exe|dmg|AppImage|deb)$/;
+// test coins alone, every module, until the computer comes under v1 (D-033: any real-money
+// build is v1, no module until its own audit)
+const DESKTOP_FEATURES	= "testnet-only,full";
 
 /*
 ==================
@@ -71,10 +74,12 @@ function Build() {
 		SOURCE_DATE_EPOCH:			epoch,
 		CARGO_INCREMENTAL:			"0",
 		CARGO_ENCODED_RUSTFLAGS:	flags.join( "\x1f" ),
+		// the computer's release: test coins, every module (D-031, D-033), the ui's as cargo's (vite.config.ts)
+		LAUREL_FEATURES:			DESKTOP_FEATURES,
 	};
 	delete env.RUSTFLAGS;		// ignored beside the encoded form: say so by not passing it
 	execSync( "npm ci", { cwd: ROOT, stdio: "inherit", env } );
-	execSync( "npx tauri build -- --locked", { cwd: ROOT, stdio: "inherit", env } );
+	execSync( `npx tauri build --features ${DESKTOP_FEATURES} -- --locked`, { cwd: ROOT, stdio: "inherit", env } );
 }
 
 // every installer under the bundle folder

@@ -190,11 +190,119 @@ pub fn N_Allow( _app: &AppHandle ) -> wresult_t< () > {
 	Ok( () )
 }
 
+/*
+==================
+N_Show
+
+On Windows, Laurel shows its own: the plugin names the notification by
+the app's identifier, which Windows knows only for an installed app
+whose shortcut carries it, drops it silently otherwise, and the plugin
+throws away the error. So the name is one Windows knows (N_WindowsId),
+and a failure is said, not lost.
+==================
+*/
+#[cfg( windows )]
+fn N_Show( app: &AppHandle, title: &str, body: &str ) -> wresult_t< () > {
+	let id = N_WindowsId( app );
+	tauri_winrt_notification::Toast::new( &id ).title( title ).text1( body ).show()
+		.map_err( |e| werr_t::WERR_ENGINE( e.to_string() ) )
+}
+
+#[cfg( not( windows ) )]
 fn N_Show( app: &AppHandle, title: &str, body: &str ) -> wresult_t< () > {
 	use tauri_plugin_notification::NotificationExt;
 
 	app.notification().builder().title( title ).body( body ).show()
 		.map_err( |e| werr_t::WERR_ENGINE( e.to_string() ) )
+}
+
+/*
+==================
+N_WindowsId
+
+The name Windows shows a notification under. From the Store (MSIX), the
+package's own (PackageFamilyName!Laurel). Run as a plain program, a name
+of its own (the identifier and ".notices"), registered for this user under
+HKCU\Software\Classes\AppUserModelId with the name Laurel and its icon
+(a copy in the app's local folder): the way Windows takes a program with
+no package. Registered once a run, before the first notification.
+
+Windows keeps the heading it first showed a name under: the bare
+identifier, once shown unregistered (by a build before this one), stays
+the heading on that computer whatever is registered later. Hence a
+name never shown before its registration; a new one is the only cure.
+==================
+*/
+#[cfg( windows )]
+const NOTICE_SUFFIX: &str = ".notices";
+#[cfg( windows )]
+fn N_WindowsId( app: &AppHandle ) -> String {
+	use std::sync::Once;
+	use tauri::Manager;
+	static REGISTERED: Once = Once::new();
+	static ICON: &[u8] = include_bytes!( "../icons/128x128.png" );
+
+	let identifier = format!( "{}{NOTICE_SUFFIX}", app.config().identifier );
+	if let Some( packaged ) = Com_PackageAppId() {
+		return packaged;
+	}
+	REGISTERED.call_once( || {
+		let icon = app.path().app_local_data_dir().map( |dir| dir.join( "notice-icon.png" ) );
+		let icon = match icon {
+			Ok( path ) if crate::w_disk::Com_WriteAtomic( &path, ICON ).is_ok() => Some( path ),		// once a run: a few KB
+			_ => None,
+		};
+		if let Err( code ) = Com_RegisterAppId( &identifier, "Laurel", icon.as_deref() ) {
+			log::warn!( "N_WindowsId: couldn't register the notification name ({code})" );
+		}
+	} );
+	identifier
+}
+
+#[cfg( windows )]
+fn Com_PackageAppId() -> Option< String > {
+	use windows_sys::Win32::Foundation::ERROR_SUCCESS;
+	use windows_sys::Win32::Storage::Packaging::Appx::GetCurrentApplicationUserModelId;
+
+	let mut len: u32 = 256;		// APPLICATION_USER_MODEL_ID_MAX_LENGTH is 130
+	let mut buf = vec![ 0u16; len as usize ];
+	// SAFETY: buf holds len u16s, and the call writes at most len (a NUL included)
+	let r = unsafe { GetCurrentApplicationUserModelId( &mut len, buf.as_mut_ptr() ) };
+	if ( r != ERROR_SUCCESS ) {
+		return None;		// APPMODEL_ERROR_NO_APPLICATION: not from a package
+	}
+	let end = buf.iter().position( |&c| c == 0 ).unwrap_or( buf.len() );
+	Some( String::from_utf16_lossy( &buf[ ..end ] ) )
+}
+
+#[cfg( windows )]
+fn Com_RegisterAppId( identifier: &str, name: &str, icon: Option< &std::path::Path > ) -> Result< (), u32 > {
+	use windows_sys::Win32::Foundation::ERROR_SUCCESS;
+	use windows_sys::Win32::System::Registry::{ RegCloseKey, RegCreateKeyExW, RegSetValueExW, HKEY, HKEY_CURRENT_USER, KEY_SET_VALUE, REG_OPTION_NON_VOLATILE, REG_SZ };
+
+	let wide = |s: &str| s.encode_utf16().chain( std::iter::once( 0 ) ).collect::< Vec< u16 > >();
+	let path = wide( &format!( "Software\\Classes\\AppUserModelId\\{identifier}" ) );
+	let mut values = vec![ ( wide( "DisplayName" ), wide( name ) ) ];
+	if let Some( icon ) = icon {
+		values.push( ( wide( "IconUri" ), wide( &icon.to_string_lossy() ) ) );
+	}
+	let mut key: HKEY = std::ptr::null_mut();
+	// SAFETY: every string is NUL-terminated and outlives the calls; key is closed once opened
+	unsafe {
+		let r = RegCreateKeyExW( HKEY_CURRENT_USER, path.as_ptr(), 0, std::ptr::null(), REG_OPTION_NON_VOLATILE, KEY_SET_VALUE, std::ptr::null(), &mut key, std::ptr::null_mut() );
+		if ( r != ERROR_SUCCESS ) {
+			return Err( r );
+		}
+		let mut result = Ok( () );
+		for ( value, data ) in &values {
+			let r = RegSetValueExW( key, value.as_ptr(), 0, REG_SZ, data.as_ptr().cast(), ( data.len() * 2 ) as u32 );
+			if ( r != ERROR_SUCCESS ) {
+				result = Err( r );
+			}
+		}
+		RegCloseKey( key );
+		result
+	}
 }
 
 fn Com_MaySpeak( inFront: bool, systemOn: bool ) -> bool {
@@ -210,7 +318,7 @@ mod tests {
 	fn Paid( txid: &str ) -> historyItem_t {
 		historyItem_t {
 			txid: txid.into(), time: 0, kind: txKind_t::TX_RECEIVED, amount: 1, fee: None, state: txState_t::CONFIRMED { height: 1 },
-			from: vec![], into: vec![], counterparty: None, memo: None, note: None, category: None,
+			from: vec![], fromAddresses: vec![], into: vec![], counterparty: None, memo: None, note: None, category: None,
 		}
 	}
 

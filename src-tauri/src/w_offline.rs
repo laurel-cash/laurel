@@ -23,47 +23,65 @@ See the LICENSE file for details.
 //
 // The numbered edge cases are docs/OFFLINE-SIGNING.md's.
 
-use std::collections::HashMap;
-use std::path::PathBuf;
-use std::sync::{ LazyLock, Mutex };
-
-use base64::engine::general_purpose::STANDARD as B64;
-use base64::Engine;
 use serde::{ Deserialize, Serialize };
 use specta::Type;
-use tauri::AppHandle;
-use zcash_address::unified::{ Container, Receiver };
-use zcash_address::{ ConversionError, TryFromAddress, ZcashAddress };
-use zcash_client_backend::{ decrypt_transaction, TransferType };
-use zcash_protocol::consensus::{ BlockHeight, BranchId, NetworkType };
-use zcash_protocol::memo::MemoBytes;
-use zeroize::Zeroizing;
-use zip32::AccountId;
 
-use crate::w_dialog::{ D_PickFile, D_SaveFile };
-use crate::w_engine::*;
 use crate::w_local::*;
-use crate::w_main::{ W_AccountOf, W_Engine, W_Slot, W_Slots };
-use crate::w_net::{ W_Broadcast, W_ChainType };
-use crate::w_send::{ W_CheckMemo, W_Propose };
-use crate::w_spendkey::{ Sk_CopyInto, Sk_EnsureOffline, Sk_Needed };
-use crate::w_vault::{ purpose_t, Com_RandomHex, V_EditSealed, V_ReadSealed };
 
+#[cfg( feature = "offline-signing" )]
+use {
+	std::collections::HashMap,
+	std::path::PathBuf,
+	std::sync::{ LazyLock, Mutex },
+	base64::engine::general_purpose::STANDARD as B64,
+	base64::Engine,
+	tauri::AppHandle,
+	zcash_address::unified::{ Container, Receiver },
+	zcash_address::{ ConversionError, TryFromAddress, ZcashAddress },
+	zcash_client_backend::{ decrypt_transaction, TransferType },
+	zcash_protocol::consensus::{ BlockHeight, BranchId, NetworkType },
+	zcash_protocol::memo::MemoBytes,
+	zeroize::Zeroizing,
+	zip32::AccountId,
+	crate::w_dialog::{ D_PickFile, D_SaveFile },
+	crate::w_engine::*,
+	crate::w_registry::{ W_AccountOf, W_Engine, W_Slot, W_Slots },
+	crate::w_net::{ W_Broadcast, W_ChainType },
+	crate::w_send::{ W_CheckMemo, W_Propose },
+	crate::w_spendkey::{ Sk_CopyInto, Sk_EnsureOffline, Sk_Needed },
+	crate::w_vault::{ purpose_t, Com_RandomHex, V_EditSealed, V_ReadSealed },
+};
+
+// in the library only with this code (release_rules.mjs MODULES: a v1 build refuses it)
+#[cfg( feature = "offline-signing" )]
+pub const MODULE_MARK: &str		= "laurel-module:offline-signing";
+#[cfg( feature = "offline-signing" )]
 const FORMAT: u32				= 1;
+#[cfg( feature = "offline-signing" )]
 const REQUEST_EXT: &str			= "laurelreq";
+#[cfg( feature = "offline-signing" )]
 const SIGNED_EXT: &str			= "laurelsigned";
+#[cfg( feature = "offline-signing" )]
 const REQUEST_KIND: &str		= "laurel signing request";
+#[cfg( feature = "offline-signing" )]
 const SIGNED_KIND: &str			= "laurel signed payment";
+#[cfg( feature = "offline-signing" )]
 const FILE_MAX_BYTES: u64		= 64 * 1024 * 1024;		// (11)
+#[cfg( feature = "offline-signing" )]
 const PENDING_FILE_NAME: &str	= "offline-requests.json";
+#[cfg( feature = "offline-signing" )]
 const PENDING_WHAT: file_t		= file_t::FILE_REQUESTS;
 
 // the file pickers' names for Laurel's two kinds of file, until the ui has said its words (uiWords_t)
+#[cfg( feature = "offline-signing" )]
 const REQUEST_FILE_NAME: &str	= "Laurel signing request";
+#[cfg( feature = "offline-signing" )]
 const SIGNED_FILE_NAME: &str	= "Laurel signed payment";
+#[cfg( feature = "offline-signing" )]
 const SIGNER_DIR_NAME: &str		= "offline-signing";
 
 // a file between the computers: what it is, its body, and the body's hash (12)
+#[cfg( feature = "offline-signing" )]
 #[derive( Serialize, Deserialize )]
 struct envelope_t {
 	laurel:	String,
@@ -72,6 +90,7 @@ struct envelope_t {
 	body:	String,
 }
 
+#[cfg( feature = "offline-signing" )]
 #[derive( Clone, Serialize, Deserialize )]
 struct requestBody_t {
 	id:			String,
@@ -84,12 +103,14 @@ struct requestBody_t {
 	made:		u64,
 }
 
+#[cfg( feature = "offline-signing" )]
 #[derive( Serialize, Deserialize )]
 struct signedTx_t {
 	txid:	String,
 	raw:	String,				// base64
 }
 
+#[cfg( feature = "offline-signing" )]
 #[derive( Serialize, Deserialize )]
 struct signedBody_t {
 	requestId:	String,
@@ -132,6 +153,7 @@ pub struct offlineReview_t {
 }
 
 // what saving a request did
+#[cfg_attr( not( feature = "offline-signing" ), allow( dead_code ) )]		// the type stays, for the ui's bindings; only O_SaveRequest makes one (D-031)
 #[derive( Clone, Debug, Serialize, Type )]
 #[serde( tag = "kind" )]
 pub enum offlineSaved_t {
@@ -144,14 +166,17 @@ pub enum offlineSaved_t {
 }
 
 // the request open on the offline screen: its body only, never a key (15)
+#[cfg( feature = "offline-signing" )]
 static o_open: LazyLock< Mutex< Option< requestBody_t > > > = LazyLock::new( || Mutex::new( None ) );
 
 // one change of the pending list at a time
+#[cfg( feature = "offline-signing" )]
 static o_writing: LazyLock< tokio::sync::Mutex< () > > = LazyLock::new( || tokio::sync::Mutex::new( () ) );
 
 // one look at an account's signed payments and the change that follows it at
 // a time (a new request, a broadcast and its mark, a request given up): two at
 // once could each see none perhaps out, and each go ahead
+#[cfg( feature = "offline-signing" )]
 static o_account: LazyLock< tokio::sync::Mutex< () > > = LazyLock::new( || tokio::sync::Mutex::new( () ) );
 
 
@@ -163,10 +188,12 @@ FILES
 =========================================================================
 */
 
+#[cfg( feature = "offline-signing" )]
 fn Com_Sum( body: &str ) -> String {
 	crate::w_vault::Com_Hash( b"Laurel_Offline__", 32, body.as_bytes() ).iter().map( |b| format!( "{b:02x}" ) ).collect()
 }
 
+#[cfg( feature = "offline-signing" )]
 fn Com_Wrap< T: Serialize >( kind: &str, body: &T ) -> wresult_t< Zeroizing< Vec< u8 > > > {
 	let body = serde_json::to_string( body ).map_err( |e| werr_t::WERR_ENGINE( e.to_string() ) )?;
 	let env = envelope_t { laurel: kind.to_string(), format: FORMAT, sum: Com_Sum( &body ), body: body };
@@ -182,6 +209,7 @@ another kind, a newer format, or a body whose hash doesn't match (a copy
 cut short, 12) are each refused
 ==================
 */
+#[cfg( feature = "offline-signing" )]
 fn Com_Unwrap< T: for< 'de > Deserialize< 'de > >( raw: &[ u8 ], kind: &str ) -> wresult_t< T > {
 	let env: envelope_t = serde_json::from_slice( raw ).map_err( |_| werr_t::WERR_OFFLINE_FILE )?;
 	if ( env.laurel != kind ) {
@@ -196,11 +224,13 @@ fn Com_Unwrap< T: for< 'de > Deserialize< 'de > >( raw: &[ u8 ], kind: &str ) ->
 	serde_json::from_str( &env.body ).map_err( |_| werr_t::WERR_OFFLINE_FILE )
 }
 
+#[cfg( feature = "offline-signing" )]
 fn Com_ReadPicked( path: &PathBuf ) -> wresult_t< Zeroizing< Vec< u8 > > > {
 	crate::w_documents::Doc_Read( path, FILE_MAX_BYTES )
 }
 
 // a key with nothing the unified encoding can carry has no text: the engine's fault, not the user's
+#[cfg( feature = "offline-signing" )]
 fn Com_ViewKeyText( net: network_t, ufvk: &zcash_keys::keys::UnifiedFullViewingKey ) -> wresult_t< String > {
 	ufvk.encode( &W_ChainType( net ) ).map_err( |e| werr_t::WERR_ENGINE( format!( "encoding a viewing key: {e}" ) ) )
 }
@@ -214,15 +244,18 @@ THE PENDING REQUESTS (online)
 =========================================================================
 */
 
+#[cfg( feature = "offline-signing" )]
 async fn O_PendingPath() -> PathBuf {
 	crate::w_main::W_NetworkDir( w_registry.read().await.network ).join( PENDING_FILE_NAME )
 }
 
 // this network's requests waiting for their signed payment, oldest first
+#[cfg( feature = "offline-signing" )]
 pub async fn O_Pending() -> wresult_t< Vec< offlinePending_t > > {
 	V_ReadSealed( &O_PendingPath().await, purpose_t::PURPOSE_OFFLINE, PENDING_WHAT )
 }
 
+#[cfg( feature = "offline-signing" )]
 async fn O_EditPending< R >( edit: impl FnOnce( &mut Vec< offlinePending_t > ) -> R ) -> wresult_t< R > {
 	V_EditSealed( &o_writing, &O_PendingPath().await, purpose_t::PURPOSE_OFFLINE, PENDING_WHAT, edit ).await
 }
@@ -237,6 +270,7 @@ signed payment may have gone out can't be given up while that's unknown:
 its record is what holds the account from a second request (A-03)
 ==================
 */
+#[cfg( feature = "offline-signing" )]
 pub async fn O_Forget( id: &str ) -> wresult_t< () > {
 	let _one = o_account.lock().await;
 	if let Some( p ) = O_Pending().await?.into_iter().find( |p| p.id == id && p.sentUnsure.is_some() ) {
@@ -246,21 +280,25 @@ pub async fn O_Forget( id: &str ) -> wresult_t< () > {
 }
 
 // a request done with: its payment went out, or it was given up (O_Forget)
+#[cfg( feature = "offline-signing" )]
 async fn O_Remove( id: &str ) -> wresult_t< () > {
 	O_EditPending( |all| all.retain( |p| p.id != id ) ).await
 }
 
 // marks a request's signed payment as perhaps gone out, or clears the mark
+#[cfg( feature = "offline-signing" )]
 async fn O_MarkUnsure( id: &str, unsure: Option< unsureSend_t > ) -> wresult_t< () > {
 	O_EditPending( |all| all.iter_mut().filter( |p| p.id == id ).for_each( |p| p.sentUnsure = unsure.clone() ) ).await
 }
 
 // settling a mark read a moment ago: only while it is still that payment's,
 // never a newer mark made since (T-044)
+#[cfg( feature = "offline-signing" )]
 async fn O_SettleMark( id: &str, txid: &str, done: bool ) -> wresult_t< () > {
 	O_EditPending( |all| Com_SettleMark( all, id, txid, done ) ).await
 }
 
+#[cfg( feature = "offline-signing" )]
 fn Com_SettleMark( all: &mut Vec< offlinePending_t >, id: &str, txid: &str, done: bool ) {
 	let still = |p: &offlinePending_t| p.id == id && p.sentUnsure.as_ref().is_some_and( |u| u.txid == txid );
 	if ( done ) {
@@ -290,11 +328,12 @@ the offline computer plans on exactly it. A payment of two transactions
 (an exchange-only address) isn't offered in this version (9).
 ==================
 */
+#[cfg( feature = "offline-signing" )]
 pub async fn O_SaveRequest( app: &AppHandle, walletId: &str, account: u32, request: sendRequest_t, seen: sendQuote_t ) -> wresult_t< offlineSaved_t > {
 	let net = w_registry.read().await.network;
 	let slot = W_Slot( walletId ).await?;
 	// only a wallet that can't sign here asks another device to
-	if ( crate::w_main::W_Can( slot.read().await.meta.kind ).spend ) {
+	if ( crate::w_registry::W_Can( slot.read().await.meta.kind ).spend ) {
 		return Err( werr_t::WERR_OFFLINE_CAN_SEND );
 	}
 	{
@@ -347,6 +386,7 @@ OFFLINE: OPENING AND SIGNING
 */
 
 // the wallet here that can sign for a request: its account's viewing key is the request's (1, 16)
+#[cfg( feature = "offline-signing" )]
 struct signer_t {
 	walletName:		String,
 	accountName:	String,
@@ -354,6 +394,7 @@ struct signer_t {
 	usk:			zcash_keys::keys::UnifiedSpendingKey,
 }
 
+#[cfg( feature = "offline-signing" )]
 async fn O_Signer( body: &requestBody_t ) -> wresult_t< signer_t > {
 	let mut viewsOnly = false;
 	for ( _, slot ) in W_Slots().await {
@@ -391,6 +432,7 @@ one piece of work; its folder (the engine wants one, and writes nothing
 to it) is removed after, however the work ends (15)
 ==================
 */
+#[cfg( feature = "offline-signing" )]
 async fn O_WithSigner< T >( body: &requestBody_t, signer: signer_t, work: impl AsyncFnOnce( &mut fenced_t< '_ > ) -> wresult_t< T > ) -> wresult_t< T > {
 	O_CheckId( &body.id )?;
 	// a folder of this run's own, never named from the file: the request is
@@ -419,8 +461,10 @@ a file or is sliced (security review A-01: "../wallets" as an id once
 named the folder deleted after signing).
 ==================
 */
+#[cfg( feature = "offline-signing" )]
 const REQUEST_ID_BYTES: usize = 8;
 
+#[cfg( feature = "offline-signing" )]
 fn O_CheckId( id: &str ) -> wresult_t< () > {
 	if ( id.len() != REQUEST_ID_BYTES * 2 || !id.bytes().all( |b| b.is_ascii_hexdigit() ) ) {
 		return Err( werr_t::WERR_OFFLINE_FILE );
@@ -438,6 +482,7 @@ from its state, to review here. Nothing is signed; none when the person
 closed the picker.
 ==================
 */
+#[cfg( feature = "offline-signing" )]
 pub async fn O_Open( app: &AppHandle ) -> wresult_t< Option< offlineReview_t > > {
 	let Some( path ) = D_PickFile( app, &W_Notice( |w| &w.requestFile, REQUEST_FILE_NAME ), REQUEST_EXT ).await? else {
 		return Ok( None );
@@ -470,6 +515,7 @@ as they drop (W1-08), only the phrase and the passphrase are. None when
 they closed the picker: nothing signed is kept.
 ==================
 */
+#[cfg( feature = "offline-signing" )]
 pub async fn O_Sign( app: &AppHandle, requestId: &str, seen: sendQuote_t ) -> wresult_t< Option< String > > {
 	let body = o_open.lock().unwrap().clone().filter( |b| b.id == requestId ).ok_or( werr_t::WERR_OFFLINE_FILE )?;
 	// a signer downloads nothing: a copy of Sapling's spend key is here, or it says where one goes
@@ -483,7 +529,7 @@ pub async fn O_Sign( app: &AppHandle, requestId: &str, seen: sendQuote_t ) -> wr
 		let quote = W_Propose( f, account, &request ).await?;
 		if ( quote != seen ) {
 			E_ClearProposal( f ).await;
-			return Err( werr_t::WERR_PAYMENT_DONE );		// the review is stale: open the request again
+			return Err( werr_t::WERR_REVIEW_EXPIRED );		// the review is stale: open the request again
 		}
 		E_Calculate( f ).await
 	} ).await?;
@@ -502,6 +548,7 @@ pub async fn O_Sign( app: &AppHandle, requestId: &str, seen: sendQuote_t ) -> wr
 	Ok( Some( path.display().to_string() ) )
 }
 
+#[cfg( feature = "offline-signing" )]
 pub fn O_Close() {
 	*o_open.lock().unwrap() = None;
 }
@@ -516,8 +563,10 @@ ONLINE: CHECKING AND SENDING
 */
 
 // an address's receivers, each tagged by kind: a unified address has several
+#[cfg( feature = "offline-signing" )]
 struct receivers_t( Vec< ( char, Vec< u8 > ) > );
 
+#[cfg( feature = "offline-signing" )]
 impl TryFromAddress for receivers_t {
 	type Error = ();
 
@@ -545,6 +594,7 @@ impl TryFromAddress for receivers_t {
 }
 
 // one payment asked for: who can receive it, how much, and what it says
+#[cfg( feature = "offline-signing" )]
 #[derive( Clone, Debug )]
 pub struct asked_t {
 	receivers:	Vec< ( char, Vec< u8 > ) >,
@@ -553,6 +603,7 @@ pub struct asked_t {
 }
 
 // one output the signed transaction makes, as the viewing key sees it
+#[cfg( feature = "offline-signing" )]
 #[derive( Clone, Debug )]
 pub struct found_t {
 	receiver:	( char, Vec< u8 > ),
@@ -573,6 +624,7 @@ output the viewing key sees, is zero; an output hidden from it would be
 left over.
 ==================
 */
+#[cfg( feature = "offline-signing" )]
 pub fn Com_CheckSigned( asked: &[ asked_t ], found: &[ found_t ], spent: u64, fee: u64 ) -> wresult_t< () > {
 	let mut open: Vec< &asked_t > = asked.iter().collect();
 	for f in found.iter().filter( |f| !f.change ) {
@@ -591,6 +643,7 @@ pub fn Com_CheckSigned( asked: &[ asked_t ], found: &[ found_t ], spent: u64, fe
 }
 
 // the payments a quote asked for: the first (the amount less the others), then each further one
+#[cfg( feature = "offline-signing" )]
 fn Com_Asked( q: &sendQuote_t ) -> wresult_t< Vec< asked_t > > {
 	let one = |to: &str, zats: u64, memo: &Option< String >, kind: addrKind_t| -> wresult_t< asked_t > {
 		let receivers = ZcashAddress::try_from_encoded( to ).ok().and_then( |a| a.convert::< receivers_t >().ok() ).ok_or( werr_t::WERR_OFFLINE_MISMATCH )?;
@@ -605,6 +658,7 @@ fn Com_Asked( q: &sendQuote_t ) -> wresult_t< Vec< asked_t > > {
 }
 
 // every output of a signed transaction the viewing key can see, and every transparent one
+#[cfg( feature = "offline-signing" )]
 fn Com_Found( net: network_t, tx: &zcash_primitives::transaction::Transaction, account: AccountId, ufvk: zcash_keys::keys::UnifiedFullViewingKey ) -> Vec< found_t > {
 	let params = W_ChainType( net );
 	let keys = HashMap::from( [ ( account, ufvk ) ] );
@@ -643,6 +697,7 @@ and checked against the request (7); then sent, in order, and the
 request is done. None when the person closed the picker.
 ==================
 */
+#[cfg( feature = "offline-signing" )]
 pub async fn O_Finish( app: &AppHandle ) -> wresult_t< Option< Vec< String > > > {
 	let Some( path ) = D_PickFile( app, &W_Notice( |w| &w.signedFile, SIGNED_FILE_NAME ), SIGNED_EXT ).await? else {
 		return Ok( None );
@@ -726,6 +781,7 @@ shows up in the wallet went out: its request is done. One whose expiry
 the chain has passed never will: the mark goes, the request stays
 ==================
 */
+#[cfg( feature = "offline-signing" )]
 async fn O_CheckNoneUnsure( walletId: &str, account: u32, except: Option< &str > ) -> wresult_t< () > {
 	let unsure: Vec< offlinePending_t > = O_Pending().await?.into_iter()
 		.filter( |p| p.walletId == walletId && p.account == account && p.sentUnsure.is_some() && Some( p.id.as_str() ) != except )
@@ -759,6 +815,7 @@ async fn O_CheckNoneUnsure( walletId: &str, account: u32, except: Option< &str >
 	Ok( () )
 }
 
+#[cfg( feature = "offline-signing" )]
 #[derive( Debug, PartialEq )]
 enum unsureNow_t {
 	UNSURE_IN,			// the wallet has it: it went out
@@ -778,16 +835,19 @@ never went: a connection that fails now says nothing of the earlier
 delivery (T-043)
 ==================
 */
+#[cfg( feature = "offline-signing" )]
 fn Com_ClearsMark( markedBefore: bool, e: &werr_t ) -> bool {
 	!markedBefore || matches!( e, werr_t::WERR_REJECTED( _ ) )
 }
 
 // a request already marked is sent again only as the payment marked
+#[cfg( feature = "offline-signing" )]
 fn Com_RetryAllowed( marked: Option< &unsureSend_t >, txid: &str ) -> bool {
 	marked.is_none_or( |u| u.txid == txid )
 }
 
 // scanned: the wallet's fully scanned height, never only the tip it heard of
+#[cfg( feature = "offline-signing" )]
 fn Com_UnsureNow( u: &unsureSend_t, known: &[ String ], scanned: u32 ) -> unsureNow_t {
 	if ( known.contains( &u.txid ) ) {
 		return unsureNow_t::UNSURE_IN;
@@ -799,7 +859,9 @@ fn Com_UnsureNow( u: &unsureSend_t, known: &[ String ], scanned: u32 ) -> unsure
 }
 
 // this network's pending requests whose wallet and account are still here
+#[cfg( feature = "offline-signing" )]
 pub async fn O_PendingHere() -> wresult_t< Vec< offlinePending_t > > {
+	log::debug!( "O_PendingHere: {MODULE_MARK}" );
 	let mut here = vec![];
 	for p in O_Pending().await? {
 		let Ok( slot ) = W_Slot( &p.walletId ).await else {
@@ -813,7 +875,51 @@ pub async fn O_PendingHere() -> wresult_t< Vec< offlinePending_t > > {
 }
 
 
-#[cfg( test )]
+/*
+==================
+Without the module (D-031)
+
+Every command says this build hasn't it: no request saved, no file
+picked, opened or signed, no signed payment read or sent, and the
+requests an earlier build saved stay as they were. The app is any
+value, so a test can ask without one.
+==================
+*/
+#[cfg( not( feature = "offline-signing" ) )]
+pub async fn O_PendingHere() -> wresult_t< Vec< offlinePending_t > > {
+	Err( werr_t::WERR_NOT_IN_BUILD )
+}
+
+#[cfg( not( feature = "offline-signing" ) )]
+pub async fn O_SaveRequest( _app: &impl Sized, _walletId: &str, _account: u32, _request: sendRequest_t, _seen: sendQuote_t ) -> wresult_t< offlineSaved_t > {
+	Err( werr_t::WERR_NOT_IN_BUILD )
+}
+
+#[cfg( not( feature = "offline-signing" ) )]
+pub async fn O_Forget( _id: &str ) -> wresult_t< () > {
+	Err( werr_t::WERR_NOT_IN_BUILD )
+}
+
+#[cfg( not( feature = "offline-signing" ) )]
+pub async fn O_Open( _app: &impl Sized ) -> wresult_t< Option< offlineReview_t > > {
+	Err( werr_t::WERR_NOT_IN_BUILD )
+}
+
+#[cfg( not( feature = "offline-signing" ) )]
+pub async fn O_Sign( _app: &impl Sized, _requestId: &str, _seen: sendQuote_t ) -> wresult_t< Option< String > > {
+	Err( werr_t::WERR_NOT_IN_BUILD )
+}
+
+#[cfg( not( feature = "offline-signing" ) )]
+pub async fn O_Finish( _app: &impl Sized ) -> wresult_t< Option< Vec< String > > > {
+	Err( werr_t::WERR_NOT_IN_BUILD )
+}
+
+#[cfg( not( feature = "offline-signing" ) )]
+pub fn O_Close() {}
+
+
+#[cfg( all( test, feature = "offline-signing" ) )]
 mod tests {
 	use super::*;
 
@@ -842,7 +948,7 @@ mod tests {
 	async fn a_request_whose_payment_may_be_out_is_not_forgotten_unchecked() {
 		crate::w_main::W_TestBase();
 		crate::w_vault::V_TestUnlock();
-		let quote = sendQuote_t { to: "t".to_string(), kind: addrKind_t::ADDR_TEX, amount: 1, fee: 1, from: vec![], steps: 1, memo: None, feeNote: None, also: vec![] };
+		let quote = sendQuote_t { to: "t".to_string(), kind: addrKind_t::ADDR_TEX, amount: 1, fee: 1, from: vec![], steps: 1, memo: None, feeNote: None, also: vec![], publicAddresses: 0 };
 		let unsure = Com_RandomHex( REQUEST_ID_BYTES );
 		let plain = Com_RandomHex( REQUEST_ID_BYTES );
 		O_EditPending( |all| {
@@ -877,7 +983,7 @@ mod tests {
 	// a mark read before a wait, settled after: a newer mark made meanwhile stays
 	#[test]
 	fn a_stale_reading_never_settles_a_newer_mark() {
-		let quote = sendQuote_t { to: "t".to_string(), kind: addrKind_t::ADDR_TEX, amount: 1, fee: 1, from: vec![], steps: 1, memo: None, feeNote: None, also: vec![] };
+		let quote = sendQuote_t { to: "t".to_string(), kind: addrKind_t::ADDR_TEX, amount: 1, fee: 1, from: vec![], steps: 1, memo: None, feeNote: None, also: vec![], publicAddresses: 0 };
 		let mark = |txid: &str| Some( unsureSend_t { txid: txid.to_string(), expiry: 100 } );
 		let mut all = vec![ offlinePending_t { id: "r".to_string(), walletId: "w".to_string(), account: 0, quote: quote, made: 0, sentUnsure: mark( "y" ) } ];
 
@@ -953,5 +1059,26 @@ mod tests {
 		env.sum = Com_Sum( &env.body );
 		assert!( matches!( Com_Unwrap::< signedBody_t >( &serde_json::to_vec( &env ).unwrap(), SIGNED_KIND ), Err( werr_t::WERR_OFFLINE_NEWER ) ) );
 		assert!( Com_Unwrap::< signedBody_t >( b"not json", SIGNED_KIND ).is_err() );
+	}
+}
+
+
+#[cfg( all( test, not( feature = "offline-signing" ) ) )]
+mod left_out {
+	use super::*;
+
+	// every command answers that this build has no offline signing: nothing saved,
+	// picked, imported, signed or sent
+	#[tokio::test( flavor = "multi_thread" )]
+	async fn every_command_says_not_in_this_build() {
+		let request = sendRequest_t { to: "t".into(), zats: Some( 1 ), memo: None, from: None, also: vec![] };
+		let quote = sendQuote_t { to: "t".into(), kind: addrKind_t::ADDR_SAPLING, amount: 1, fee: 0, from: vec![], steps: 1, memo: None, feeNote: None, also: vec![], publicAddresses: 0 };
+		assert!( matches!( O_PendingHere().await, Err( werr_t::WERR_NOT_IN_BUILD ) ) );
+		assert!( matches!( O_SaveRequest( &(), "w", 0, request, quote.clone() ).await, Err( werr_t::WERR_NOT_IN_BUILD ) ) );
+		assert!( matches!( O_Forget( "r" ).await, Err( werr_t::WERR_NOT_IN_BUILD ) ) );
+		assert!( matches!( O_Open( &() ).await, Err( werr_t::WERR_NOT_IN_BUILD ) ), "no request imported" );
+		assert!( matches!( O_Sign( &(), "r", quote ).await, Err( werr_t::WERR_NOT_IN_BUILD ) ), "nothing signed" );
+		assert!( matches!( O_Finish( &() ).await, Err( werr_t::WERR_NOT_IN_BUILD ) ), "no signed payment read or sent" );
+		O_Close();
 	}
 }

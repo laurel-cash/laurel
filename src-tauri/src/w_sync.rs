@@ -33,7 +33,8 @@ use crate::w_engine::{ fence_t, E_Client, E_ClientWhenFree, E_Fenced, E_Read, E_
 use crate::w_date::Com_NowMsec;
 use crate::w_local::*;
 use crate::w_balance::W_Balances;
-use crate::w_main::{ Com_NextSeq, W_Slot };
+use crate::w_main::Com_NextSeq;
+use crate::w_registry::W_Slot;
 use crate::w_net::*;
 use crate::w_server::{ Com_ServerOf, W_Connect, W_Server, W_ServerFailed };
 
@@ -120,7 +121,7 @@ starts again on the new one
 ==================
 */
 pub async fn Sync_Reconnect( app: &AppHandle ) {
-	let slots = crate::w_main::W_Slots().await;
+	let slots = crate::w_registry::W_Slots().await;
 	for ( id, slot ) in slots {
 		let client = slot.read().await.client.clone();
 		E_StopAndWait( &mut *E_ClientWhenFree( &client ).await ).await;
@@ -421,7 +422,7 @@ async fn Sync_SendUnsent( id: &str ) {
 	}
 	// on disk first: a payment goes out only from a wallet just written, so a
 	// stop can't lose what was sent (a failed write tries again later)
-	if let Err( e ) = crate::w_main::W_SaveSlot( &slot ).await {
+	if let Err( e ) = crate::w_persist::W_SaveSlot( &slot ).await {
 		log::warn!( "Sync_SendUnsent: not sending until the wallet can be written: {}", e.LogText() );
 		return;
 	}
@@ -439,7 +440,7 @@ async fn Sync_SendUnsent( id: &str ) {
 	if let Err( e ) = sent {
 		log::warn!( "Sync_SendUnsent: {}", e.LogText() );
 	}
-	crate::w_main::W_SaveAfterSend( &slot ).await;		// the next progress emit shows the new states
+	crate::w_persist::W_SaveAfterSend( &slot ).await;		// the next progress emit shows the new states
 }
 
 /*
@@ -562,6 +563,7 @@ pub async fn Sync_ProgressOf( slot: &slot_t, status: Option< SyncStatus > ) -> s
 		let raw				= if ( s.total_outputs > 0 ) { s.total_outputs_scanned as f64 * 100.0 / s.total_outputs as f64 } else { 0.0 };
 		c.engineComplete	= s.is_complete();
 		c.percent			= raw.clamp( 0.0, 99.0 ).floor() as u8;
+		c.scannedAny		= s.total_outputs_scanned > 0;
 	}
 	if ( c.engineComplete ) {
 		c.caughtUp	= true;
@@ -586,9 +588,11 @@ pub async fn Sync_ProgressOf( slot: &slot_t, status: Option< SyncStatus > ) -> s
 
 	p.complete	= c.IsComplete( TIP_SLACK_BLOCKS );
 	p.percent	= if ( p.complete ) { 100 } else { c.percent };		// 100 only when truly done
+	p.preparing	= c.IsPreparing( TIP_SLACK_BLOCKS );
 
-	// time left, from this stretch's own pace; none until the pace means something
-	if ( p.complete || !p.running ) {
+	// time left, from this stretch's own pace; none until the pace means something,
+	// and the pace starts with the first block scanned, not with the setup before it
+	if ( p.complete || !p.running || p.preparing ) {
 		c.etaBase = None;
 	} else {
 		match c.etaBase {
@@ -671,7 +675,7 @@ async fn Sync_Repair( slot: &slotRef_t, why: &werr_t ) -> bool {
 		c.repaired = true;
 	}
 	log::warn!( "Sync_Repair: rescanning from the birthday after: {}", why.LogText() );
-	match Sync_Recheck( slot ).await {
+	match Sync_Recheck( slot, false ).await {
 		Ok( () ) => true,
 		Err( e ) => {
 			log::warn!( "Sync_Repair: rescan failed: {}", e.LogText() );
@@ -689,7 +693,7 @@ automatic repair does, and what Developer settings offers. Keys and
 addresses aren't touched; progress starts over and says it's rechecking.
 ==================
 */
-async fn Sync_Recheck( slot: &slotRef_t ) -> wresult_t< () > {
+async fn Sync_Recheck( slot: &slotRef_t, further: bool ) -> wresult_t< () > {
 	{
 		let s = slot.read().await;
 		let mut c = s.cache.lock().unwrap();
@@ -697,7 +701,7 @@ async fn Sync_Recheck( slot: &slotRef_t ) -> wresult_t< () > {
 		c.StartOver();
 	}
 	let client = slot.read().await.client.clone();
-	let rescan = E_Fenced( &mut *E_ClientWhenFree( &client ).await, fence_t::FENCE_WALLET, async |f| E_Rescan( f ).await ).await;
+	let rescan = E_Fenced( &mut *E_ClientWhenFree( &client ).await, fence_t::FENCE_WALLET, async |f| E_Rescan( f, further ).await ).await;
 	if ( rescan.is_err() ) {
 		slot.read().await.cache.lock().unwrap().repairing = false;
 	}
@@ -708,11 +712,13 @@ async fn Sync_Recheck( slot: &slotRef_t ) -> wresult_t< () > {
 ==================
 Sync_Rescan
 
-The person asked to check a wallet again from the start
+The person asked to check a wallet again from the start; further also
+looks much further for public addresses (E_Rescan), for a phrase from a
+wallet that left more unused ones in a row than a restore searches
 ==================
 */
-pub async fn Sync_Rescan( app: &AppHandle, id: &str ) -> wresult_t< () > {
-	Sync_Recheck( &W_Slot( id ).await? ).await?;
+pub async fn Sync_Rescan( app: &AppHandle, id: &str, further: bool ) -> wresult_t< () > {
+	Sync_Recheck( &W_Slot( id ).await?, further ).await?;
 	Sync_Begin( app, id );		// attaches to the rescan now running
 	Ok( () )
 }
@@ -843,6 +849,22 @@ mod tests {
 		assert!( c.IsComplete( TIP_SLACK_BLOCKS ) );
 		c.walletHeight = 1000 - TIP_SLACK_BLOCKS - 1;
 		assert!( !c.IsComplete( TIP_SLACK_BLOCKS ) );
+	}
+
+	#[test]
+	fn the_setup_before_the_first_block_is_preparing_not_zero_percent() {
+		let mut c = slotCache_t::default();
+		assert!( !c.IsPreparing( TIP_SLACK_BLOCKS ), "not running: nothing is being prepared" );
+		c.running = true;
+		assert!( c.IsPreparing( TIP_SLACK_BLOCKS ), "a restore before its first block" );
+		c.scannedAny = true;
+		assert!( !c.IsPreparing( TIP_SLACK_BLOCKS ), "scanning: the percent means something" );
+
+		c.StartOver();			// a repair sets up again
+		c.running = true;
+		assert!( c.IsPreparing( TIP_SLACK_BLOCKS ) );
+		c.engineComplete = true;	// nothing at all to scan (made at the tip)
+		assert!( !c.IsPreparing( TIP_SLACK_BLOCKS ) );
 	}
 
 }

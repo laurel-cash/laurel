@@ -4,7 +4,7 @@ members = [ "engine" ]
 
 [package]
 name = "laurel"
-version = "0.1.8"
+version = "0.3.3"
 description = "Laurel: a fast, private Zcash wallet"
 authors = ["The Laurel authors"]
 license = "MIT"
@@ -49,7 +49,7 @@ zip32 = "0.3"
 # by type instead of by their words (Com_Classify in w_net.rs)
 tonic = { version = "0.14", default-features = false }
 rustls = { version = "0.23", default-features = false }
-zcash_client_backend = { version = "=0.25.0", default-features = false, features = [ "orchard" ] }		# orchard: decrypting a signed payment's outputs (w_offline.rs)
+zcash_client_backend = { version = "=0.25.0", default-features = false, features = [ "orchard", "transparent-inputs" ] }		# orchard: decrypting a signed payment's outputs (w_offline.rs); transparent-inputs: gathering public coins as a proposal does (w_public.rs)
 zcash_primitives = "=0.31.0"		# reading a transaction signed on another computer (w_offline.rs)
 zcash_transparent = "=0.11.0"		# its public outputs' addresses (w_offline.rs)
 zcash_keys = { version = "=0.17.0", features = [ "orchard", "sapling", "transparent-inputs" ] }		# an account's viewing and spending keys, to match and sign (w_offline.rs)
@@ -116,7 +116,8 @@ incremental = true
 tauri-plugin-single-instance = "2"
 
 [target."cfg(windows)".dependencies]
-windows-sys = { version = "0.59", features = ["Win32_Foundation", "Win32_Security_Cryptography", "Win32_Storage_FileSystem"] }
+windows-sys = { version = "0.59", features = ["Win32_Foundation", "Win32_Security_Cryptography", "Win32_Storage_FileSystem", "Win32_Storage_Packaging_Appx", "Win32_System_Registry"] }
+tauri-winrt-notification = "0.7"		# w_notice.rs: a notification under a name Windows knows (N_WindowsId)
 
 [target."cfg(unix)".dependencies]
 libc = "0.2"
@@ -125,12 +126,29 @@ libc = "0.2"
 proptest = "1"
 bs58 = { version = "0.5", features = [ "check" ] }
 pepper-sync = { path = "../vendor/zingolib/pepper-sync", features = [ "test-features" ] }		# real transactions and coins in tests
+shardtree = "=0.8.0"		# the engine's own version: an anchor in a test wallet's note trees, so it can propose (w_test.rs)
 
 [features]
-# the Play beta's build: test coins only. Mainnet is refused by the engine
-# (NETWORKS, W_NetworkOffered), not only left out of the ui:
-#   scripts/android.ps1 build --target aarch64 --features testnet-only
+# the Play beta's build: test coins only, with every module for its testers. Mainnet is
+# refused by the engine (NETWORKS, W_NetworkOffered), not only left out of the ui:
+#   scripts/android.ps1 build --target aarch64 --features testnet-only,full
 testnet-only = []
+# the real-money build (D-033), Play's and the desktop's alike: mainnet alone, and no
+# module until its own audit (lib.rs refuses v1 with any, and with testnet-only).
+# A first start is on mainnet; a saved testnet reads as mainnet, and the beta's test
+# wallets stay where they are, unopened:
+#   scripts/android.ps1 build --target aarch64 --features v1
+v1 = []
+# the modules a build may leave out (D-031), each off unless a build names it: the
+# commands stay (one answer, "not in this build", so the ui's bindings are the same
+# in every build), the code behind them doesn't. The ui leaves out the same ones
+# (vite.config.ts, from LAUREL_FEATURES); release_rules.mjs checks both. A module
+# goes into a real-money build only after its own audit
+offline-signing = []		# w_offline.rs: sign on a computer that never goes online
+folder-sync = []			# w_folder.rs: keep the person's computers alike through a folder
+prices = []					# w_price.rs, w_alert.rs: the price, its chart, price alerts
+repeat-payments = []		# w_repeat.rs: reminders for payments that come back
+full = [ "offline-signing", "folder-sync", "prices", "repeat-payments" ]
 # the KDF probe (w_probe.rs): a debug test build's only, never Play's
 # (a release with it doesn't compile; check_release.mjs and play_bundle.mjs refuse it)
 kdf-probe = []

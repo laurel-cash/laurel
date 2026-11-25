@@ -170,7 +170,7 @@ file's name.
 pub async fn W_ExportCsv( app: &AppHandle, id: &str, account: u32, memos: bool ) -> wresult_t< String > {
 	let items = crate::w_history::W_Transactions( id, account ).await?;
 	let ( wallet, accountName ) = {
-		let slot = crate::w_main::W_Slot( id ).await?;
+		let slot = crate::w_registry::W_Slot( id ).await?;
 		let s = slot.read().await;
 		( s.meta.name.clone(), s.meta.accounts.get( account as usize ).cloned().unwrap_or_default() )
 	};
@@ -205,6 +205,7 @@ mod tests {
 			from:			vec![],
 			into:			vec![ pool_t::POOL_ORCHARD ],
 			counterparty:	None,
+			fromAddresses:	vec![],
 			memo:			memo.map( str::to_string ),
 			note:			None,
 			category:		None,

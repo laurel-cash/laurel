@@ -13,7 +13,7 @@ See the LICENSE file for details.
 
 import { ReactNode, useEffect, useState } from "react";
 import { openUrl } from "@tauri-apps/plugin-opener";
-import { Check, ChevronDown, ExternalLink, KeyRound, Layers, ReceiptText, RefreshCw, TriangleAlert } from "lucide-react";
+import { Check, ChevronDown, ExternalLink, KeyRound, Layers, ReceiptText, RefreshCw } from "lucide-react";
 
 import { addressKind_t, Com_Abbrev, Com_AddressPool, Com_ErrorOf, Com_FormatZec, Com_ParseZec, commands, Com_Unreachable, freshAddress_t, receive_t } from "./ui_local";
 import { UI_PoolBadge } from "./ui_pool";
@@ -22,7 +22,7 @@ import { useStore } from "./ui_store";
 import { useQuery } from "@tanstack/react-query";
 import { useAction } from "./ui_hooks";
 import { KEYS, QUERY } from "./ui_query";
-import { sheetProps_t, UI_ActionTile, UI_Alert, UI_CopyButton, UI_Info, UI_Sheet, UI_SheetClose, UI_Spinner, UI_Tip, UI_Waiting } from "./ui_widgets";
+import { sheetProps_t, UI_ActionTile, UI_Alert, UI_Callout, UI_CopyButton, UI_Info, UI_Sheet, UI_SheetClose, UI_Spinner, UI_Tip, UI_Waiting } from "./ui_widgets";
 import { UI_QR } from "./ui_chrome";
 import { UI_AmountHint, UI_MemoField } from "./ui_payment";
 
@@ -235,17 +235,17 @@ export function UI_ReceiveSheet( props: sheetProps_t & {
 	// what this side gives, when the account has one to give
 	const given = addr && { private: addr.shielded, sapling: addr.sapling, public: addr.transparent }[side];
 
-	// the tiles under an address: what can be done with it, then the other kinds. The
-	// public address is never made new (one per account), but money at a key comes in there
+	// the tiles under an address: what can be done with it, then the other kinds. A new
+	// public address only after the current one was paid (w_addr.rs); money at a key comes in there
 	const tiles = (
 		<div className="tile-grid three">
-			{given && side !== "public" && (
+			{given && (
 				<UI_ActionTile
 					icon={fresh.busy ? <UI_Spinner size={14} /> : <RefreshCw aria-hidden="true" />}
 					title={T.receive.newAddress}
 					sub={fresh.busy ? T.receive.tile.making : T.receive.tile.newAddress}
 					onClick={fresh.busy ? undefined : () => fresh.run( side )}
-					info={{ title: T.receive.newTitle, body: T.receive.newHint }}
+					info={{ title: T.receive.newTitle, body: side === "public" ? T.receive.newPublicHint : T.receive.newHint }}
 				/>
 			)}
 			{given && <UI_ActionTile icon={<ReceiptText aria-hidden="true" />} title={T.receive.request} sub={T.receive.tile.request} onClick={() => setView( "request" )} />}
@@ -255,21 +255,28 @@ export function UI_ReceiveSheet( props: sheetProps_t & {
 	);
 
 	let body;
-	const error = load.error ? Com_ErrorOf( load.error ) : fresh.error;
+	// the address couldn't be read: nothing to show. A new one refused (a public one not
+	// used yet) says why under the address, which stays the one to use
+	const error = load.error ? Com_ErrorOf( load.error ) : addr ? null : fresh.error;
 	const requesting = !error && !!addr && view === "request" && !!given;
 	if ( error ) {
 		body = <UI_Alert title={T.receive.failed} message={error} action={T.common.tryAgain} onAction={() => { fresh.setError( null ); void load.refetch(); }} />;
 	} else if ( !addr ) {
 		body = <div className="sheet-loading"><UI_Waiting text={T.receive.loading} size={20} /></div>;
 	} else if ( view === "choose" ) {
-		body = <UI_KindChooser current={side} onPick={( k ) => { setSide( k ); setView( "address" ); }} />;
+		body = <UI_KindChooser current={side} onPick={( k ) => { setSide( k ); setView( "address" ); fresh.setError( null ); }} />;
 	} else if ( requesting ) {
 		body = <UI_Request walletId={props.walletId} account={props.account} to={side} onBack={() => setView( "address" )} />;
 	} else {
 		// the private address with the sentence a beginner needs; another kind named by its
 		// badge and tag, the sentences in its (i)
+		// on a wide window, two columns: the QR on the left, what it is and what to do on the right
 		body = (
-			<>
+			<div className="receive-layout">
+				<div className="receive-qr-col">
+					{given ? <UI_AddressCard address={given} /> : <p className="sheet-desc">{side === "sapling" ? T.receive.noSapling : T.receive.noPublic}</p>}
+				</div>
+				<div className="receive-side">
 				{side === "private" ? <p className="sheet-desc">{T.receive.privateLede}</p> : (
 					<div className="receive-kind">
 						<UI_PoolBadge pool={Com_AddressPool( side )} small />
@@ -278,15 +285,16 @@ export function UI_ReceiveSheet( props: sheetProps_t & {
 						<UI_Info title={T.receive.about( T.receive[side] )}>{Com_KindInfo( side )}</UI_Info>
 					</div>
 				)}
-				{side === "public" && given && <div className="warn-note"><TriangleAlert aria-hidden="true" /><span>{T.receive.publicWarn}</span></div>}
-				{given ? <UI_AddressCard address={given} /> : <p className="sheet-desc">{side === "sapling" ? T.receive.noSapling : T.receive.noPublic}</p>}
+				{side === "public" && given && <UI_Callout kind="warn">{T.receive.publicWarn}</UI_Callout>}
+				{fresh.error && <UI_Alert title={T.receive.cantNew} message={fresh.error} />}
 				{tiles}
-			</>
+				</div>
+			</div>
 		);
 	}
 
 	return (
-		<UI_Sheet open={props.open} onOpenChange={props.onOpenChange} title={T.receive.title} description={props.accountName}>
+		<UI_Sheet open={props.open} onOpenChange={props.onOpenChange} title={T.receive.title} description={props.accountName} className={view === "address" && !!addr ? "sheet-receive" : undefined}>
 			{body}
 			{!requesting && (		// the request has its own Back beside Make Request: a Close under them was a row of its own
 				<UI_SheetClose onClose={() => props.onOpenChange( false )}>

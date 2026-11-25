@@ -17,7 +17,7 @@ See the LICENSE file for details.
 
 import { ArrowDown, ArrowUp } from "lucide-react";
 
-import { Com_MoveCard, Com_ShowCard, HOME_DEFAULT, homeCard_t } from "./ui_local";
+import { Com_InBuild, Com_MoveCard, Com_ShowCard, HOME_DEFAULT, homeCard_t } from "./ui_local";
 import { T } from "./ui_text";
 import { useStore } from "./ui_store";
 import { sheetProps_t, UI_Sheet, UI_SheetClose, UI_Switch, UI_Tip } from "./ui_widgets";
@@ -30,6 +30,7 @@ UI_DashboardSheet
 export function UI_DashboardSheet( props: sheetProps_t ) {
 	const home		= useStore( ( s ) => s.home );
 	const setHome	= useStore( ( s ) => s.SetHome );
+	const shown		= home.order.filter( ( c ) => Com_InBuild( c ) );		// a module this build leaves out takes its card (D-031)
 
 	// one card's row: shown or not, and a place earlier or later
 	function Row( c: homeCard_t, i: number ) {
@@ -45,7 +46,7 @@ export function UI_DashboardSheet( props: sheetProps_t ) {
 						<button className="icon-btn" aria-label={T.dashboard.earlier( name )} disabled={i === 0} onClick={() => setHome( Com_MoveCard( home, c, -1 ) )}><ArrowUp aria-hidden="true" /></button>
 					</UI_Tip>
 					<UI_Tip label={T.dashboard.later( name )}>
-						<button className="icon-btn" aria-label={T.dashboard.later( name )} disabled={i === home.order.length - 1} onClick={() => setHome( Com_MoveCard( home, c, 1 ) )}><ArrowDown aria-hidden="true" /></button>
+						<button className="icon-btn" aria-label={T.dashboard.later( name )} disabled={i === shown.length - 1} onClick={() => setHome( Com_MoveCard( home, c, 1 ) )}><ArrowDown aria-hidden="true" /></button>
 					</UI_Tip>
 					<UI_Switch label={name} checked={!home.hidden.includes( c )} onChange={( on ) => setHome( Com_ShowCard( home, c, on ) )} />
 				</span>
@@ -63,7 +64,7 @@ export function UI_DashboardSheet( props: sheetProps_t ) {
 			</ul>
 			<h3 className="section-title">{T.dashboard.side}</h3>
 			<ul className="pool-list settings-list">
-				{home.order.map( Row )}
+				{shown.map( Row )}
 			</ul>
 			<UI_SheetClose onClose={() => props.onOpenChange( false )} primary>
 				<button className="btn" onClick={() => setHome( HOME_DEFAULT )}>{T.dashboard.reset}</button>

@@ -197,7 +197,7 @@ one after another, and logs each one's time and the process's peak memory
 and `scripts/play_bundle.mjs` refuses a library built with it.
 
 ```powershell
-.\scripts\android.ps1 build --debug --target x86_64 --features testnet-only,kdf-probe
+.\scripts\android.ps1 build --debug --target x86_64 --features testnet-only,full,kdf-probe
 adb logcat -v time | Select-String LaurelKdfProbe
 ```
 
@@ -218,9 +218,15 @@ An unsigned APK cannot be installed until signed; debug keys are not release key
 
 The Play beta is built with test coins only, as the app bundle Google Play
 takes: `scripts/android.ps1 build --target aarch64 --aab --features
-testnet-only` (without `--aab`, an APK). That
+testnet-only,full` (without `--aab`, an APK). `full` names the four modules
+a build may leave out (offline signing, folder sync, prices, repeat payments;
+D-031, `src-tauri/Cargo.toml`): each is off unless a build names it, in the
+engine and in the ui alike (android.ps1 hands the ui's build the same list,
+as `LAUREL_FEATURES`; `vite.config.ts` refuses a bundle that doesn't match
+it), and the beta keeps all four for its testers (`play_bundle.mjs` refuses
+one without). That
 build's engine opens testnet alone (`NETWORKS`, `W_NetworkOffered` in
-w_main.rs): switching to mainnet, loading it, or creating or restoring a
+w_import.rs): switching to mainnet, loading it, or creating or restoring a
 mainnet wallet is refused, whatever the ui asks. A settings file that chose
 mainnet starts on testnet, and Settings > Network says the build is for test
 coins instead of offering a switch. It also won't start moving Orchard money
@@ -233,15 +239,22 @@ testnet-only` runs the test that holds this (`the_testnet_build_never_opens_main
 A Play upload, start to end (one commit each step, the full gate before each):
 
     node scripts/bump.mjs 0.1.5 "What changed, as a plain sentence."    # every version, and its notes
-    scripts\android.ps1 build --target aarch64 --aab --features testnet-only
-    node scripts/play_bundle.mjs
+    scripts\android.ps1 build --target aarch64 --aab --features testnet-only,full
+    node scripts/play_bundle.mjs --line testnet
 
-`play_bundle.mjs` checks the bundle is a clean tree's build (android.ps1 records
+v1, the real-money build (D-033), is mainnet alone and no module until each
+has its own audit (lib.rs refuses `v1` with any, or with `testnet-only`):
+
+    scripts\android.ps1 build --target aarch64 --aab --features v1
+    node scripts/play_bundle.mjs --line v1
+
+`play_bundle.mjs` refuses a bundle without `--line`, or whose features or
+library aren't that line's (release_rules.mjs). It checks the bundle is a clean tree's build (android.ps1 records
 which) with nothing built into the app changed since (a scripts or docs commit
 needs no new build: a release's whole-program optimization takes 10 minutes), its
-version code new, its library the testnet build cargo made (stripped, its
+version code new, its library its line's build cargo made (stripped, its
 symbols in the bundle for Play), the phone's only one, and no Android TV. Then
-it copies it to `D:\Android\releases\laurel-testnet-<commit>-unsigned.aab`
+it copies it to `D:\Android\releases\laurel-<line>-<commit>-unsigned.aab`
 and prints the release line for whoever signs it.
 
 An optimized, R8-minified ARM64 release APK built successfully on this machine:

@@ -50,7 +50,7 @@ Subsystem prefixes:
 | Prefix | Where | What |
 |---|---|---|
 | `Sys_` | `lib.rs` | process setup, bindings, shutdown |
-| `W_` | `w_main.rs`, `w_net.rs`, `w_phrase.rs`, `w_cmds.rs` | the wallet registry, server, phrases, commands |
+| `W_` | `w_main.rs`, `w_registry.rs`, `w_import.rs`, `w_lifecycle.rs`, `w_persist.rs`, `w_public.rs`, `w_net.rs`, `w_phrase.rs`, `w_cmds.rs` | loading, the open wallets, a wallet arriving and leaving, the disk, which public coins are spent, server, phrases, commands |
 | `Sync_` | `w_sync.rs` | the sync engines and their progress events |
 | `St_` | `src/ui_store.ts` | the UI's copy of engine state |
 | `Com_` | anywhere | small shared helpers |
@@ -63,7 +63,7 @@ reads it; nothing keeps a hand-made copy.
 
 | Fact | Owner | Everyone else |
 |---|---|---|
-| Types, commands, events, constants | Rust: `w_local.rs`, `w_cmds.rs`, `Sys_Specta` in `lib.rs` | `src/bindings.ts`, generated. Import from it (or `ui_local.ts`, which re-exports it). Never write an `invoke("…")` or a mirror type. |
+| Types, commands, events, constants | Rust: `w_local.rs`, `w_cmds.rs` (`commands!`), `Sys_Specta` in `lib.rs` (events) | `src/bindings.ts`, generated. Import from it (or `ui_local.ts`, which re-exports it). Never write an `invoke("…")` or a mirror type. |
 | Wallet state: balances, accounts, sync | the engine | `ui_store.ts` holds the newest snapshot only, dropping anything with an older `seq` |
 | Words the user reads | `src/ui_text.ts` | screens say `T.backup.title`. Engine errors are written in `werr_t`. |
 | Colors, spacing, radii, the spring | `ui.css` variables, `SPRING` in `ui_widgets.tsx` | no literal colors or ad-hoc animations in components |
@@ -72,6 +72,9 @@ One helper per repeated pattern:
 
 - Rust: `.engine()?` turns any engine error into a Laurel error; every new
   wallet goes through `W_AddWallet`; every meta change through `W_UpdateMeta`.
+- Rust: a command is one function in `w_cmds.rs`'s `commands!` list, which
+  makes the list `Sys_Specta` registers; an error is one line in `werr_t`
+  (`werr_decl!`); a setting is its field and its default (`appSettings_t`).
 - UI: every engine call from a button goes through `useAction()` (busy, error,
   double-click guard); requests fired while typing go through `useLatest()`.
 

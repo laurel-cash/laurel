@@ -8,41 +8,26 @@ Laurel source code is free software, released under the MIT License.
 See the LICENSE file for details.
 ===========================================================================
 */
-// w_main.rs -- the wallet registry: every wallet on disk, their accounts
-// and names (what they hold is w_balance.rs). creating, restoring, adding
-// accounts, shutting down.
+// w_main.rs -- where the wallets live and how they're loaded: the data
+// folder, the engine's config, loading every wallet at startup. The open
+// wallets are w_registry.rs, the disk w_persist.rs, a wallet arriving
+// w_import.rs and leaving w_lifecycle.rs; what they hold is w_balance.rs.
 
-use std::num::NonZeroU32;
 use std::path::{ Path, PathBuf };
 use std::sync::atomic::Ordering;
-use std::sync::Arc;
-use std::time::Duration;
 
-use bip0039::{ English, Mnemonic };
 use pepper_sync::config::TransparentAddressDiscovery;
-use tokio::sync::RwLock;
 use zingolib::config::{ ClientConfig, WalletConfig };
-use zingolib::lightclient::LightClient;
 use zingolib::wallet::WalletSettings;
-use zeroize::Zeroizing;
-use zip32::AccountId;
-use laurel_engine::zcashd::{ read_zcashd_keys, usk_for_sapling_key, ZcashdKeyError };
 
-use crate::w_balance::W_Balances;
 use crate::w_date::Com_Now;
-use crate::w_disk::{ Com_ReadFile, Com_Shred, Com_ShredTree, Com_WriteAtomic };
+use crate::w_disk::Com_Shred;
 use crate::w_engine::*;
+use crate::w_import::{ W_NetworkOffered, W_NewWalletDir };
 use crate::w_local::*;
 use crate::w_net::*;
-use crate::w_phrase::*;
-use crate::w_vault::*;
-
-// how often each wallet's saver looks for unsaved changes
-const SAVE_INTERVAL: Duration = Duration::from_secs( 2 );
-
-// temp files earlier versions (and zingolib's own saver) could leave behind
-// in the clear; shredded whenever a wallet is opened
-const STALE_PLAIN_FILES: [ &str; 2 ] = [ "laurel-wallet.dat.tmp", "laurel.json.tmp" ];
+use crate::w_persist::{ STALE_PLAIN_FILES, W_OpenWallet, W_ReadMeta, W_WriteMeta };
+use crate::w_registry::{ W_Install, W_Usable };
 
 
 /*
@@ -108,6 +93,7 @@ pub fn W_Constants() -> constants_t {
 		categories:			TX_CATEGORIES.to_vec(),
 		textScales:			crate::w_settings::TEXT_SCALES.to_vec(),
 		maxPayments:		crate::w_send::MAX_PAYMENTS as u32,
+		dustZats:			crate::w_send::DUST_ZATS as u32,
 		noteMaxChars:		NOTE_MAX_CHARS,
 		networks:			NETWORKS.to_vec(),
 	}
@@ -128,55 +114,6 @@ pub fn W_NetworkDir( net: network_t ) -> PathBuf {
 
 pub fn Com_NextSeq() -> u64 {
 	w_seq.fetch_add( 1, Ordering::SeqCst )
-}
-
-/*
-==================
-W_NewWalletDir
-
-Makes a fresh directory for a new wallet. The id is the creation time
-in milliseconds, which sorts by age. create_dir fails if the directory
-exists, so two callers can never be handed the same one.
-==================
-*/
-fn W_NewWalletDir( net: network_t ) -> wresult_t< ( String, PathBuf ) > {
-	let root = W_NetworkDir( net );
-	let mut ms = u128::from( crate::w_date::Com_NowMsec() );
-
-	std::fs::create_dir_all( &root ).engine()?;
-	loop {
-		let id = format!( "w{:x}", ms );
-		let dir = root.join( &id );
-		match std::fs::create_dir( &dir ) {
-			Ok( () ) => return Ok( ( id, dir ) ),
-			Err( e ) if e.kind() == std::io::ErrorKind::AlreadyExists => ms += 1,
-			Err( e ) => return Err( e ).engine(),
-		}
-	}
-}
-
-/*
-==================
-W_ReadMeta
-
-Sealed; a plain one is refused like a damaged one (W_OpenWallet says why).
-Names are only names: if they can't be read the wallet still opens,
-with default names and "not backed up", the safe default.
-==================
-*/
-fn W_ReadMeta( dir: &Path ) -> Option< meta_t > {
-	V_ReadSealed::< Option< meta_t > >( &dir.join( META_FILE_NAME ), purpose_t::PURPOSE_META, file_t::FILE_META ).ok().flatten()
-}
-
-/*
-==================
-W_WriteMeta
-
-Sealed, written atomically beside the wallet file
-==================
-*/
-fn W_WriteMeta( dir: &Path, meta: &meta_t ) -> wresult_t< () > {
-	V_WriteSealed( &dir.join( META_FILE_NAME ), purpose_t::PURPOSE_META, meta )
 }
 
 /*
@@ -215,7 +152,7 @@ pub fn Com_CleanName( name: &str ) -> wresult_t< String > {
 	Ok( name )
 }
 
-fn W_AccountNames( count: u32 ) -> Vec< String > {
+pub fn W_AccountNames( count: u32 ) -> Vec< String > {
 	( 0..count.max( 1 ) ).map( |n| {
 		if ( n == 0 ) { DEFAULT_ACCOUNT_NAME.to_string() } else { format!( "Account {}", n + 1 ) }
 	} ).collect()
@@ -251,272 +188,12 @@ fn W_Migrate( net: network_t ) {
 		accounts:	W_AccountNames( 1 ),
 		backedUp:	marker.exists(),
 		created:	Com_Now(),
+		network:	Some( net ),
 	};
 	let _ = W_WriteMeta( &dir, &meta );
 	let _ = std::fs::remove_file( marker );
 }
 
-
-/*
-=========================================================================
-
-REGISTRY
-
-=========================================================================
-*/
-
-/*
-==================
-W_Slot
-
-Finds a wallet and lets go of the registry at once, so a slow wallet
-never holds up the others
-==================
-*/
-pub async fn W_Slot( id: &str ) -> wresult_t< slotRef_t > {
-	w_registry.read().await.slots.get( id ).cloned().ok_or( werr_t::WERR_NO_WALLET )
-}
-
-/*
-==================
-W_Slots
-
-Every open wallet's id and slot, the registry let go at once: whatever
-is read from each slot next waits on that slot only
-==================
-*/
-pub async fn W_Slots() -> Vec< ( String, slotRef_t ) > {
-	w_registry.read().await.slots.iter().map( |( id, s )| ( id.clone(), s.clone() ) ).collect()
-}
-
-/*
-==================
-W_Ids
-
-Every open wallet, oldest first
-==================
-*/
-pub async fn W_Ids() -> Vec< String > {
-	let slots = W_Slots().await;
-	let mut dated = vec![];
-
-	for ( id, slot ) in slots {
-		dated.push( ( slot.read().await.meta.created, id ) );
-	}
-	dated.sort();
-	dated.into_iter().map( |( _, id )| id ).collect()
-}
-
-/*
-==================
-W_Install
-
-Adds an opened wallet to the registry and starts its saver. Refused once
-a lock has begun (W1-02): the check and the insert happen under the
-registry's write lock, and W_Lock lists the wallets to close only after
-V_BeginLock, so a wallet is either refused here or closed by the lock.
-Its sealed files stay: the next unlock opens it.
-==================
-*/
-async fn W_Install( id: String, dir: PathBuf, client: LightClient, meta: meta_t ) -> wresult_t< slotRef_t > {
-	let wallet = E_WalletOf( &client );
-	let cache = Arc::new( std::sync::Mutex::new( slotCache_t::default() ) );
-
-	// its sync hasn't started: the one moment the engine's lock is surely free
-	crate::w_addr::W_PrimeCache( &cache, meta.accounts.len() as u32, &mut *E_Idle( &wallet ).await );
-
-	let slot = Arc::new( RwLock::new( slot_t {
-		client:		Arc::new( tokio::sync::Mutex::new( client ) ),
-		wallet:		wallet.clone(),
-		meta:		meta,
-		dir:		dir,
-		saveLock:	Arc::new( tokio::sync::Mutex::new( () ) ),
-		saveError:	std::sync::Mutex::new( None ),
-		syncError:	std::sync::Mutex::new( None ),
-		retry:		std::sync::Mutex::new( retry_t::default() ),
-		cache:		cache,
-		saver:		std::sync::Mutex::new( None ),
-		stop:		Arc::new( tokio::sync::Notify::new() ),
-	} ) );
-
-	{
-		let mut wl = w_registry.write().await;
-		if ( !W_Usable() ) {
-			return Err( werr_t::WERR_LOCKED );		// the client drops here, never synced
-		}
-		wl.slots.insert( id.clone(), slot.clone() );
-	}
-	W_StartSaver( id, slot.clone() ).await;
-	Ok( slot )
-}
-
-#[cfg( test )]
-tokio::task_local! {
-	// a test's own answer to "is the vault usable": the real one is global, and a
-	// lock begun by one test would refuse every other test's wallets
-	static W_TEST_USABLE: bool;
-}
-
-fn W_Usable() -> bool {
-	// in tests a lock is one test's own: the vault's lock test must not refuse another test's wallet
-	#[cfg( test )]
-	return W_TEST_USABLE.try_with( |u| *u ).unwrap_or_else( |_| V_IsUnlocked() );
-	#[cfg( not( test ) )]
-	V_IsUsable()
-}
-
-
-/*
-=========================================================================
-
-SAVING
-
-zingolib's own savers write the wallet in the clear; laurel builds it with
-no-plaintext-save, which removes them. Every wallet write goes through
-W_WriteWallet: serialize under the wallet lock, seal, write atomically.
-
-=========================================================================
-*/
-
-/*
-==================
-W_WriteWallet
-
-Writes the wallet if it has unsaved changes. The flag is cleared under
-the same lock that serialized it, so a change arriving during the write
-sets it again and the next save picks it up. If the write fails the
-flag is set again too, so nothing is ever marked saved that isn't.
-Callers hold the wallet's saveLock, so writes never finish out of order.
-==================
-*/
-async fn W_WriteWallet( wallet: &walletRef_t, dir: &Path ) -> wresult_t< () > {
-	let bytes = {
-		let mut wallet = E_WriteWhenFree( wallet ).await;
-		match wallet.save().engine()? {
-			None => return Ok( () ),
-			Some( b ) => {
-				wallet.mark_saved();
-				Zeroizing::new( b )
-			}
-		}
-	};
-
-	let path = dir.join( WALLET_FILE_NAME );
-	let written = tauri::async_runtime::spawn_blocking( move || {
-		Com_WriteAtomic( &path, &V_Seal( purpose_t::PURPOSE_WALLET, &bytes )? )
-	} ).await.map_err( |e| werr_t::WERR_ENGINE( format!( "saving: {e}" ) ) ).and_then( |r| r );
-
-	if ( written.is_err() ) {
-		E_WriteWhenFree( wallet ).await.mark_dirty();
-	}
-	written
-}
-
-/*
-==================
-W_SaveAfterSend
-
-Right after a payment goes out, while the sender still holds the engine:
-a payment the wallet knows only in memory is a payment a crash forgets,
-and a wallet that has forgotten one can build it again from other coins.
-The saver would write it within seconds; this makes it now. A failure
-is shown on the wallet (saveError) until a save works, and the saver
-keeps trying.
-==================
-*/
-pub async fn W_SaveAfterSend( slot: &slotRef_t ) {
-	if let Err( e ) = W_SaveSlot( slot ).await {
-		log::warn!( "W_SaveAfterSend: the payment is out; the wallet couldn't be written yet: {}", e.LogText() );
-	}
-}
-
-/*
-==================
-W_SaveSlot
-
-One wallet, now. The outcome is kept for the ui: a wallet that can't be
-saved says so on screen until it can.
-==================
-*/
-pub async fn W_SaveSlot( slot: &slotRef_t ) -> wresult_t< () > {
-	let ( wallet, dir, one ) = {
-		let s = slot.read().await;
-		( s.wallet.clone(), s.dir.clone(), s.saveLock.clone() )
-	};
-	let _one = one.lock().await;
-	let result = W_WriteWallet( &wallet, &dir ).await;
-
-	let s = slot.read().await;
-	*s.saveError.lock().unwrap() = result.as_ref().err().map( werr_t::Info );
-	result
-}
-
-/*
-==================
-W_StartSaver
-
-Every SAVE_INTERVAL, until the app closes; the shutdown does the last save
-==================
-*/
-async fn W_StartSaver( id: String, slot: slotRef_t ) {
-	let stop = slot.read().await.stop.clone();
-	let saving = slot.clone();
-	let handle = tauri::async_runtime::spawn( async move {
-		let slot = saving;
-		loop {
-			// W_Close stops it at once: it holds the wallet (keys and all) while it waits
-			tokio::select! {
-				_ = tokio::time::sleep( SAVE_INTERVAL ) => {}
-				_ = stop.notified() => return,
-			}
-			if ( w_shuttingDown.load( Ordering::SeqCst ) ) {
-				return;
-			}
-			// closed (locked or removed): its last save was W_Close's
-			let open = w_registry.read().await.slots.get( &id ).is_some_and( |s| Arc::ptr_eq( s, &slot ) );
-			if ( !open ) {
-				return;
-			}
-			let _ = W_SaveSlot( &slot ).await;		// kept in saveError and shown
-		}
-	} );
-	*slot.read().await.saver.lock().unwrap() = Some( handle );
-}
-
-/*
-==================
-Com_WalletNewer
-
-Whether a wallet's bytes were written by a newer Laurel: the engine's
-file starts with its version, and one past the newest this build reads
-is a file only an update can open
-==================
-*/
-fn Com_WalletNewer( bytes: &[u8] ) -> bool {
-	bytes.get( ..8 )
-		.and_then( |b| <[u8; 8]>::try_from( b ).ok() )
-		.is_some_and( |b| u64::from_le_bytes( b ) > zingolib::wallet::LightWallet::serialized_version() )
-}
-
-/*
-==================
-W_OpenWallet
-
-Reads a sealed wallet file. A plain one is refused (WERR_NOT_SEALED):
-encryption came before the first release, so no wallet of anyone's is
-plain, and one that is was put there. Opened, it would be a wallet from
-someone else's words, swapped in without the password.
-==================
-*/
-async fn W_OpenWallet( net: network_t, dir: &Path ) -> wresult_t< LightClient > {
-	let raw = Com_ReadFile( &dir.join( WALLET_FILE_NAME ), file_t::FILE_WALLET )?;
-	let bytes = V_Unseal( purpose_t::PURPOSE_WALLET, &raw )?;
-	if ( Com_WalletNewer( &bytes ) ) {
-		return Err( werr_t::WERR_VAULT_NEWER );
-	}
-
-	LightClient::from_bytes( bytes.to_vec(), W_BuildConfig( net, dir, WalletConfig::Read )? ).await.engine()
-}
 
 
 /*
@@ -554,7 +231,7 @@ A restored wallet may come from anywhere. Transparent-only wallets
 look through change addresses too, and further past the last one used.
 ==================
 */
-fn W_RestoreSettings() -> WalletSettings {
+pub fn W_RestoreSettings() -> WalletSettings {
 	let mut settings = WalletSettings::default();
 
 	settings.sync_config.transparent_address_discovery = TransparentAddressDiscovery::recovery();
@@ -613,11 +290,17 @@ pub async fn W_Load( net: network_t ) -> wresult_t< Vec< String > > {
 		for stale in STALE_PLAIN_FILES {
 			Com_Shred( &dir.join( stale ) );
 		}
+		// its names say the other network: listed, never opened with this one's chain (D-033)
+		let names = W_ReadMeta( &dir );
+		if let Some( other ) = names.as_ref().and_then( |m| m.network ).filter( |n| *n != net ) {
+			w_failed.lock().unwrap().push( failedWallet_t { id: id, error: werr_t::WERR_NETWORK( other.Name(), net.Name() ).Info() } );
+			continue;
+		}
 		let at = dir.clone();
-		reading.push( ( id, dir, tokio::spawn( async move { W_OpenWallet( net, &at ).await } ) ) );
+		reading.push( ( id, dir, names, tokio::spawn( async move { W_OpenWallet( net, &at ).await } ) ) );
 	}
 
-	for ( id, dir, read ) in reading {
+	for ( id, dir, names, read ) in reading {
 		// one unreadable wallet must not hide the others, nor vanish: it is listed
 		let read = read.await.unwrap_or_else( |e| Err( werr_t::WERR_ENGINE( format!( "reading the wallet stopped: {e}" ) ) ) );
 		let client = match read {
@@ -629,13 +312,15 @@ pub async fn W_Load( net: network_t ) -> wresult_t< Vec< String > > {
 		};
 
 		// meta can be missing or stale; the engine is the truth about keys
-		let mut meta = W_ReadMeta( &dir ).unwrap_or( meta_t {
+		let mut meta = names.unwrap_or( meta_t {
 			name:		DEFAULT_WALLET_NAME.to_string(),
 			kind:		walletKind_t::WK_SEED,
 			accounts:	vec![],
 			backedUp:	false,
 			created:	Com_Now(),
+			network:	None,
 		} );
+		meta.network = Some( net );		// an older wallet's, from its folder (D-033)
 		let ( kind, count ) = E_WalletFacts( &client ).await.unwrap_or( ( meta.kind, 1 ) );
 		meta.kind = kind;
 		let count = count as usize;
@@ -655,863 +340,6 @@ pub async fn W_Load( net: network_t ) -> wresult_t< Vec< String > > {
 	Ok( opened )
 }
 
-/*
-==================
-W_AddWallet
-
-The one path every new wallet takes, however it was made: claim the
-single adding slot, make its directory, build the engine, write the
-sealed wallet and its names, install it. It only counts as added once
-the sealed wallet file is on disk. On any failure the directory is
-removed again. build turns the new directory into an engine config.
-==================
-*/
-struct addingGuard_t;
-
-impl Drop for addingGuard_t {
-	fn drop( &mut self ) {
-		w_adding.store( false, Ordering::SeqCst );
-	}
-}
-
-async fn W_AddWallet< F >( net: network_t, meta: meta_t, build: F ) -> wresult_t< String >
-where
-	F: FnOnce( &Path ) -> wresult_t< ClientConfig >,
-{
-	if ( w_adding.swap( true, Ordering::SeqCst ) ) {
-		return Err( werr_t::WERR_BUSY );
-	}
-	let _adding = addingGuard_t;
-
-	let ( id, dir ) = W_NewWalletDir( net )?;
-	let made = async {
-		let client = LightClient::new( build( &dir )?, false ).await.engine()?;
-		let wallet = E_WalletOf( &client );
-
-		// the same keys as a wallet already open: one wallet, not two
-		let prints = crate::w_addr::W_Fingerprint( &*E_Idle( &wallet ).await );
-		if let Some( name ) = W_SameWallet( &prints ).await {
-			return Err( werr_t::WERR_WALLET_EXISTS( name ) );
-		}
-
-		E_Idle( &wallet ).await.mark_dirty();		// so the first write happens now
-		W_WriteWallet( &wallet, &dir ).await?;
-		W_WriteMeta( &dir, &meta )?;
-		Ok::< _, werr_t >( client )
-	}.await;
-
-	match made {
-		// refused by a lock: written and sealed, so it opens at the next unlock
-		Ok( client ) => W_Install( id.clone(), dir, client, meta ).await.map( |_| id ),
-		Err( e ) => {
-			let _ = std::fs::remove_dir_all( &dir );
-			Err( e )
-		}
-	}
-}
-
-/*
-==================
-W_SameWallet
-
-The name of an open wallet that shares a viewing key part with these
-prints (W_Fingerprint), if any: the same keys, already here
-==================
-*/
-async fn W_SameWallet( prints: &std::collections::BTreeSet< Vec< u8 > > ) -> Option< String > {
-	for ( _, slot ) in W_Slots().await {
-		let s = slot.read().await;
-		let shared = s.cache.lock().unwrap().fingerprint.intersection( prints ).next().is_some();
-		if ( shared ) {
-			return Some( s.meta.name.clone() );
-		}
-	}
-	None
-}
-
-/*
-==================
-W_CheckNetwork
-
-Every wallet Laurel holds is on one network (W_Load's). A request for
-the other one is a mistake somewhere, never something to act on: a
-wallet made on the wrong network would be listed among the right one's.
-==================
-*/
-async fn W_CheckNetwork( net: network_t ) -> wresult_t< () > {
-	W_NetworkOffered( net )?;
-	let w = w_registry.read().await;
-	if ( w.loaded && w.network != net ) {
-		return Err( werr_t::WERR_NETWORK( net.Name(), w.network.Name() ) );
-	}
-	Ok( () )
-}
-
-/*
-==================
-W_NetworkOffered
-
-Whether this build opens net at all (NETWORKS): the Play beta's refuses
-mainnet here, for every way in (W_Load, W_SetNetwork, W_CheckNetwork),
-whatever the ui asks
-==================
-*/
-pub fn W_NetworkOffered( net: network_t ) -> wresult_t< () > {
-	Com_NetworkIn( net, NETWORKS )
-}
-
-fn Com_NetworkIn( net: network_t, offered: &[ network_t ] ) -> wresult_t< () > {
-	if ( !offered.contains( &net ) ) {
-		return Err( werr_t::WERR_NETWORK_OFF( net.Name() ) );
-	}
-	Ok( () )
-}
-
-fn W_NewMeta( name: String, kind: walletKind_t, accounts: u32, backedUp: bool ) -> meta_t {
-	meta_t {
-		name:		name,
-		kind:		kind,
-		accounts:	W_AccountNames( accounts ),
-		backedUp:	backedUp,
-		created:	Com_Now(),
-	}
-}
-
-
-/*
-=========================================================================
-
-CREATE / RESTORE
-
-=========================================================================
-*/
-
-/*
-==================
-W_Create
-
-Makes a brand new wallet and returns its recovery phrase. Its birthday
-is the current tip, so it never scans blocks from before it existed.
-==================
-*/
-pub async fn W_Create( net: network_t, name: String ) -> wresult_t< created_t > {
-	W_CheckNetwork( net ).await?;
-	let name = Com_CleanName( &name )?;
-	let chainHeight = W_ChainHeight( net ).await?;
-
-	// Laurel makes the phrase itself, from the system's generator (W_NewPhrase),
-	// instead of the engine's NewSeed. The birthday is NewSeed's: 100 blocks
-	// before the tip, never before Sapling
-	let phrase = W_NewPhrase();
-	let birthday = chainHeight.saturating_sub( 100 ).max( W_SaplingHeight( net ) );
-	let id = W_AddWallet( net, W_NewMeta( name, walletKind_t::WK_SEED, 1, false ), |dir| {
-		W_BuildConfig( net, dir, WalletConfig::MnemonicPhrase {
-			mnemonic_phrase:	phrase.to_string(),
-			no_of_accounts:		NonZeroU32::MIN,
-			birthday:			birthday,
-			wallet_settings:	WalletSettings::default(),
-		} )
-	} ).await?;
-
-	let recovery = W_Recovery( &id, &V_Made() ).await?;
-	Ok( created_t { id, recovery } )
-}
-
-/*
-==================
-W_CheckBirthday / Com_BirthdayAhead
-
-A start block typed above the newest one: the wallet would never sync,
-every try failing with "wallet height is ahead of the chain", and the
-only way out would be removing it. Asked of the server when one answers;
-offline the restore goes ahead and the sync says so when it runs
-==================
-*/
-fn Com_BirthdayAhead( birthday: u32, tip: u32 ) -> Option< werr_t > {
-	( birthday > tip ).then_some( werr_t::WERR_BIRTHDAY_AHEAD( birthday, tip ) )
-}
-
-async fn W_CheckBirthday( net: network_t, birthday: u32 ) -> wresult_t< () > {
-	if ( birthday <= W_SaplingHeight( net ) ) {
-		return Ok( () );
-	}
-	match W_ChainHeight( net ).await {
-		Ok( tip ) => Com_BirthdayAhead( birthday, tip ).map_or( Ok( () ), Err ),
-		Err( _ ) => Ok( () ),
-	}
-}
-
-/*
-==================
-W_Restore
-
-Rebuilds a wallet from its recovery phrase. birthday is the block the
-wallet was made at; scanning starts there, so an early guess is safe
-but slow and a late guess misses funds. 0 scans from sapling.
-accounts is how many accounts the old wallet used.
-
-passphrase is BIP-39's optional extra word, empty for none. It is used
-exactly as typed: unlike the phrase it is never normalized, because
-case and spaces are part of it and a changed one is a different wallet.
-==================
-*/
-pub async fn W_Restore( net: network_t, name: String, phrase: String, passphrase: String, birthday: u32, accounts: u32 ) -> wresult_t< String > {
-	// wiped when this returns, on every path: the engine keeps its own copy
-	let phrase = Zeroizing::new( phrase );
-	let passphrase = Zeroizing::new( passphrase );
-	W_CheckNetwork( net ).await?;
-	let name = Com_CleanName( &name )?;
-
-	// catch typos before anything touches the disk
-	if let Some( problem ) = crate::w_phrase::W_PhraseProblem( &phrase ) {
-		return Err( problem );
-	}
-	W_CheckBirthday( net, birthday ).await?;
-	let normalized = W_NormalizePhrase( &phrase );
-	let mnemonic = Mnemonic::< English >::from_phrase( normalized.as_str() )
-		.map_err( |_| werr_t::WERR_SEED_CHECKSUM )?;
-	let accounts = accounts.clamp( 1, MAX_ACCOUNTS );
-
-	// they just typed the phrase in, so it counts as backed up
-	W_AddWallet( net, W_NewMeta( name, walletKind_t::WK_SEED, accounts, true ), |dir| {
-		W_BuildConfig( net, dir, WalletConfig::MnemonicPhraseWithPassphrase {
-			mnemonic_phrase:	mnemonic.phrase().to_string(),
-			passphrase:			passphrase.to_string(),
-			no_of_accounts:		NonZeroU32::new( accounts ).unwrap_or( NonZeroU32::MIN ),
-			birthday:			birthday.max( W_SaplingHeight( net ) ),
-			wallet_settings:	W_RestoreSettings(),
-		} )
-	} ).await.map_err( werr_t::Typed )		// the engine's words may quote what was typed
-}
-
-/*
-==================
-W_RestoreViewKey
-
-A view-only wallet from a unified full viewing key: it sees balances
-and history but holds nothing that can spend, so nothing to back up.
-The key is unwrapped first (Com_Unwrap): at about 500 characters, a
-copied one usually arrives in pieces
-==================
-*/
-pub async fn W_RestoreViewKey( net: network_t, name: String, key: String, birthday: u32 ) -> wresult_t< String > {
-	W_CheckNetwork( net ).await?;
-	let name = Com_CleanName( &name )?;
-	W_CheckBirthday( net, birthday ).await?;
-	let key = crate::w_scan::Com_Unwrap( &key );
-	let prefix = match net {
-		network_t::NET_MAINNET => "uview1",
-		network_t::NET_TESTNET => "uviewtest1",
-	};
-	if ( !key.starts_with( prefix ) ) {
-		return Err( werr_t::WERR_VIEWKEY( prefix ) );
-	}
-
-	W_AddWallet( net, W_NewMeta( name, walletKind_t::WK_VIEWONLY, 1, true ), |dir| {
-		W_BuildConfig( net, dir, WalletConfig::Ufvk {
-			ufvk:				key,
-			birthday:			birthday.max( W_SaplingHeight( net ) ),
-			wallet_settings:	W_RestoreSettings(),
-		} )
-	} ).await.map_err( werr_t::Typed )		// the engine's words may quote what was typed
-}
-
-/*
-==================
-Com_ZcashdError
-
-What the engine's refusal of pasted zcashd keys means. Its words never
-hold a key.
-==================
-*/
-fn Com_ZcashdError( e: ZcashdKeyError, net: network_t ) -> werr_t {
-	match e {
-		ZcashdKeyError::NoKey					=> werr_t::WERR_ZCASHD_NONE,
-		ZcashdKeyError::Typo					=> werr_t::WERR_ZCASHD_TYPO,
-		ZcashdKeyError::OtherNetwork( theirs )	=> werr_t::WERR_KEY_NETWORK( theirs, net.Name() ),
-		ZcashdKeyError::SproutOnly				=> werr_t::WERR_ZCASHD_SPROUT,
-		ZcashdKeyError::Build( why )			=> werr_t::WERR_ENGINE( why ),
-	}
-}
-
-/*
-==================
-W_CheckZcashdKeys
-
-What pasted zcashd text holds, read locally as it's typed: how many
-Sapling keys, and the Sprout and transparent keys it can't import
-==================
-*/
-pub async fn W_CheckZcashdKeys( text: &str ) -> zcashdCheck_t {
-	if ( text.trim().is_empty() ) {
-		return zcashdCheck_t::EMPTY;
-	}
-	let net = w_registry.read().await.network;
-	match read_zcashd_keys( &W_ChainType( net ), text ) {
-		Ok( k )		=> zcashdCheck_t::OK { sapling: k.sapling.len() as u32, sprout: k.sprout as u32, transparent: k.transparent as u32 },
-		Err( e )	=> zcashdCheck_t::BAD { problem: Com_ZcashdError( e, net ).UiMessage() },
-	}
-}
-
-/*
-==================
-W_ImportZcashdKeys
-
-A wallet of zcashd's Sapling keys (z_exportkey, or a z_exportwallet
-file pasted whole), one account per key. zcashd is gone since NU6.3;
-this is how its money comes home. The wallet spends but never receives
-(W_Receive): the rest of each account's keys are fresh and backed up
-nowhere, so the money is meant to move on to a wallet with a phrase.
-The keys themselves are the backup, so it counts as backed up.
-==================
-*/
-pub async fn W_ImportZcashdKeys( net: network_t, name: String, text: &str, birthday: u32 ) -> wresult_t< String > {
-	W_CheckNetwork( net ).await?;
-	let name = Com_CleanName( &name )?;
-	let chain = W_ChainType( net );
-	let keys = read_zcashd_keys( &chain, text ).map_err( |e| Com_ZcashdError( e, net ) )?;
-	W_CheckBirthday( net, birthday ).await?;
-	let count = keys.sapling.len() as u32;
-	if ( count > MAX_ACCOUNTS ) {
-		return Err( werr_t::WERR_TOO_MANY_ACCOUNTS( MAX_ACCOUNTS ) );
-	}
-	let usks = keys.sapling.iter()
-		.map( |k| usk_for_sapling_key( &chain, k ) )
-		.collect::< Result< Vec< _ >, _ > >()
-		.map_err( |e| Com_ZcashdError( e, net ) )?;
-
-	W_AddWallet( net, W_NewMeta( name, walletKind_t::WK_KEY, count, true ), |dir| {
-		W_BuildConfig( net, dir, WalletConfig::Usks {
-			usks:				usks.clone(),
-			birthday:			birthday.max( W_SaplingHeight( net ) ),
-			wallet_settings:	W_RestoreSettings(),
-		} )
-	} ).await.map_err( werr_t::Typed )
-}
-
-
-/*
-=========================================================================
-
-ACCOUNTS AND NAMES
-
-=========================================================================
-*/
-
-
-/*
-==================
-W_AddAccount
-
-Adds the next zip-32 account to a wallet. It comes from the same
-recovery phrase, so it needs no new backup.
-
-A running sync engine doesn't know the new keys, so it is stopped here
-and the caller starts it again. An account used before (in another
-wallet app) may have old payments, so then the whole history is
-scanned again from the birthday; a brand new one only needs the chain
-from now on.
-
-Only this wallet is locked while its engine winds down; the others
-keep syncing and answering.
-==================
-*/
-pub async fn W_AddAccount( id: &str, name: String, usedBefore: bool ) -> wresult_t< u32 > {
-	let name = Com_CleanName( &name )?;
-	let slot = W_Slot( id ).await?;
-	let ( client, wallet ) = {
-		let s = slot.read().await;
-		W_Allow( s.meta.kind, walletAct_t::WA_ADD_ACCOUNT )?;
-		if ( s.meta.accounts.len() as u32 >= MAX_ACCOUNTS ) {
-			return Err( werr_t::WERR_TOO_MANY_ACCOUNTS( MAX_ACCOUNTS ) );
-		}
-		( s.client.clone(), s.wallet.clone() )
-	};
-
-	let mut c = E_Client( &client ).await?;
-	E_CreateAccount( &mut c ).await?;
-	let ( index, cache ) = {
-		let mut s = slot.write().await;
-		s.meta.accounts.push( name );
-		W_WriteMeta( &s.dir, &s.meta )?;
-		( s.meta.accounts.len() as u32 - 1, s.cache.clone() )
-	};
-	if let Ok( mut guard ) = E_Write( &wallet ).await {
-		crate::w_addr::W_PrimeCache( &cache, index + 1, &mut guard );
-	}
-
-	if ( usedBefore ) {
-		E_Fenced( &mut c, fence_t::FENCE_WALLET, async |f| E_Rescan( f ).await ).await?;
-	} else {
-		E_StopAndWait( &mut c ).await;
-	}
-	Ok( index )
-}
-
-/*
-==================
-W_UpdateMeta
-
-The one way a wallet's names or flags change: edit, then save
-==================
-*/
-async fn W_UpdateMeta< F >( id: &str, edit: F ) -> wresult_t< () >
-where
-	F: FnOnce( &mut meta_t ) -> wresult_t< () >,
-{
-	let slot = W_Slot( id ).await?;
-	let mut s = slot.write().await;
-
-	edit( &mut s.meta )?;
-	W_WriteMeta( &s.dir, &s.meta )
-}
-
-pub async fn W_RenameWallet( id: &str, name: String ) -> wresult_t< () > {
-	let name = Com_CleanName( &name )?;
-	W_UpdateMeta( id, |meta| { meta.name = name; Ok( () ) } ).await
-}
-
-pub async fn W_RenameAccount( id: &str, index: u32, name: String ) -> wresult_t< () > {
-	let name = Com_CleanName( &name )?;
-	W_UpdateMeta( id, |meta| {
-		*meta.accounts.get_mut( index as usize ).ok_or( werr_t::WERR_NO_ACCOUNT )? = name;
-		Ok( () )
-	} ).await
-}
-
-pub async fn W_MarkBackedUp( id: &str, words: &[ backupWord_t ], passphrase: Option< &str > ) -> wresult_t< () > {
-	// marked only for someone who has the words: a wallet marked backed up is then removed as safe (W1-01)
-	let client = W_Slot( id ).await?.read().await.client.clone();
-	if ( !E_PhraseMatches( &*E_Client( &client ).await?, words, passphrase ).await? ) {
-		return Err( werr_t::WERR_CONFIRM );
-	}
-	W_UpdateMeta( id, |meta| { meta.backedUp = true; Ok( () ) } ).await
-}
-
-
-/*
-=========================================================================
-
-QUERIES
-
-=========================================================================
-*/
-
-/*
-==================
-W_Recovery
-
-The phrase, its passphrase and the birthday needed to rebuild a wallet
-anywhere, for someone just asked who they are (present_t)
-==================
-*/
-pub async fn W_Recovery( id: &str, present: &present_t ) -> wresult_t< recovery_t > {
-	let net = w_registry.read().await.network;
-	let info = {
-		let client = W_Slot( id ).await?.read().await.client.clone();
-		E_RecoveryInfo( &*E_Client( &client ).await?, present ).await?.ok_or_else( || {
-			werr_t::WERR_ENGINE( "This wallet was added with a viewing key, so it has no recovery phrase.".to_string() )
-		} )?
-	};
-
-	// people remember dates, not block heights; unknown stays unknown (a
-	// restored wallet's birthday is not "today" because the server is down)
-	let birthdayTime = W_BlockTime( net, info.birthday ).await.ok();
-
-	Ok( recovery_t {
-		seedPhrase:		info.seed_phrase,
-		passphrase:		Some( info.passphrase ).filter( |p| !p.is_empty() ),		// BIP-39: empty is none
-		birthday:		info.birthday,
-		birthdayTime:	birthdayTime,
-	} )
-}
-
-/*
-==================
-W_Engine
-
-A wallet's account and its engine handles, with the slot let go: the
-slow part that follows (a proposal, a send) holds nothing anyone reads
-==================
-*/
-pub async fn W_Engine( id: &str, account: u32 ) -> wresult_t< ( AccountId, clientRef_t, walletRef_t ) > {
-	let slot = W_Slot( id ).await?;
-	let s = slot.read().await;
-	Ok( ( W_AccountOf( &s, account )?, s.client.clone(), s.wallet.clone() ) )
-}
-
-/*
-==================
-W_Paying
-
-Everything a payment (a send, a shield, a move) needs before anything is
-built, in one order: the intent taken first, so one review can be
-attempted once whatever happens next; the wallet near the tip, so the
-payment can't be built on an old view of the chain; then the account and
-its engine handles
-==================
-*/
-pub async fn W_Paying( id: &str, account: u32, intent: &str ) -> wresult_t< ( slotRef_t, AccountId, clientRef_t ) > {
-	E_TakeIntent( intent, id, account )?;
-	let slot = W_Slot( id ).await?;
-	W_Allow( slot.read().await.meta.kind, walletAct_t::WA_SPEND )?;		// signed here; a view-only wallet's payment is signed elsewhere
-	crate::w_sync::Sync_RequireCaughtUp( &slot ).await?;
-	let ( accountId, client, _ ) = W_Engine( id, account ).await?;
-	Ok( ( slot, accountId, client ) )
-}
-
-/*
-==================
-W_Allow
-
-What each kind of wallet may be asked to do, decided here and nowhere
-else, with the reason when not. A phrase wallet does everything. One
-that only views receives, and nothing more (its payments are signed on
-another device: w_offline.rs). One from zcashd keys spends its money
-out, but receives nothing and moves nothing within: its private pool
-here is backed by no phrase. The engine refuses by this; the ui offers
-by W_Can, the same answers, so no button offers what would be refused.
-==================
-*/
-pub fn W_Allow( kind: walletKind_t, act: walletAct_t ) -> wresult_t< () > {
-	use walletAct_t::*;
-	use walletKind_t::*;
-	match ( kind, act ) {
-		( WK_SEED, _ )							=> Ok( () ),
-		( WK_VIEWONLY, WA_RECEIVE )				=> Ok( () ),
-		( WK_VIEWONLY, WA_SPEND )				=> Err( werr_t::WERR_VIEWONLY_SPEND ),
-		( WK_VIEWONLY, WA_MOVE_WITHIN )			=> Err( werr_t::WERR_VIEWONLY_MOVE ),
-		( WK_VIEWONLY, WA_ADD_ACCOUNT )			=> Err( werr_t::WERR_VIEWONLY ),
-		( WK_KEY, WA_SPEND )					=> Ok( () ),
-		( WK_KEY, WA_RECEIVE )					=> Err( werr_t::WERR_KEY_WALLET_RECEIVE ),
-		( WK_KEY, WA_MOVE_WITHIN )				=> Err( werr_t::WERR_KEY_WALLET_MOVE ),
-		( WK_KEY, WA_ADD_ACCOUNT )				=> Err( werr_t::WERR_KEY_WALLET_ACCOUNTS ),
-	}
-}
-
-pub fn W_Can( kind: walletKind_t ) -> walletCan_t {
-	walletCan_t {
-		spend:		W_Allow( kind, walletAct_t::WA_SPEND ).is_ok(),
-		receive:	W_Allow( kind, walletAct_t::WA_RECEIVE ).is_ok(),
-		moveWithin:	W_Allow( kind, walletAct_t::WA_MOVE_WITHIN ).is_ok(),
-		addAccount:	W_Allow( kind, walletAct_t::WA_ADD_ACCOUNT ).is_ok(),
-	}
-}
-
-// W_Allow, for an open wallet by its id
-pub async fn W_Allowed( id: &str, act: walletAct_t ) -> wresult_t< () > {
-	W_Allow( W_Slot( id ).await?.read().await.meta.kind, act )
-}
-
-/*
-==================
-W_AccountOf
-
-A wallet's account by index, if it has one
-==================
-*/
-pub fn W_AccountOf( s: &slot_t, account: u32 ) -> wresult_t< AccountId > {
-	if ( account as usize >= s.meta.accounts.len() ) {
-		return Err( werr_t::WERR_NO_ACCOUNT );
-	}
-	AccountId::try_from( account ).map_err( |_| werr_t::WERR_NO_ACCOUNT )
-}
-
-/*
-==================
-W_Summary
-
-One wallet as the switcher shows it. The seq is taken before anything
-is read: a snapshot that started later is never older than this one.
-==================
-*/
-#[allow( clippy::await_holding_invalid_type, reason = "the only await under the slot is Sync_ProgressOf, which reads memory, never the network" )]
-pub async fn W_Summary( id: &str ) -> wresult_t< walletSummary_t > {
-	let slot = W_Slot( id ).await?;
-	let words = slot.read().await.cache.lock().unwrap().wordsPrint;
-	let sameWords = W_SameWords( id, words ).await;
-	let s = slot.read().await;
-	let seq = Com_NextSeq();
-	let balances = W_Balances( &s );
-	let saveError = s.saveError.lock().unwrap().clone();
-
-	Ok( walletSummary_t {
-		seq:		seq,
-		id:			id.to_string(),
-		name:		s.meta.name.clone(),
-		kind:		s.meta.kind,
-		can:		W_Can( s.meta.kind ),
-		backedUp:	s.meta.backedUp,
-		accounts:	s.meta.accounts.iter().enumerate().map( |( i, name )| accountSummary_t {
-			index:		i as u32,
-			name:		name.clone(),
-			balance:	balances.get( i ).copied().unwrap_or_default(),
-		} ).collect(),
-		progress:	crate::w_sync::Sync_ProgressOf( &s, None ).await,
-		saveError:	saveError,
-		sameWords:	sameWords,
-	} )
-}
-
-/*
-==================
-W_SameWords
-
-The other open wallets made from these recovery words (W_WordsPrint):
-one paper holds the words of all of them, and each passphrase is its
-own. Manage Wallets says so, so neither backup is thought of as spare.
-==================
-*/
-async fn W_SameWords( id: &str, words: Option< [ u8; 32 ] > ) -> Vec< String > {
-	let Some( words ) = words else {
-		return Vec::new();
-	};
-	let slots = W_Slots().await;
-	let mut same = Vec::new();
-	for ( other, slot ) in slots {
-		if ( other != id && slot.read().await.cache.lock().unwrap().wordsPrint == Some( words ) ) {
-			same.push( other );
-		}
-	}
-	same
-}
-
-/*
-==================
-W_List
-
-Every open wallet, oldest first, and every wallet on disk that couldn't
-be opened, with the reason
-==================
-*/
-pub async fn W_List() -> walletList_t {
-	let mut wallets = vec![];
-
-	for id in W_Ids().await {
-		if let Ok( summary ) = W_Summary( &id ).await {
-			wallets.push( summary );
-		}
-	}
-	let failed = w_failed.lock().unwrap().clone();
-
-	// every wallet folder on disk either opened or failed, so nothing in
-	// either list means there is no wallet at all: the only first run
-	walletList_t {
-		firstRun:	wallets.is_empty() && failed.is_empty(),
-		wallets:	wallets,
-		failed:		failed,
-	}
-}
-
-
-/*
-=========================================================================
-
-CLOSING, LOCKING, REMOVING
-
-=========================================================================
-*/
-
-/*
-==================
-W_Close
-
-Stops a wallet's engine, saves it one last time and takes it out of the
-registry. Its saver and sync loops see it gone and end on their own.
-==================
-*/
-async fn W_Close( id: &str ) -> wresult_t< slotRef_t > {
-	let slot = W_Slot( id ).await?;
-	crate::w_sync::Sync_Detach( id );		// nothing restarts the engine behind the close
-	E_ForgetIntents( id );					// a quote from a closed wallet can't be sent
-	let client = slot.read().await.client.clone();
-	E_StopAndWait( &mut *E_ClientWhenFree( &client ).await ).await;
-	let saved = W_SaveSlot( &slot ).await;
-	w_registry.write().await.slots.remove( id );
-	// its saver ended before W_Lock forgets the key, not up to SAVE_INTERVAL later
-	let ( stop, saver ) = {
-		let s = slot.read().await;
-		let saver = s.saver.lock().unwrap().take();
-		( s.stop.clone(), saver )
-	};
-	stop.notify_one();
-	if let Some( saver ) = saver {
-		let _ = saver.await;
-	}
-	saved?;
-	Ok( slot )
-}
-
-/*
-==================
-W_Lock
-
-Every wallet saved and closed, its saver ended (W_Close), then the key
-forgotten: nothing new can be opened or unsealed. A wallet's engine stays
-in memory only while a helper already running on it (a send, a sync
-step) finishes. An add still running is refused at W_Install, its sealed
-files kept. Unlocking loads them all again, as at start.
-Only with a password: a key the system unlocks by itself would simply
-open again.
-==================
-*/
-pub async fn W_Lock( app: &tauri::AppHandle ) -> wresult_t< vaultStatus_t > {
-	use tauri_specta::Event;
-	if ( V_Status()?.protection != Some( protection_t::PROT_PASSWORD ) ) {
-		return Err( werr_t::WERR_NO_PASSWORD );
-	}
-	let locking = V_BeginLock()?;
-	let _ = vaultChangedEvent_t {}.emit( app );
-	W_CloseAll().await;
-	V_Forget();
-	drop( locking );
-	V_Status()
-}
-
-/*
-==================
-W_StartOver
-
-The way back from a forgotten password. Every file Laurel keeps on this
-device goes: the wallets (overwritten first, Com_Shred), the key file,
-contacts, notes, settings. The money isn't in them but on the chain, and
-each wallet's recovery phrase brings it back. Only while locked, or with
-a key that can't be had at all (V_MayStartOver): then no wallet is open
-to write a file back, and unlocked, each wallet has its own Remove. A
-reinstall can't do this: an installer keeps the data folder
-==================
-*/
-pub async fn W_StartOver() -> wresult_t< () > {
-	V_MayStartOver()?;
-	W_CloseAll().await;
-	let base = Com_DataPath( "" ).expect( "W_Init not called" );
-	W_EraseAll( &base, &crate::w_storage::Sto_Paths().1 )
-}
-
-/*
-==================
-W_EraseAll
-
-What Start Over erases: the data folder, then the logs (W1-03), a record
-of what was done when. A log file the logger still holds open is
-overwritten, not removed, and the new process starts it again; that
-never stops the erase. The browser's own storage is the ui's to clear
-(Com_ClearPrefs), as it does before asking.
-==================
-*/
-fn W_EraseAll( data: &Path, logs: &Path ) -> wresult_t< () > {
-	crate::w_disk::Com_ShredTree( data ).engine()?;
-	if ( !logs.as_os_str().is_empty() && logs.exists() ) {
-		if let Err( e ) = crate::w_disk::Com_ShredTree( logs ) {
-			log::warn!( "W_EraseAll: some logs stayed: {}", e.to_string() );
-		}
-	}
-	Ok( () )
-}
-
-/*
-==================
-W_CloseAll
-
-Every wallet saved and closed, and the registry emptied: the next W_Load
-opens them again (or another network's). Locking and switching networks
-both start here.
-==================
-*/
-async fn W_CloseAll() {
-	let _loading = w_loadLock.lock().await;
-	for id in W_Ids().await {
-		if let Err( e ) = W_Close( &id ).await {
-			log::warn!( "W_CloseAll: {id}: {}", e.LogText() );		// closed anyway; the save error was shown before
-		}
-	}
-	w_registry.write().await.loaded = false;
-}
-
-/*
-==================
-W_SetNetwork
-
-Mainnet or testnet. One network is open at a time: every wallet of this
-one is saved and closed, the choice is kept (w_settings.rs), and the ui
-starts over, opening the other network's wallets, address book and
-server choice, each kept apart under wallets/<network>/.
-==================
-*/
-pub async fn W_SetNetwork( net: network_t ) -> wresult_t< () > {
-	W_NetworkOffered( net )?;
-	let settings = crate::w_settings::S_Get();
-	if ( settings.network == net && w_registry.read().await.network == net ) {
-		return Ok( () );
-	}
-	W_CloseAll().await;
-	w_registry.write().await.network = net;
-	crate::w_settings::S_Set( crate::w_settings::appSettings_t { network: net, ..settings } )?;
-	Ok( () )
-}
-
-/*
-==================
-W_RemoveWallet
-
-Takes a wallet off this computer: its engine stopped, its files shredded
-and deleted. The money stays on the blockchain; its recovery phrase (or
-viewing key) brings it back. Never offered without saying that first.
-==================
-*/
-pub async fn W_RemoveWallet( id: &str, _present: &present_t ) -> wresult_t< () > {
-	let slot = W_Close( id ).await?;
-	let dir = slot.read().await.dir.clone();
-	// every file in it shredded, not only the two Laurel names: the engine's own files hold keys too
-	Com_ShredTree( &dir ).engine()?;
-	std::fs::remove_dir( &dir ).engine()?;
-	// the wallet is gone whatever happens here: a reminder left behind is only a reminder, and said in the log
-	if let Err( e ) = crate::w_repeat::Rp_ForgetWallet( id ).await {
-		log::warn!( "W_RemoveWallet: kept the repeating payments of {id}: {}", e.Info().message );
-	}
-	Ok( () )
-}
-
-
-/*
-=========================================================================
-
-SHUTDOWN
-
-=========================================================================
-*/
-
-/*
-==================
-W_Shutdown
-
-Before the process exits: savers stop, every engine stops, then every
-wallet is written one last time. Savers only look every SAVE_INTERVAL,
-so without this the last changes (a sync step, a new account) could be
-lost. A saver mid-write finishes first: W_SaveSlot waits on saveLock.
-
-Every wallet at once, not one after another: the caller gives the whole
-shutdown a few seconds, and one engine waiting out a slow network must
-not use them all up before the next wallet gets its save.
-==================
-*/
-pub async fn W_Shutdown() {
-	w_shuttingDown.store( true, Ordering::SeqCst );
-	let slots = W_Slots().await;
-
-	let mut all = tokio::task::JoinSet::new();
-	for ( id, slot ) in slots {
-		all.spawn( async move {
-			let client = slot.read().await.client.clone();
-			E_StopAndWait( &mut *E_ClientWhenFree( &client ).await ).await;
-			if let Err( e ) = W_SaveSlot( &slot ).await {
-				log::warn!( "W_Shutdown: {id}: {}", e.LogText() );
-			}
-		} );
-	}
-	while ( all.join_next().await.is_some() ) {}
-}
-
 
 /*
 =========================================================================
@@ -1527,11 +355,31 @@ wallets are built from bip-39's own test vector: valid, holding nothing
 mod tests {
 	use super::*;
 
-	use crate::w_balance::W_AccountBalance;
+	use std::num::NonZeroU32;
+	use std::time::Duration;
+
+	use laurel_engine::zcashd::{ read_zcashd_keys, usk_for_sapling_key };
+	use zingolib::lightclient::LightClient;
+	use zip32::AccountId;
+
+	use crate::w_balance::{ W_AccountBalance, W_Balances };
+	use crate::w_import::{ Com_BirthdayAhead, Com_NetworkIn, W_AddAccount, W_NewMeta, W_SameWallet };
+	use crate::w_lifecycle::{ W_EraseAll, W_RemoveWallet };
+	use crate::w_persist::{ Com_WalletNewer, W_OpenWallet };
+	use crate::w_registry::{ W_Allow, W_Can, W_Install, W_List, W_RenameWallet, W_Slot, W_Summary };
 	use crate::w_test::TEST_WORDS_24 as TEST_PHRASE;
+	use crate::w_vault::*;
+
+	// the tests each build alone has: v1's that testnet is refused, the testnet build's that mainnet
+	// is (both call these two), and the testnet build's own wallets
+	#[cfg( any( feature = "v1", feature = "testnet-only" ) )]
+	use crate::{ w_import::W_CheckNetwork, w_lifecycle::W_SetNetwork };
+	#[cfg( not( feature = "v1" ) )]
+	use crate::{ w_import::W_AddWallet, w_persist::W_ReadMeta, w_registry::W_TEST_USABLE };
 
 	// the two tests whose wallets live in the shared testnet folder: one at a
 	// time, or one's load opens (and rewrites the names of) the other's wallet
+	#[cfg( not( feature = "v1" ) )]		// its tests open testnet, which v1 doesn't (D-033)
 	static TESTNET_FOLDER: tokio::sync::Mutex< () > = tokio::sync::Mutex::const_new( () );
 
 	fn Scratch( name: &str ) -> PathBuf {
@@ -1633,6 +481,7 @@ mod tests {
 	#[tokio::test( flavor = "multi_thread" )]
 	#[allow( clippy::await_holding_invalid_type, reason = "the test holds the lock on purpose, the way a sync batch does" )]
 	async fn ui_answers_while_the_engine_holds_its_lock() {
+		V_TestUnlock();
 		const QUICK: Duration = Duration::from_secs( 1 );
 		let dir = Scratch( "busy" );
 		let client = TestClient( &dir ).await;
@@ -1695,30 +544,44 @@ mod tests {
 	broadcasting take (seconds). Nothing the ui reads may wait for it:
 	Receive, the wallet's summary, its history. This was the slot's own
 	lock held across a send, freezing every read of that wallet.
+
+	Judged by the held lock, not the clock (T-054): a read that waited
+	for the send would never answer, as the send is never let go while
+	the reads run; a second taker of the client, still waiting once they
+	have all answered, shows the send held it the whole time. The limit
+	is only so a read that does wait fails the test instead of hanging
+	it, and is far past any read's time under a loaded build.
 	==================
 	*/
 	#[tokio::test( flavor = "multi_thread" )]
 	async fn ui_answers_while_a_send_holds_the_client() {
-		const QUICK: Duration = Duration::from_secs( 1 );
+		W_TestBase();		// its own data folder and unlock: it once held only after another test's (T-054)
+		V_TestUnlock();
+		const HUNG: Duration = Duration::from_secs( 60 );
 		let dir = Scratch( "sending" );
 		let client = TestClient( &dir ).await;
 		let slot = W_Install( "sending".to_string(), dir, client, W_NewMeta( "Sending".to_string(), walletKind_t::WK_SEED, 1, false ) ).await.unwrap();
 
 		let handle = slot.read().await.client.clone();
-		let _sending = E_ClientWhenFree( &handle ).await;		// what a send does, for its whole length
+		let sending = E_ClientWhenFree( &handle ).await;		// what a send does, for its whole length
+		let next = tokio::spawn( { let h = handle.clone(); async move { drop( E_ClientWhenFree( &h ).await ); } } );		// waits for the send
 
-		let r = tokio::time::timeout( QUICK, crate::w_addr::W_Receive( "sending", 0, None ) ).await;
+		let r = tokio::time::timeout( HUNG, crate::w_addr::W_Receive( "sending", 0, None ) ).await;
 		assert!( matches!( r, Ok( Ok( _ ) ) ), "receive waited for the send: {r:?}" );
 
-		let sum = tokio::time::timeout( QUICK, W_Summary( "sending" ) ).await;
+		let sum = tokio::time::timeout( HUNG, W_Summary( "sending" ) ).await;
 		assert!( matches!( sum, Ok( Ok( _ ) ) ), "the summary waited for the send" );
 
-		let t = tokio::time::timeout( QUICK, crate::w_history::W_Transactions( "sending", 0 ) ).await;
+		let t = tokio::time::timeout( HUNG, crate::w_history::W_Transactions( "sending", 0 ) ).await;
 		assert!( matches!( t, Ok( Ok( _ ) ) ), "history waited for the send" );
 
 		// and a rename, which writes the slot, isn't held up by the send either
-		let n = tokio::time::timeout( QUICK, W_RenameWallet( "sending", "Renamed".to_string() ) ).await;
+		let n = tokio::time::timeout( HUNG, W_RenameWallet( "sending", "Renamed".to_string() ) ).await;
 		assert!( matches!( n, Ok( Ok( _ ) ) ), "the rename waited for the send" );
+
+		assert!( !next.is_finished(), "the send didn't hold the client while the reads answered" );
+		drop( sending );
+		tokio::time::timeout( HUNG, next ).await.expect( "the client was held by something other than the send" ).unwrap();
 	}
 
 	/*
@@ -1751,6 +614,7 @@ mod tests {
 	*/
 	#[tokio::test( flavor = "multi_thread" )]
 	async fn moving_asks_who_and_how_much_first() {
+		V_TestUnlock();
 		let dir = Scratch( "mover" );
 		let client = TestClient( &dir ).await;
 		W_Install( "mover".to_string(), dir, client, W_NewMeta( "Mover".to_string(), walletKind_t::WK_SEED, 1, true ) ).await.unwrap();
@@ -1771,6 +635,7 @@ mod tests {
 
 	#[tokio::test( flavor = "multi_thread" )]
 	async fn the_support_report_holds_nothing_private() {
+		V_TestUnlock();
 		let dir = Scratch( "reported" );
 		let client = TestClient( &dir ).await;
 		let mut meta = W_NewMeta( "Grandma's Savings".to_string(), walletKind_t::WK_SEED, 1, true );
@@ -1801,11 +666,15 @@ mod tests {
 		let client = TestClient( &dir ).await;
 		W_Install( "removed".to_string(), dir.clone(), client, W_NewMeta( "Gone".to_string(), walletKind_t::WK_SEED, 1, true ) ).await.unwrap();
 		W_TestBase();		// the reminders' file lives in the data folder
-		let reminder = crate::w_repeat::repeatInput_t { id: None, walletId: "removed".into(), account: 0, label: "Rent".into(), to: "tmW9T9Xgyog3LQDkC1B1yfuz4ZzXUhTxAdJ".into(), zats: 1, memo: None, every: crate::w_repeat::every_t::EVERY_MONTH, next: 1 };
-		crate::w_repeat::Rp_Save( reminder ).await.expect( "a reminder for it" );
+		#[cfg( feature = "repeat-payments" )]
+		{
+			let reminder = crate::w_repeat::repeatInput_t { id: None, walletId: "removed".into(), account: 0, label: "Rent".into(), to: "tmW9T9Xgyog3LQDkC1B1yfuz4ZzXUhTxAdJ".into(), zats: 1, memo: None, every: crate::w_repeat::every_t::EVERY_MONTH, next: 1 };
+			crate::w_repeat::Rp_Save( reminder ).await.expect( "a reminder for it" );
+		}
 
 		W_RemoveWallet( "removed", &V_Made() ).await.expect( "remove" );
 		assert!( !dir.exists(), "the wallet's folder is still on disk" );
+		#[cfg( feature = "repeat-payments" )]
 		assert!( !crate::w_repeat::Rp_List().await.unwrap().iter().any( |r| r.walletId == "removed" ), "its repeating payment still comes due" );
 		assert!( W_Slot( "removed" ).await.is_err(), "the wallet is still in the registry" );
 		assert!( matches!( W_RemoveWallet( "removed", &V_Made() ).await, Err( werr_t::WERR_NO_WALLET ) ) );
@@ -1862,6 +731,8 @@ mod tests {
 	test's own (W_TEST_USABLE): the real one is shared by every test
 	==================
 	*/
+	// its wallets are testnet's, which v1 never opens (D-033): it runs in every other build
+	#[cfg( not( feature = "v1" ) )]
 	#[tokio::test( flavor = "multi_thread" )]
 	async fn a_wallet_finished_while_locking_stays_closed() {
 		let _folder = TESTNET_FOLDER.lock().await;
@@ -1947,6 +818,7 @@ mod tests {
 	*/
 	#[tokio::test( flavor = "multi_thread" )]
 	async fn the_same_phrase_is_one_wallet() {
+		V_TestUnlock();
 		const OTHER_PHRASE: &str = "legal winner thank year wave sausage worth useful legal winner thank yellow";		// bip-39's second test vector
 
 		let dir = Scratch( "same" );
@@ -1993,6 +865,7 @@ mod tests {
 	*/
 	#[tokio::test( flavor = "multi_thread" )]
 	async fn a_viewing_key_of_any_account_is_that_wallet() {
+		V_TestUnlock();
 		const PHRASE: &str = "letter advice cage absurd amount doctor acoustic avoid letter advice cage above";		// bip-39's third test vector: no other test's wallet
 		let chain = W_ChainType( network_t::NET_TESTNET );
 
@@ -2047,6 +920,7 @@ secret-extended-key-test1qqqqqqqqqqqqqqqdrw8476xntx4xvcpknd0jvz05cmzweeq4vugc4ea
 	*/
 	#[tokio::test( flavor = "multi_thread" )]
 	async fn imported_zcashd_keys_spend_but_never_receive() {
+		V_TestUnlock();
 		let chain = W_ChainType( network_t::NET_TESTNET );
 		let keys = read_zcashd_keys( &chain, ZCASHD_EXPORT ).unwrap();
 		let usks = keys.sapling.iter().map( |k| usk_for_sapling_key( &chain, k ).unwrap() ).collect();
@@ -2079,6 +953,7 @@ secret-extended-key-test1qqqqqqqqqqqqqqqdrw8476xntx4xvcpknd0jvz05cmzweeq4vugc4ea
 	*/
 	#[tokio::test( flavor = "multi_thread" )]
 	async fn a_passphrase_is_another_wallet() {
+		V_TestUnlock();
 		let dir = Scratch( "pass-plain" );
 		W_Install( "pass-plain".to_string(), dir.clone(), TestClient( &dir ).await, W_NewMeta( "Plain".to_string(), walletKind_t::WK_SEED, 1, true ) ).await.unwrap();
 
@@ -2130,6 +1005,26 @@ secret-extended-key-test1qqqqqqqqqqqqqqqdrw8476xntx4xvcpknd0jvz05cmzweeq4vugc4ea
 	way to mainnet is refused by the engine, whatever the ui asks
 	==================
 	*/
+	/*
+	==================
+	the_real_money_build_never_opens_testnet
+
+	D-033: v1 (cargo test --lib --features v1) opens mainnet alone: every way
+	to testnet is refused by the engine, and a first start is on mainnet.
+	The beta's test wallets stay on disk, unopened
+	==================
+	*/
+	#[cfg( feature = "v1" )]
+	#[tokio::test( flavor = "multi_thread" )]
+	async fn the_real_money_build_never_opens_testnet() {
+		W_TestBase();
+		assert_eq!( NETWORKS, &[ network_t::NET_MAINNET ] );
+		assert_eq!( crate::w_settings::appSettings_t::default().network, network_t::NET_MAINNET );
+		assert!( matches!( W_SetNetwork( network_t::NET_TESTNET ).await, Err( werr_t::WERR_NETWORK_OFF( _ ) ) ) );
+		assert!( matches!( W_Load( network_t::NET_TESTNET ).await, Err( werr_t::WERR_NETWORK_OFF( _ ) ) ) );
+		assert!( matches!( W_CheckNetwork( network_t::NET_TESTNET ).await, Err( werr_t::WERR_NETWORK_OFF( _ ) ) ) );
+	}
+
 	#[cfg( feature = "testnet-only" )]
 	#[tokio::test( flavor = "multi_thread" )]
 	async fn the_testnet_build_never_opens_mainnet() {
@@ -2186,6 +1081,8 @@ secret-extended-key-test1qqqqqqqqqqqqqqqdrw8476xntx4xvcpknd0jvz05cmzweeq4vugc4ea
 	not read either: the wallet opens with default names, then seals them
 	==================
 	*/
+	// its wallets are testnet's, which v1 never opens (D-033): it runs in every other build
+	#[cfg( not( feature = "v1" ) )]
 	#[tokio::test( flavor = "multi_thread" )]
 	async fn load_refuses_plain_files_and_lists_broken_ones() {
 		let _folder = TESTNET_FOLDER.lock().await;
@@ -2204,7 +1101,9 @@ secret-extended-key-test1qqqqqqqqqqqqqqqdrw8476xntx4xvcpknd0jvz05cmzweeq4vugc4ea
 		std::fs::write( plain.join( WALLET_FILE_NAME ), PlainWalletBytes( &plain ).await ).unwrap();
 		std::fs::write( bad.join( WALLET_FILE_NAME ), b"garbage" ).unwrap();
 
-		// the folder is shared: another test's sealed wallet may open here too
+		// the folder is shared: another test's sealed wallet may open here too; and the
+		// registry: a load before this one (a_wallet_knows_its_network) would answer none
+		w_registry.write().await.loaded = false;
 		let mut opened = W_Load( network_t::NET_TESTNET ).await.unwrap();
 		opened.retain( |id| [ "wgood", "wplain", "wbad" ].contains( &id.as_str() ) );
 		assert_eq!( opened, vec![ "wgood".to_string() ] );
@@ -2224,6 +1123,68 @@ secret-extended-key-test1qqqqqqqqqqqqqqqdrw8476xntx4xvcpknd0jvz05cmzweeq4vugc4ea
 		assert!( V_IsSealed( &std::fs::read( good.join( META_FILE_NAME ) ).unwrap() ) );
 		assert!( !V_IsSealed( &std::fs::read( plain.join( WALLET_FILE_NAME ) ).unwrap() ) );
 		assert!( !good.join( "laurel-wallet.dat.tmp" ).exists() );
+	}
+
+	/*
+	==================
+	a_wallet_knows_its_network
+
+	D-033: a wallet's network was only the folder it sat in, and one moved
+	into the other network's folder would have been opened with that
+	network's chain. Now each wallet's names say its network: a new one
+	writes it, an older one is given its folder's, and one whose names say
+	the other network is listed and never opened
+	==================
+	*/
+	// its wallets are testnet's, which v1 never opens (D-033): it runs in every other build
+	#[cfg( not( feature = "v1" ) )]
+	#[tokio::test( flavor = "multi_thread" )]
+	async fn a_wallet_knows_its_network() {
+		let _folder = TESTNET_FOLDER.lock().await;
+		W_TestBase();
+		let key = V_TestUnlock();
+
+		// a new wallet writes its network (its own keys: a passphrase)
+		let added = W_AddWallet( network_t::NET_TESTNET, W_NewMeta( "Knows Its Network".to_string(), walletKind_t::WK_SEED, 1, true ), |dir| {
+			W_BuildConfig( network_t::NET_TESTNET, dir, WalletConfig::MnemonicPhraseWithPassphrase {
+				mnemonic_phrase:	crate::w_test::TEST_WORDS.to_string(),
+				passphrase:			"network".to_string(),
+				no_of_accounts:		NonZeroU32::MIN,
+				birthday:			W_SaplingHeight( network_t::NET_TESTNET ),
+				wallet_settings:	WalletSettings::default(),
+			} )
+		} ).await.unwrap();
+		let nets = W_NetworkDir( network_t::NET_TESTNET );
+		assert_eq!( W_ReadMeta( &nets.join( &added ) ).unwrap().network, Some( network_t::NET_TESTNET ) );
+
+		// one whose names say mainnet, in testnet's folder; one from before networks were written
+		let far = nets.join( "wfar" );
+		let old = nets.join( "wold" );
+		for ( dir, meta ) in [
+			( &far, br#"{"name":"Far","kind":"seed","accounts":["Main"],"backedUp":true,"created":1,"network":"mainnet"}"#.as_slice() ),
+			( &old, br#"{"name":"Old","kind":"seed","accounts":["Main"],"backedUp":true,"created":1}"#.as_slice() ),
+		] {
+			std::fs::create_dir_all( dir ).unwrap();
+			std::fs::write( dir.join( WALLET_FILE_NAME ), V_SealWith( &key, purpose_t::PURPOSE_WALLET, &PlainWalletBytes( dir ).await ).unwrap() ).unwrap();
+			std::fs::write( dir.join( META_FILE_NAME ), V_SealWith( &key, purpose_t::PURPOSE_META, meta ).unwrap() ).unwrap();
+		}
+		let farBefore = std::fs::read( far.join( WALLET_FILE_NAME ) ).unwrap();
+
+		w_registry.write().await.loaded = false;		// loaded again, as at a start
+		let opened = W_Load( network_t::NET_TESTNET ).await.unwrap();
+		assert!( opened.contains( &"wold".to_string() ) && !opened.contains( &"wfar".to_string() ) );
+		let list = W_List().await;
+		let refused = list.failed.iter().find( |f| f.id == "wfar" ).expect( "the other network's wallet is listed, not hidden" );
+		assert_eq!( refused.error.message, werr_t::WERR_NETWORK( "Mainnet", "Testnet" ).Info().message );
+		assert_eq!( std::fs::read( far.join( WALLET_FILE_NAME ) ).unwrap(), farBefore, "nothing written to it" );
+		assert_eq!( W_ReadMeta( &old ).unwrap().network, Some( network_t::NET_TESTNET ), "an older wallet is given its folder's" );
+
+		// the folder is shared with other tests' loads
+		for id in [ added.as_str(), "wold" ] {
+			let _ = W_RemoveWallet( id, &V_Made() ).await;
+		}
+		let _ = std::fs::remove_dir_all( &far );
+		w_registry.write().await.loaded = false;		// the next test's load reads the folder again
 	}
 
 	#[tokio::test( flavor = "multi_thread" )]

@@ -23,8 +23,9 @@ See the LICENSE file for details.
 //
 // Every step has a deadline, and the gate always ends with its "check:"
 // line: a hung step once left the gate, and a wait on it, running for
-// fifty minutes. Warm, every step takes under 30 seconds; one past
-// STEP_LIMIT_SECS is stopped, its whole process tree, and failed. A change
+// fifty minutes. Warm, every step takes under 30 seconds but layout
+// (check_limits.mjs); one past its limit is stopped, its whole process
+// tree, and failed. A change
 // that rebuilds the engine (its build script, Cargo.toml) makes one cold
 // run of minutes: say so with --cold.
 //
@@ -34,6 +35,7 @@ See the LICENSE file for details.
 
 import { spawn, spawnSync } from "node:child_process";
 import { constants, setPriority } from "node:os";
+import { Com_StepLimit } from "./check_limits.mjs";
 
 // below normal, and every step it starts with it (Windows hands a process's priority
 // on): the gate uses idle cpu, and the person's own work comes first
@@ -56,6 +58,7 @@ const UI = [
 	[ "owners",		NODE, [ "scripts/check_owners.mjs" ] ],
 	[ "docs",		NODE, [ "scripts/check_docs.mjs" ] ],
 	[ "contrast",	NODE, [ "scripts/check_contrast.mjs" ] ],
+	[ "bundle",		NODE, [ "scripts/check_bundle.mjs" ] ],		// the real-money ui bundle holds no module it leaves out (D-031)
 	[ "version",	NODE, [ "scripts/check_version.mjs" ] ],
 	[ "release",	NODE, [ "scripts/check_release.mjs" ] ],
 	[ "public",		NODE, [ "scripts/public_export.mjs", "--check" ] ],		// the public tree, as the export settings say (release_rules.mjs)
@@ -72,16 +75,30 @@ const ENGINE_STEPS = [
 	[ "lint-engine",	"cargo", [ "clippy", "-q", "-p", "zingolib", "--lib", "--tests", "--", "-A", "clippy::all", "-D", "clippy::disallowed_methods" ], ENGINE ],
 	[ "test-engine",	"cargo", [ "test", "-q", "-p", "zingolib", "--lib", "--", "wallet::disk", "wallet::keys::seed", "wallet::utils", "wallet::sapling_key", "transmit_verdict" ], ENGINE ],
 ];
+// the modules a build may leave out (D-031) are off unless named: the app's own steps name
+// them all (full); the bare steps build without them, as v1 ships
+// The full build refuses unused code too: a phone's refuses every warning (lib.rs), and
+// what only a left-out module uses is unused with every module in (WERR_NOT_IN_BUILD).
+// The lints first: they only check, a minute warm, and a failed step ends its chain, so
+// a lint's failure is known before the tests' builds start (2026-11-08: lint-bare, last,
+// failed in 26 s after 14 minutes of tests)
 const APP_STEPS = [
-	[ "lint",			"cargo", [ "clippy", "-q", "--workspace", "--lib", "--tests", "--examples", "--", ...CLIPPY_APP ], APP ],
-	[ "test",			"cargo", [ "test", "-q", "--workspace", "--lib" ], APP ],
+	[ "lint",			"cargo", [ "clippy", "-q", "--workspace", "--lib", "--tests", "--examples", "--features", "full", "--", ...CLIPPY_APP, "-D", "dead_code" ], APP ],
+	// without the modules: what's left out must leave nothing unused behind (a phone's
+	// build refuses every warning, lib.rs), and every test still holds (test-bare)
+	[ "lint-bare",		"cargo", [ "clippy", "-q", "--workspace", "--lib", "--tests", "--features", "testnet-only", "--", ...CLIPPY_APP, "-D", "warnings" ], APP ],
+	// the real-money build (D-033): mainnet alone, no module; a phone's refuses every warning
+	[ "lint-v1",		"cargo", [ "clippy", "-q", "--workspace", "--lib", "--tests", "--features", "v1", "--", ...CLIPPY_APP, "-D", "warnings" ], APP ],
+	[ "test",			"cargo", [ "test", "-q", "--workspace", "--lib", "--features", "full" ], APP ],
 	// the build that ships to Play: a test that held only without it once failed unseen
-	[ "test-testnet",	"cargo", [ "test", "-q", "--workspace", "--lib", "--features", "testnet-only" ], APP ],
+	[ "test-testnet",	"cargo", [ "test", "-q", "--workspace", "--lib", "--features", "testnet-only,full" ], APP ],
+	[ "test-bare",		"cargo", [ "test", "-q", "--workspace", "--lib", "--features", "testnet-only" ], APP ],
+	[ "test-v1",		"cargo", [ "test", "-q", "--workspace", "--lib", "--features", "v1" ], APP ],
 ];
 const RUST = [ ...ENGINE_STEPS, ...APP_STEPS ];
 
 const COLD = process.argv.includes( "--cold" );
-const STEP_LIMIT_SECS = Number( process.env.CHECK_STEP_SECS ) || ( COLD ? 900 : 60 );		// the env only to test the deadline itself
+const FORCED_SECS = Number( process.env.CHECK_STEP_SECS ) || 0;		// the env only to test the deadline itself
 
 // the step and everything it started (cargo's rustc, vitest's workers, Edge)
 function Stop( child ) {
@@ -99,12 +116,13 @@ function Run( [ name, cmd, args, cwd ] ) {
 		const child = spawn( cmd, args, { cwd: cwd ?? ".", windowsHide: true, shell: false } );
 		let out = "";
 		let late = false;
+		const limit = Com_StepLimit( name, COLD, FORCED_SECS );
 		const deadline = setTimeout( () => {
 			late = true;
 			out += `
-stopped after ${STEP_LIMIT_SECS}s. Warm, no step takes 30s: something is stuck or rebuilding. After a change that rebuilds the engine, run once with --cold.`;
+stopped after ${limit}s. Warm, no step takes 30s: something is stuck or rebuilding. After a change that rebuilds the engine, run once with --cold.`;
 			Stop( child );
-		}, STEP_LIMIT_SECS * 1000 );
+		}, limit * 1000 );
 		child.stdout.on( "data", ( d ) => { out += d; } );
 		child.stderr.on( "data", ( d ) => { out += d; } );
 		child.on( "error", ( e ) => { out += String( e ); } );

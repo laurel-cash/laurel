@@ -24,6 +24,8 @@ const engine = vi.hoisted( () => ( {
 	asked:		[] as { to: string; zats: number; memo: string | null }[],
 	renewed:	[] as ( string | null )[],
 	sapling:	"ztestsapling1first" as string | null,		// null: a viewing key without a Sapling part
+	public:		"tmPublic",
+	publicUsed:	false,						// the current public address has been paid: a new one may be made
 } ) );
 
 vi.mock( "./bindings", async () => ( {
@@ -33,7 +35,13 @@ vi.mock( "./bindings", async () => ( {
 			if ( fresh === "sapling" ) {
 				engine.sapling = "ztestsapling1second";
 			}
-			return { shielded: "utest1private", shieldedIndex: 0, sapling: engine.sapling, transparent: "tmPublic" };
+			if ( fresh === "public" ) {
+				if ( !engine.publicUsed ) {
+					throw { message: "unused", detail: null, retry: false };
+				}
+				engine.public = "tmPublicSecond";
+			}
+			return { shielded: "utest1private", shieldedIndex: 0, sapling: engine.sapling, transparent: engine.public };
 		},
 		wRequestF: async ( _id: string, _account: number, to: addressKind_t, zats: number, memo: string | null ) => {
 			engine.asked.push( { to, zats, memo } );
@@ -47,6 +55,8 @@ beforeEach( () => {
 	engine.asked = [];
 	engine.renewed = [];
 	engine.sapling = "ztestsapling1first";
+	engine.public = "tmPublic";
+	engine.publicUsed = false;
 } );
 
 afterEach( cleanup );
@@ -96,13 +106,26 @@ describe( "requesting an amount", () => {
 		expect( await Tile( T.receive.newAddress ) ).toBeTruthy();
 	} );
 
-	it( "shows the public address when it's picked, warned, and never made new", async () => {
+	it( "shows the public address when it's picked, warned, with a sweep", async () => {
 		await Show();
 		await Pick( "public" );
 		expect( screen.getAllByText( /tmPublic/ ).length ).toBeGreaterThan( 0 );
 		expect( screen.getByText( T.receive.publicWarn ) ).toBeTruthy();
-		expect( screen.queryByRole( "button", { name: new RegExp( "^" + T.receive.newAddress ) } ) ).toBeNull();
 		expect( await Tile( T.receive.tile.sweep ) ).toBeTruthy();
+	} );
+
+	// a new public address once the current one was paid; before that, the engine says why and the old one stays
+	it( "makes a new public address only after the current one was paid", async () => {
+		await Show( "public" );
+		fireEvent.click( await Tile( T.receive.newAddress ) );
+		expect( await screen.findByRole( "alert" ) ).toBeTruthy();
+		expect( screen.getAllByText( /tmPublic/ ).length ).toBeGreaterThan( 0 );
+		expect( screen.queryAllByText( /tmPublicSecond/ ) ).toHaveLength( 0 );
+
+		engine.publicUsed = true;
+		fireEvent.click( await Tile( T.receive.newAddress ) );
+		expect( ( await screen.findAllByText( /tmPublicSecond/ ) ).length ).toBeGreaterThan( 0 );
+		expect( engine.renewed.filter( ( f ) => f === "public" ) ).toHaveLength( 2 );
 	} );
 
 	it( "asks the engine for this account's request, with the memo, and shows it", async () => {

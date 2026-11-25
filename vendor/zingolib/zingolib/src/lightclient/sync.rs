@@ -128,6 +128,17 @@ impl LightClient {
     ///
     /// If sync is already running, stops sync and waits for it to shutdown before clearing the wallet and rescanning.
     pub async fn rescan(&mut self) -> Result<(), LightClientError> {
+        // LAUREL PATCH (rescan config): the rescan itself is rescan_with_config
+        let sync_config = self.wallet().read().await.wallet_settings.sync_config.clone();
+        self.rescan_with_config(sync_config).await
+    }
+
+    /// LAUREL PATCH (rescan config): [`Self::rescan`] with `sync_config` in
+    /// place of the wallet's stored one, for this rescan alone: the stored
+    /// config, and so every later sync, is unchanged. An app that searches
+    /// wider once (more unused transparent addresses in a row, say) hands
+    /// in the config it wants.
+    pub async fn rescan_with_config(&mut self, sync_config: SyncConfig) -> Result<(), LightClientError> {
         if self.sync_mode() != SyncMode::NotRunning {
             self.stop_sync().expect("infallible in this scope");
 
@@ -139,7 +150,7 @@ impl LightClient {
             }
         }
         self.wallet().write().await.clear_all();
-        self.sync().await
+        self.sync_with_config(sync_config).await
     }
 
     /// Stops any in-flight Sync Session with [`Self::stop_sync`] and waits for the engine to

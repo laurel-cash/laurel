@@ -73,6 +73,23 @@ impl LightWallet {
         request: TransactionRequest,
         account_id: zip32::AccountId,
     ) -> Result<ProportionalFeeProposal, ProposeSendError> {
+        self.create_send_proposal_with(request, account_id, &SpendPolicy::default(), true)
+    }
+
+    /// LAUREL PATCH (proposal hooks): [`Self::create_send_proposal`], with
+    /// the caller's choice of what may be spent (`spend_policy`: which
+    /// pools, which transparent addresses) and of whether the change
+    /// carries the memo that records unified recipients
+    /// (`record_recipients`). The engine keeps no rule about which public
+    /// coins to spend: an app that spends them decides that itself, and
+    /// builds its proposals here.
+    pub fn create_send_proposal_with(
+        &mut self,
+        request: TransactionRequest,
+        account_id: zip32::AccountId,
+        spend_policy: &SpendPolicy,
+        record_recipients: bool,
+    ) -> Result<ProportionalFeeProposal, ProposeSendError> {
         let memo = self.change_memo_from_transaction_request(&request);
         let input_selector = GreedyInputSelector::new();
         let chain_height =
@@ -83,7 +100,7 @@ impl LightWallet {
                 ))?;
         let change_strategy = zcash_client_backend::fees::zip317::SingleOutputChangeStrategy::new(
             zcash_primitives::transaction::fees::zip317::FeeRule::standard(),
-            Some(memo),
+            record_recipients.then_some(memo),
             payment_pool(&self.chain_type, chain_height),
             DustOutputPolicy::new(DustAction::AllowDustChange, None),
         );
@@ -107,7 +124,7 @@ impl LightWallet {
             request,
             // TODO: replace wallet min_confirmations field with confirmation policy to unify for all proposals
             ConfirmationsPolicy::new_symmetrical(self.wallet_settings.min_confirmations, false),
-            &SpendPolicy::default(),
+            spend_policy,
             None,
             None,
         )
@@ -213,15 +230,6 @@ impl LightWallet {
         &mut self,
         account_id: zip32::AccountId,
     ) -> Result<crate::data::proposal::ProportionalFeeShieldProposal, ProposeShieldError> {
-        let input_selector = GreedyInputSelector::new();
-        let change_strategy = zcash_client_backend::fees::zip317::SingleOutputChangeStrategy::new(
-            zcash_primitives::transaction::fees::zip317::FeeRule::standard(),
-            None,
-            ShieldedPool::Orchard,
-            DustOutputPolicy::new(DustAction::AllowDustChange, None),
-        );
-        let chain_type = self.chain_type;
-
         // TODO: store t addrs as concrete types instead of encoded
         let transparent_addresses = self
             .transparent_addresses
@@ -233,6 +241,27 @@ impl LightWallet {
                 )
             })
             .collect::<Result<Vec<_>, zcash_address::ParseError>>()?;
+        self.create_shield_proposal_from(account_id, &transparent_addresses)
+    }
+
+    /// LAUREL PATCH (proposal hooks): [`Self::create_shield_proposal`] of
+    /// the coins at `transparent_addresses` alone, into `account_id`. The
+    /// one above shields every transparent address the wallet has, of
+    /// every account, in one transaction; an app that keeps addresses (or
+    /// accounts) apart names the ones each shield takes.
+    pub fn create_shield_proposal_from(
+        &mut self,
+        account_id: zip32::AccountId,
+        transparent_addresses: &[zcash_transparent::address::TransparentAddress],
+    ) -> Result<crate::data::proposal::ProportionalFeeShieldProposal, ProposeShieldError> {
+        let input_selector = GreedyInputSelector::new();
+        let change_strategy = zcash_client_backend::fees::zip317::SingleOutputChangeStrategy::new(
+            zcash_primitives::transaction::fees::zip317::FeeRule::standard(),
+            None,
+            ShieldedPool::Orchard,
+            DustOutputPolicy::new(DustAction::AllowDustChange, None),
+        );
+        let chain_type = self.chain_type;
 
         let proposed_shield = zcash_client_backend::data_api::wallet::propose_shielding::<
             LightWallet,
@@ -249,7 +278,7 @@ impl LightWallet {
             &input_selector,
             &change_strategy,
             Zatoshis::const_from_u64(10_000),
-            &transparent_addresses,
+            transparent_addresses,
             account_id,
             // TODO: replace wallet min_confirmations field with confirmation policy to unify for all proposals
             ConfirmationsPolicy::new_symmetrical(self.wallet_settings.min_confirmations, false),

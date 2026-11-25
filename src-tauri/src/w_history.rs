@@ -15,11 +15,12 @@ See the LICENSE file for details.
 // moment its transaction happened, and takes it away at the moment the
 // transaction that spent it happened. Change comes back as a new note,
 // so fees fall out on their own, and the last point always equals the
-// account's balance (confirmed plus pending).
+// account's balance (confirmed plus pending), dust left out as it is there.
 
 use std::collections::{ BTreeMap, BTreeSet, HashMap };
 
 use pepper_sync::wallet::{ IronwoodNote, KeyIdInterface, NoteInterface, OrchardNote, OutgoingNoteInterface, OutputInterface, SaplingNote, TransparentCoin, WalletTransaction };
+use zcash_keys::encoding::AddressCodec as _;
 use zcash_protocol::TxId;
 use zcash_protocol::memo::Memo;
 use zingo_status::confirmation_status::ConfirmationStatus;
@@ -29,10 +30,11 @@ use zip32::AccountId;
 use crate::w_local::*;
 use crate::w_engine::{ E_Read, E_TryRead };
 use crate::w_send::Com_PoolOf;
-use crate::w_main::{ W_AccountOf, W_Slot };
+use crate::w_registry::{ W_AccountOf, W_Slot };
 
 // (unix seconds, the pool, zats in or out)
 type flow_t = ( u32, pool_t, i128 );
+
 
 
 /*
@@ -61,6 +63,26 @@ pub fn W_StateOf( tx: &WalletTransaction ) -> txState_t {
 
 /*
 ==================
+Com_OutputFlows
+
+One output's arrival, and its departure if it was spent. Dust counts for
+nothing, as in the balance shown (the engine's account_balance: an output
+of at most ZIP 317's marginal fee is left out), so the chart ends there
+==================
+*/
+fn Com_OutputFlows( pool: pool_t, value: u64, made: u32, spent: Option< u32 > ) -> Vec< flow_t > {
+	if ( value <= crate::w_send::DUST_ZATS ) {		// zingolib's balance.rs, the same rule
+		return vec![];
+	}
+	let mut flows = vec![ ( made, pool, value as i128 ) ];
+	if let Some( at ) = spent {
+		flows.push( ( at, pool, -( value as i128 ) ) );
+	}
+	flows
+}
+
+/*
+==================
 W_FlowsOf
 
 Every arrival and departure of one pool's outputs for one account. Each
@@ -77,12 +99,9 @@ fn W_FlowsOf< O: OutputInterface >( wallet: &LightWallet, account: AccountId, po
 			if ( o.key_id().account_id() != account ) {
 				continue;
 			}
-			flows.push( ( tx.datetime(), pool, o.value() as i128 ) );
-
 			// a spend the wallet no longer knows (expired, dropped) never happened
-			if let Some( stx ) = o.spending_transaction().and_then( |t| wallet.wallet_transactions.get( &t ) ) {
-				flows.push( ( stx.datetime(), pool, -( o.value() as i128 ) ) );
-			}
+			let spent = o.spending_transaction().and_then( |t| wallet.wallet_transactions.get( &t ) ).map( |t| t.datetime() );
+			flows.extend( Com_OutputFlows( pool, o.value(), tx.datetime(), spent ) );
 		}
 	}
 }
@@ -244,12 +263,15 @@ fn W_ReceivedNotes< N: NoteInterface >( tx: &WalletTransaction, account: Account
 	}
 }
 
+// a transaction's public coins that are this account's (its own addresses' outputs in it)
+fn W_AccountCoins( tx: &WalletTransaction, account: AccountId ) -> impl Iterator< Item = &TransparentCoin > {
+	tx.transparent_coins().iter().filter( move |c| c.key_id().account_id() == account )
+}
+
 fn W_ReceivedCoins( tx: &WalletTransaction, account: AccountId, r: &mut received_t ) {
-	for c in tx.transparent_coins() {
-		if ( c.key_id().account_id() == account ) {
-			r.value += c.value();
-			r.into.insert( pool_t::POOL_TRANSPARENT );
-		}
+	for c in W_AccountCoins( tx, account ) {
+		r.value += c.value();
+		r.into.insert( pool_t::POOL_TRANSPARENT );
 	}
 }
 
@@ -272,6 +294,53 @@ fn W_Outgoing< O: OutgoingNoteInterface >( notes: &[ O ], wallet: &LightWallet, 
 			out.push( ( n.value(), to, Com_MemoText( n.memo() ) ) );
 		}
 	}
+}
+
+/*
+==================
+W_SpentFromAddresses
+
+The public addresses this account's money left from, for each transaction
+that spent it: every spent coin's own address. Private money has no
+address to name (its notes are one balance), so only public coins count.
+==================
+*/
+fn W_SpentFromAddresses( wallet: &LightWallet, account: AccountId ) -> BTreeMap< TxId, BTreeSet< String > > {
+	let mut out: BTreeMap< TxId, BTreeSet< String > > = BTreeMap::new();
+	for tx in wallet.wallet_transactions.values() {
+		for c in W_AccountCoins( tx, account ) {
+			if let Some( by ) = c.spending_transaction() {
+				out.entry( by ).or_default().insert( c.address().to_string() );
+			}
+		}
+	}
+	out
+}
+
+/*
+==================
+W_PublicOutputs / W_OwnCoinAddresses / Com_PaidPublicly
+
+Who a payment paid publicly. A transaction's public outputs, each
+( address, zats ); this account's own addresses among them (its coins in
+the transaction: change, or money back to itself); and of the outputs,
+the ones to anyone else, as W_Outgoing writes a payment. The last is pure,
+so it's tested on its own.
+==================
+*/
+fn W_PublicOutputs( wallet: &LightWallet, tx: &WalletTransaction ) -> Vec< ( String, u64 ) > {
+	let chain = wallet.chain_type();
+	tx.transaction().transparent_bundle().map_or( vec![], |bundle| bundle.vout.iter()
+		.filter_map( |o| o.recipient_address().map( |a| ( a.encode( &chain ), o.value().into_u64() ) ) )
+		.collect() )
+}
+
+fn W_OwnCoinAddresses( tx: &WalletTransaction, account: AccountId ) -> BTreeSet< String > {
+	W_AccountCoins( tx, account ).map( |c| c.address().to_string() ).collect()
+}
+
+fn Com_PaidPublicly( outputs: Vec< ( String, u64 ) >, own: &BTreeSet< String > ) -> Vec< ( u64, String, Option< String > ) > {
+	outputs.into_iter().filter( |( address, _ )| !own.contains( address ) ).map( |( address, zats )| ( zats, address, None ) ).collect()
 }
 
 /*
@@ -318,6 +387,7 @@ pub fn W_ReadTransactions( wallet: &LightWallet, account: AccountId ) -> Vec< hi
 	W_SpentBy::< SaplingNote >( wallet, account, &mut spent );
 	W_SpentBy::< OrchardNote >( wallet, account, &mut spent );
 	W_SpentBy::< IronwoodNote >( wallet, account, &mut spent );
+	let mut spentFrom = W_SpentFromAddresses( wallet, account );
 
 	let mut items = vec![];
 	for tx in wallet.wallet_transactions.values() {
@@ -347,6 +417,7 @@ pub fn W_ReadTransactions( wallet: &LightWallet, account: AccountId ) -> Vec< hi
 			W_Outgoing( tx.outgoing_sapling_notes(), wallet, account, &mut outgoing );
 			W_Outgoing( tx.outgoing_orchard_notes(), wallet, account, &mut outgoing );
 			W_Outgoing( tx.outgoing_ironwood_notes(), wallet, account, &mut outgoing );
+			outgoing.extend( Com_PaidPublicly( W_PublicOutputs( wallet, tx ), &W_OwnCoinAddresses( tx, account ) ) );
 		}
 		// the payment, not the change: the output closest to what left
 		outgoing.sort_by_key( |( v, _, _ )| v.abs_diff( amount ) );
@@ -360,6 +431,7 @@ pub fn W_ReadTransactions( wallet: &LightWallet, account: AccountId ) -> Vec< hi
 			fee:			fee,
 			state:			state,
 			from:			from.into_iter().collect(),
+			fromAddresses:	spentFrom.remove( &tx.txid() ).map( Vec::from_iter ).unwrap_or_default(),
 			into:			r.into.into_iter().collect(),
 			counterparty:	first.as_ref().map( |( _, to, _ )| to.clone() ),
 			memo:			first.and_then( |( _, _, m )| m ).or( r.memo ),
@@ -398,6 +470,18 @@ mod tests {
 
 	fn points( p: &[ balancePoint_t ] ) -> Vec< ( u32, u64 ) > {
 		p.iter().map( |b| ( b.time, b.zats ) ).collect()
+	}
+
+	// W2-14: the chart ends at the balance shown, which leaves out dust (an output of at
+	// most ZIP 317's marginal fee, 5000 zats: it costs as much to spend as it holds)
+	#[test]
+	fn the_chart_ends_at_the_balance_with_dust_left_out() {
+		let mut flows = vec![];
+		flows.extend( Com_OutputFlows( SAP, 100_000, 10, None ) );
+		flows.extend( Com_OutputFlows( SAP, 5_000, 20, None ) );			// dust, unspent
+		flows.extend( Com_OutputFlows( T, 4_000, 30, Some( 40 ) ) );		// dust, spent
+		flows.extend( Com_OutputFlows( IW, 5_001, 50, None ) );
+		assert_eq!( W_Steps( flows ).last().unwrap().zats, 105_001 );
 	}
 
 	// the split and the total are one balance: a move shifts the split, the fee alone leaves the total
@@ -447,6 +531,39 @@ mod tests {
 
 	fn pools( p: &[ pool_t ] ) -> BTreeSet< pool_t > {
 		p.iter().copied().collect()
+	}
+
+	// a payment to a public address is "who was paid"; change to this account's own isn't
+	#[test]
+	fn a_public_output_to_someone_else_is_who_was_paid() {
+		let own = BTreeSet::from( [ "t1mine".to_string() ] );
+		let paid = Com_PaidPublicly( vec![ ( "t1mine".into(), 5 ), ( "t1theirs".into(), 10 ) ], &own );
+		assert_eq!( paid, vec![ ( 10, "t1theirs".to_string(), None ) ] );
+		assert!( Com_PaidPublicly( vec![], &own ).is_empty() );
+	}
+
+	// each spent coin names its address, under the transaction that spent it; another account's, an unspent one: not
+	#[test]
+	fn names_the_public_addresses_money_left_from() {
+		use pepper_sync::wallet::OutputInterface as _;
+		let mut wallet = crate::w_test::Test_PublicWallet( 2, &[ ( 0, 0, 200_000 ), ( 0, 1, 300_000 ), ( 0, 2, 50_000 ), ( 1, 0, 70_000 ) ] );
+		let spender = TxId::from_bytes( [ 0x5E; 32 ] );
+		let mut mine = BTreeSet::new();
+		for tx in wallet.wallet_transactions.values_mut() {
+			for c in tx.transparent_coins_mut() {
+				if ( c.value() == 50_000 ) {
+					continue;		// stays unspent
+				}
+				c.set_spending_transaction( Some( spender ) );
+				if ( c.key_id().account_id() == AccountId::ZERO ) {
+					mine.insert( c.address().to_string() );
+				}
+			}
+		}
+		let named = W_SpentFromAddresses( &wallet, AccountId::ZERO );
+		assert_eq!( mine.len(), 2 );
+		assert_eq!( named.get( &spender ), Some( &mine ), "the first two coins' addresses, the account's own" );
+		assert_eq!( named.len(), 1 );
 	}
 
 	#[test]
@@ -530,10 +647,10 @@ mod tests {
 			wallet.wallet_transactions.insert( txid, tx );
 			txid.to_string()
 		};
-		let received	= add( 1, S::Confirmed( BlockHeight::from_u32( 3_000_010 ) ), 0, 10_000 );
-		let failed		= add( 2, S::Failed( BlockHeight::from_u32( 3_000_020 ) ), 3_000_060, 5_000 );
-		let pending		= add( 3, S::Mempool( BlockHeight::from_u32( 3_000_030 ) ), 3_000_070, 3_000 );
-		let unsent		= add( 4, S::Calculated( BlockHeight::from_u32( 3_000_040 ) ), 3_000_080, 1_000 );
+		let received	= add( 1, S::Confirmed( BlockHeight::from_u32( 3_000_010 ) ), 0, 100_000 );
+		let failed		= add( 2, S::Failed( BlockHeight::from_u32( 3_000_020 ) ), 3_000_060, 50_000 );
+		let pending		= add( 3, S::Mempool( BlockHeight::from_u32( 3_000_030 ) ), 3_000_070, 30_000 );
+		let unsent		= add( 4, S::Calculated( BlockHeight::from_u32( 3_000_040 ) ), 3_000_080, 10_000 );
 
 		let items = W_ReadTransactions( &wallet, account );
 		let find = |id: &str| items.iter().find( |i| i.txid == id ).unwrap();
@@ -546,6 +663,6 @@ mod tests {
 		assert!( items[0].state.Waiting() && items[1].state.Waiting(), "what waits on the network comes first" );
 
 		let balance = W_Steps( W_AllFlows( &wallet, account ) ).last().unwrap().zats;
-		assert_eq!( balance, 10_000 + 3_000 + 1_000, "the failed payment's outputs never existed" );
+		assert_eq!( balance, 100_000 + 30_000 + 10_000, "the failed payment's outputs never existed" );		// each above dust (Com_OutputFlows)
 	}
 }

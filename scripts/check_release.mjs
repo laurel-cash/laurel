@@ -20,7 +20,7 @@ See the LICENSE file for details.
 
 import { createRequire } from "node:module";
 import { readFileSync, readdirSync } from "node:fs";
-import { Com_CargoProblems } from "./release_rules.mjs";
+import { Com_ActivityProblems, Com_CargoProblems } from "./release_rules.mjs";
 
 // Cargo.toml's [profile.release], as it must be
 const RELEASE = {
@@ -78,6 +78,11 @@ if ( !/ndk\.debugSymbolLevel = "(SYMBOL_TABLE|FULL)"/.test( gradle ) ) {
 // packaging {} is android-wide wherever it's written: keeping symbols there keeps them in the release
 if ( /^\s*packaging\s*\{[^}]*keepDebugSymbols/m.test( gradle ) ) {
 	Fail( "src-tauri/gen/android/app/build.gradle.kts keeps debug symbols in packaging {}, which is every build's: keep them per variant (androidComponents, withBuildType(\"debug\"))" );
+}
+// the activity keeps screenshots out, and Laurel's web view closed to accessibility apps that
+// aren't declared tools from Android 14 (T-055, release_rules.mjs)
+for ( const problem of Com_ActivityProblems( readFileSync( "src-tauri/gen/android/app/src/main/java/com/rptxsoftware/wallet/MainActivity.kt", "utf8" ) ) ) {
+	Fail( problem );
 }
 // a phone app: Tauri's template offers Laurel to Android TV (leanback), which Play then
 // lists it for and its pre-launch lab can't test

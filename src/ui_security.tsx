@@ -627,29 +627,175 @@ function Com_SaveLock( choice: laterLock_t, password: string | null ) {
 
 /*
 ==================
-UI_SecuritySection
+UI_SecurityLevel
 
-How the key is protected, as a level, and the password
+How the key is protected, as a level, and the steps that make it: the
+steps are facts of the vault, encryption always, then who can open it
 ==================
 */
-export function UI_SecuritySection() {
-	const vault			= useStore( ( s ) => s.vault );
+function UI_SecurityLevel( props: { usesPassword: boolean; osProtection: boolean } ) {
+	const strong = props.usesPassword;
+	const steps: { label: string; on: boolean }[] = [
+		{ label: T.security.stepEncrypted,	on: true },
+		...( props.osProtection ? [ { label: T.security.stepWindows, on: true } ] : [] ),
+		{ label: T.security.stepPassword,	on: strong },
+	];
+
+	return (
+		<div className={"sec-hero" + ( strong ? " strong" : "" )}>
+			<span className="sec-badge">{strong ? <LockKeyhole aria-hidden="true" /> : <ShieldCheck aria-hidden="true" />}</span>
+			<div className="sec-text">
+				<div className="sec-level">
+					{T.security.levelTitle}
+					<span className="sec-level-name">{strong ? T.security.levelStrong : T.security.levelGood}</span>
+				</div>
+				<div className="sec-title">{strong ? T.security.protectionPw : T.security.protectionOs}</div>
+				<div className="sec-hint">{strong ? T.security.protectionPwHint : T.security.protectionOsHint}</div>
+				<ul className="sec-steps">
+					{steps.map( ( s ) => (
+						<li key={s.label} className={s.on ? "on" : ""}>
+							<span className="sec-step-mark">{s.on ? <Check aria-hidden="true" /> : null}</span>
+							{s.label}
+						</li>
+					) )}
+				</ul>
+			</div>
+		</div>
+	);
+}
+
+// the password's row: turned on, or changed and turned off (off only where
+// the system can hold the key instead)
+function UI_PasswordRow( props: { usesPassword: boolean; osProtection: boolean; onOpen: ( m: passwordMode_t ) => void } ) {
+	return (
+		<li className="set-row">
+			<span className="set-icon"><KeyRound aria-hidden="true" /></span>
+			<span className="set-text">
+				<span className="set-label">{T.security.passwordRow}</span>
+				<span className="set-sub">{props.usesPassword ? T.security.passwordOn : T.security.passwordOff}</span>
+			</span>
+			<span className="set-actions">
+				{props.usesPassword ? (
+					<>
+						{props.osProtection && <button className="btn" onClick={() => props.onOpen( "remove" )}>{T.security.turnOff}</button>}
+						<button className="btn" onClick={() => props.onOpen( "change" )}>{T.security.change}</button>
+					</>
+				) : (
+					<button className="btn primary" onClick={() => props.onOpen( "set" )}>{T.security.turnOn}</button>
+				)}
+			</span>
+		</li>
+	);
+}
+
+/*
+==================
+UI_LockRows
+
+Locking: now, after a while, and (a phone only: a computer's window
+doesn't go away when another is used) once away. Without a password
+there's nothing to lock behind: said once, quietly, and the one way on
+is Turn On above.
+==================
+*/
+function UI_LockRows( props: { usesPassword: boolean; save: ( choice: laterLock_t ) => void; busy: boolean } ) {
 	const constants		= useStore( ( s ) => s.constants );
-	const [ mode, setMode ] = useState< passwordMode_t | null >( null );
-	const [ open, setOpen ] = useState( false );
+	const lock			= useStore( ( s ) => s.Lock );
+	const { settings }	= useAppSettings();
+	const on			= props.usesPassword;
 
-	function Open( m: passwordMode_t ) {
-		setMode( m );
-		setOpen( true );
-	}
+	return (
+		<>
+			<li className={"set-row" + ( on ? "" : " needs" )}>
+				<span className="set-icon"><Lock aria-hidden="true" /></span>
+				<span className="set-text">
+					<span className="set-label">{T.security.lockRow} <UI_Info title={T.security.lockWhatTitle}>{T.security.lockWhat}</UI_Info></span>
+					<span className="set-sub">{on ? T.security.lockOn : T.security.lockAbout}</span>
+				</span>
+				<span className="set-actions">
+					{on
+						? <button className="btn" onClick={() => { lock(); }}>{T.security.lockNow}</button>
+						: <span className="needs-pill">{T.security.needsPassword}</span>}
+				</span>
+			</li>
+			<li className={"set-row" + ( on ? "" : " needs" )}>
+				<span className="set-icon"><TimerReset aria-hidden="true" /></span>
+				<span className="set-text">
+					<span className="set-label">{T.security.autoLock}</span>
+					<span className="set-sub">{on ? T.security.autoLockHint : T.security.autoLockAbout}</span>
+				</span>
+				{!on && <span className="set-actions"><span className="needs-pill">{T.security.needsPassword}</span></span>}
+				{on && settings && (
+					<span className="set-actions">
+						<select
+							className="field-select"
+							aria-label={T.security.autoLock}
+							value={settings.autoLockMinutes ?? AUTO_LOCK_NEVER}
+							disabled={props.busy}
+							onChange={( e ) => { const m = Number( e.target.value ); props.save( { kind: "auto", minutes: m === AUTO_LOCK_NEVER ? null : m } ); }}
+						>
+							<option value={AUTO_LOCK_NEVER}>{T.security.never}</option>
+							{( constants?.autoLockChoices ?? [] ).map( ( m ) => <option key={m} value={m}>{T.security.after( m )}</option> )}
+						</select>
+					</span>
+				)}
+			</li>
+			{constants?.mobile && on && settings && (
+				<li className="set-row">
+					<span className="set-icon"><DoorOpen aria-hidden="true" /></span>
+					<span className="set-text">
+						<span className="set-label">{T.security.lockAway}</span>
+						<span className="set-sub">{T.security.lockAwayHint}</span>
+					</span>
+					<span className="set-actions">
+						<select
+							className="field-select"
+							aria-label={T.security.lockAway}
+							value={settings.lockAwaySecs}
+							disabled={props.busy}
+							onChange={( e ) => props.save( { kind: "away", secs: Number( e.target.value ) } )}
+						>
+							{constants.lockAwayChoices.map( ( s ) => <option key={s} value={s}>{T.security.away( s )}</option> )}
+						</select>
+					</span>
+				</li>
+			)}
+		</>
+	);
+}
 
-	const usesPassword = vault?.protection === "password";
-	const lock = useStore( ( s ) => s.Lock );
-	const { settings } = useAppSettings();
-	const [ later, setLater ] = useState< laterLock_t | null >( null );	// a lock the engine wants the password for
+// a lock that waits longer than now asks the password first, then saves
+function UI_LockLaterAsk( props: { later: laterLock_t | null; onClose: () => void } ) {
+	const later = props.later;
+	return (
+		<UI_AskPassword
+			open={later !== null}
+			onOpenChange={( o ) => { if ( !o ) props.onClose(); }}
+			title={later?.kind === "away" ? T.security.lockAway : T.security.autoLock}
+			why={later === null ? "" : later.kind === "away" ? T.security.awayLater( later.secs ) : later.minutes === null ? T.security.laterNever : T.security.later( later.minutes )}
+			action={T.common.save}
+			onConfirm={async ( password ) => {
+				const r = later && await Com_SaveLock( later, password );
+				if ( r?.kind === "saved" ) {
+					QUERY.setQueryData( KEYS.settings(), r.settings );
+				}
+			}}
+		/>
+	);
+}
 
-	// the engine saves it, or says the password comes first (a later lock: S_LocksLater)
-	const setLock = useAction( async ( choice: laterLock_t, password: string | null ) => {
+/*
+==================
+useLockSetting
+
+Saving a lock setting: the engine saves it, or says the password comes
+first (a later lock: S_LocksLater), and then later holds the choice
+until it's typed (UI_LockLaterAsk)
+==================
+*/
+function useLockSetting() {
+	const [ later, setLater ] = useState< laterLock_t | null >( null );
+	const save = useAction( async ( choice: laterLock_t, password: string | null ) => {
 		const r = await Com_SaveLock( choice, password );
 		switch ( r.kind ) {
 		case "saved":
@@ -660,129 +806,42 @@ export function UI_SecuritySection() {
 			return false;
 		}
 	} );
+	return { save, later, setLater };
+}
 
-	// the steps are facts of the vault: encryption always, then who can open it
-	const steps: { label: string; on: boolean }[] = [
-		{ label: T.security.stepEncrypted,	on: true },
-		...( vault?.osProtectionAvailable ? [ { label: T.security.stepWindows, on: true } ] : [] ),
-		{ label: T.security.stepPassword,	on: usesPassword },
-	];
+/*
+==================
+UI_SecuritySection
+
+How the key is protected, as a level, the password, and locking
+==================
+*/
+export function UI_SecuritySection() {
+	const vault				= useStore( ( s ) => s.vault );
+	const [ mode, setMode ]	= useState< passwordMode_t | null >( null );
+	const [ open, setOpen ]	= useState( false );
+	const locks				= useLockSetting();
+	const usesPassword		= vault?.protection === "password";
+	const osProtection		= !!vault?.osProtectionAvailable;
+
+	function Open( m: passwordMode_t ) {
+		setMode( m );
+		setOpen( true );
+	}
 
 	return (
 		<>
 			<section className="settings-section">
-				<div className={"sec-hero" + ( usesPassword ? " strong" : "" )}>
-					<span className="sec-badge">{usesPassword ? <LockKeyhole aria-hidden="true" /> : <ShieldCheck aria-hidden="true" />}</span>
-					<div className="sec-text">
-						<div className="sec-level">
-							{T.security.levelTitle}
-							<span className="sec-level-name">{usesPassword ? T.security.levelStrong : T.security.levelGood}</span>
-						</div>
-						<div className="sec-title">{usesPassword ? T.security.protectionPw : T.security.protectionOs}</div>
-						<div className="sec-hint">{usesPassword ? T.security.protectionPwHint : T.security.protectionOsHint}</div>
-						<ul className="sec-steps">
-							{steps.map( ( s ) => (
-								<li key={s.label} className={s.on ? "on" : ""}>
-									<span className="sec-step-mark">{s.on ? <Check aria-hidden="true" /> : null}</span>
-									{s.label}
-								</li>
-							) )}
-						</ul>
-					</div>
-				</div>
-
+				<UI_SecurityLevel usesPassword={usesPassword} osProtection={osProtection} />
 				<ul className="pool-list settings-list">
-					<li className="set-row">
-						<span className="set-icon"><KeyRound aria-hidden="true" /></span>
-						<span className="set-text">
-							<span className="set-label">{T.security.passwordRow}</span>
-							<span className="set-sub">{usesPassword ? T.security.passwordOn : T.security.passwordOff}</span>
-						</span>
-						<span className="set-actions">
-							{usesPassword ? (
-								<>
-									{vault?.osProtectionAvailable && <button className="btn" onClick={() => Open( "remove" )}>{T.security.turnOff}</button>}
-									<button className="btn" onClick={() => Open( "change" )}>{T.security.change}</button>
-								</>
-							) : (
-								<button className="btn primary" onClick={() => Open( "set" )}>{T.security.turnOn}</button>
-							)}
-						</span>
-					</li>
-					{/* without a password there's nothing to lock behind: said once, quietly, and the one way on is Turn On above */}
-					<li className={"set-row" + ( usesPassword ? "" : " needs" )}>
-						<span className="set-icon"><Lock aria-hidden="true" /></span>
-						<span className="set-text">
-							<span className="set-label">{T.security.lockRow} <UI_Info title={T.security.lockWhatTitle}>{T.security.lockWhat}</UI_Info></span>
-							<span className="set-sub">{usesPassword ? T.security.lockOn : T.security.lockAbout}</span>
-						</span>
-						<span className="set-actions">
-							{usesPassword
-								? <button className="btn" onClick={() => { lock(); }}>{T.security.lockNow}</button>
-								: <span className="needs-pill">{T.security.needsPassword}</span>}
-						</span>
-					</li>
-					<li className={"set-row" + ( usesPassword ? "" : " needs" )}>
-						<span className="set-icon"><TimerReset aria-hidden="true" /></span>
-						<span className="set-text">
-							<span className="set-label">{T.security.autoLock}</span>
-							<span className="set-sub">{usesPassword ? T.security.autoLockHint : T.security.autoLockAbout}</span>
-						</span>
-						{!usesPassword && <span className="set-actions"><span className="needs-pill">{T.security.needsPassword}</span></span>}
-						{usesPassword && settings && (
-							<span className="set-actions">
-								<select
-									className="field-select"
-									aria-label={T.security.autoLock}
-									value={settings.autoLockMinutes ?? AUTO_LOCK_NEVER}
-									disabled={setLock.busy}
-									onChange={( e ) => { const m = Number( e.target.value ); void setLock.run( { kind: "auto", minutes: m === AUTO_LOCK_NEVER ? null : m }, null ); }}
-								>
-									<option value={AUTO_LOCK_NEVER}>{T.security.never}</option>
-									{( constants?.autoLockChoices ?? [] ).map( ( m ) => <option key={m} value={m}>{T.security.after( m )}</option> )}
-								</select>
-							</span>
-						)}
-					</li>
-					{/* a phone only: a computer's window doesn't go away when another is used */}
-					{constants?.mobile && usesPassword && settings && (
-						<li className="set-row">
-							<span className="set-icon"><DoorOpen aria-hidden="true" /></span>
-							<span className="set-text">
-								<span className="set-label">{T.security.lockAway}</span>
-								<span className="set-sub">{T.security.lockAwayHint}</span>
-							</span>
-							<span className="set-actions">
-								<select
-									className="field-select"
-									aria-label={T.security.lockAway}
-									value={settings.lockAwaySecs}
-									disabled={setLock.busy}
-									onChange={( e ) => void setLock.run( { kind: "away", secs: Number( e.target.value ) }, null )}
-								>
-									{constants.lockAwayChoices.map( ( s ) => <option key={s} value={s}>{T.security.away( s )}</option> )}
-								</select>
-							</span>
-						</li>
-					)}
+					<UI_PasswordRow usesPassword={usesPassword} osProtection={osProtection} onOpen={Open} />
+					<UI_LockRows usesPassword={usesPassword} busy={locks.save.busy} save={( choice ) => void locks.save.run( choice, null )} />
 				</ul>
-				{setLock.error && <UI_Alert title={T.common.cantSaveSetting} message={setLock.error} />}
+				{locks.save.error && <UI_Alert title={T.common.cantSaveSetting} message={locks.save.error} />}
 			</section>
 
 			{mode && <UI_PasswordSheet mode={mode} open={open} onOpenChange={setOpen} />}
-			<UI_AskPassword
-				open={later !== null}
-				onOpenChange={( o ) => { if ( !o ) setLater( null ); }}
-				title={later?.kind === "away" ? T.security.lockAway : T.security.autoLock}
-				why={later === null ? "" : later.kind === "away" ? T.security.awayLater( later.secs ) : later.minutes === null ? T.security.laterNever : T.security.later( later.minutes )}
-				action={T.common.save}
-				onConfirm={async ( password ) => {
-					const r = later && await Com_SaveLock( later, password );
-					if ( r?.kind === "saved" ) {
-						QUERY.setQueryData( KEYS.settings(), r.settings );
-					}
-				}}
-			/>
+			<UI_LockLaterAsk later={locks.later} onClose={() => locks.setLater( null )} />
 		</>
 	);
 }

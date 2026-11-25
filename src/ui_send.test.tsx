@@ -21,7 +21,7 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 
 import { T } from "./ui_text";
 import type { balance_t, pool_t, contact_t, feeNote_t, historyItem_t, payTo_t, quoted_t, scanned_t, sendQuote_t, sendRequest_t, sendResult_t } from "./bindings";
-import { Test_Balance, Test_Item, Test_Summary } from "./test_engine";
+import { Test_Balance, Test_Item, Test_Scanned, Test_Summary } from "./test_engine";
 
 const PUBLIC_ADDR	= "tmBsTi2xWTjUdEXnuTceL7fecEQKeWaPDJd";
 const ZATS			= 100_000_000;
@@ -29,6 +29,7 @@ const FEE			= 10_000;
 
 const engine = vi.hoisted( () => ( {
 	quoted:		[] as sendRequest_t[],
+	previewed:	[] as sendRequest_t[],		// asked only for the numbers: no intent
 	seen:		[] as sendQuote_t[],		// what each Send said the person had reviewed
 	intents:	[] as string[],				// the intent each Send handed back
 	open:		new Set< string >(),		// intents handed out and not yet taken, as the engine keeps them
@@ -39,13 +40,15 @@ const engine = vi.hoisted( () => ( {
 	feeNote:	null as feeNote_t | null,	// what Rust says about the fee
 	contacts:	[] as contact_t[],
 	repeatsDone: [] as string[],			// reminders moved on after their payment
+	publicOk:	false,						// Settings > Advanced > Send From Public Money
+	links:		1,							// public addresses a public send spends from
 } ) );
 
 // zats null is Max: everything in the account, less the fee
 function Quote( request: sendRequest_t, fee: number ): sendQuote_t {
 	const also = request.also.map( ( p ) => ( { to: p.to, kind: "transparent" as const, amount: p.zats, memo: p.memo } ) );
 	const first = request.zats ?? 2 * ZATS - fee;
-	return { to: request.to, kind: "transparent", amount: first + also.reduce( ( s, p ) => s + p.amount, 0 ), fee: fee, from: [ "ironwood" ], steps: 1, memo: null, feeNote: engine.feeNote, also: also };
+	return { to: request.to, kind: "transparent", amount: first + also.reduce( ( s, p ) => s + p.amount, 0 ), fee: fee, from: request.from === "transparent" ? [ "transparent" ] : [ "ironwood" ], steps: 1, memo: null, feeNote: engine.feeNote, also: also, publicAddresses: request.from === "transparent" ? engine.links : 0 };
 }
 
 function Intend( quote: sendQuote_t ): quoted_t< sendQuote_t > {
@@ -56,9 +59,15 @@ function Intend( quote: sendQuote_t ): quoted_t< sendQuote_t > {
 
 vi.mock( "./bindings", async () => ( {
 	commands: {
+		sGetF: async () => ( await import( "./test_engine" ) ).Test_Settings( { sendFromPublic: engine.publicOk } ),
 		wParseScanF: async ( text: string ): Promise< scanned_t > => ( await import( "./test_engine" ) ).Test_Scanned( text, "transparent" ),
 		ctListF: async () => engine.contacts,
 		wTransactionsF: async () => engine.history,
+		wReceiveF: async () => ( { shielded: OWN_ADDR, shieldedIndex: 0, sapling: null, transparent: null } ),
+		wPreviewSendF: async ( _id: string, _account: number, request: sendRequest_t ): Promise< sendQuote_t > => {
+			engine.previewed.push( request );
+			return Quote( request, FEE );
+		},
 		wQuoteSendF: async ( _id: string, _account: number, request: sendRequest_t ): Promise< quoted_t< sendQuote_t > > => {
 			engine.quoted.push( request );
 			return Intend( Quote( request, FEE ) );
@@ -66,7 +75,7 @@ vi.mock( "./bindings", async () => ( {
 		wSendNowF: async ( _id: string, _account: number, request: sendRequest_t, intent: string, seen: sendQuote_t, repeatId: string | null ): Promise< sendResult_t > => {
 			engine.intents.push( intent );
 			if ( !engine.open.delete( intent ) ) {
-				throw { message: "This payment was already sent, or what you reviewed is out of date. Review it again before sending.", detail: null, retry: false };
+				throw { message: "This payment was already sent from this review. Check History before sending it again.", detail: null, retry: false };
 			}
 			engine.seen.push( seen );
 			const now = Quote( request, engine.moveOn ? FEE * 2 : FEE );
@@ -83,6 +92,7 @@ vi.mock( "./bindings", async () => ( {
 	events: ( await import( "./test_engine" ) ).TEST_EVENTS,
 } ) );
 
+const OWN_ADDR = "utest1ownaddressofthisaccount";
 const BALANCE: balance_t = Test_Balance( { ironwood: { confirmed: 2 * ZATS } } );
 
 /*
@@ -129,7 +139,10 @@ async function Review() {
 }
 
 beforeEach( () => {
+	engine.publicOk = false;
+	engine.links = 1;
 	engine.quoted = [];
+	engine.previewed = [];
 	engine.seen = [];
 	engine.intents = [];
 	engine.open = new Set();
@@ -164,7 +177,7 @@ describe( "UI_SendSheet", () => {
 		await Review();
 
 		expect( screen.getByText( T.send.publicWarn ) ).toBeTruthy();
-		expect( screen.getByText( T.review.from( "Testnet", "Main", "Savings" ) ) ).toBeTruthy();		// where it moves from, seen
+		expect( screen.getByText( T.review.where( "Main", "Savings" ) ) ).toBeTruthy();		// where it moves from, seen
 		expect( screen.getByText( T.fee.label ) ).toBeTruthy();
 		expect( document.body.textContent ).toContain( "0.1001" );		// amount plus fee
 
@@ -206,6 +219,21 @@ describe( "UI_SendSheet", () => {
 		fireEvent.click( screen.getByText( T.send.max ) );
 		await screen.findByText( T.send.maxAfterFee( "Ironwood", "0.0001" ) );
 		expect( document.body.textContent ).toContain( "1.9999" );		// 2 less the fee, before review
+		// W2-08: Max's number is a preview: it makes no intent, so no number of them pushes
+		// an open review's intent out
+		expect( engine.previewed.length ).toBeGreaterThan( 0 );
+		expect( engine.made ).toBe( 0 );
+	} );
+
+	// no address yet: a number anyway, priced to this account's own private
+	// address and said to be close, never "Everything"
+	it( "shows Max as a number before there's an address", async () => {
+		await Open();
+		fireEvent.change( screen.getByLabelText( T.send.to ), { target: { value: "" } } );
+		fireEvent.click( screen.getByText( T.send.max ) );
+		await screen.findByText( T.send.maxAbout( "Ironwood", "0.0001" ) );
+		expect( document.body.textContent ).toContain( "1.9999" );
+		expect( engine.previewed[engine.previewed.length - 1]?.to ).toBe( OWN_ADDR );
 	} );
 
 	it( "refuses an amount that isn't one, without asking the engine", async () => {
@@ -265,6 +293,28 @@ describe( "UI_SendSheet", () => {
 		await Open();
 		await Review();
 		expect( await screen.findByText( T.send.stillPending ) ).toBeTruthy();
+	} );
+
+	// gate E: the review didn't say what kind of address it pays, only Send did
+	it( "says on review whether the address is private or public", async () => {
+		await Open();
+		await Review();
+		expect( screen.getByText( T.scan.kinds.transparent.title ) ).toBeTruthy();
+	} );
+
+	// gate E: Max on 0.00015 ZEC paid 0.00005, which its recipient's wallet never counts
+	it( "warns before paying dust, and only dust", async () => {
+		const { useStore } = await import( "./ui_store" );
+		const { Test_Constants } = await import( "./test_engine" );
+		await Open();
+		useStore.setState( { constants: Test_Constants() } );
+		await Review();
+		expect( screen.queryByText( T.send.dust( "0.00005" ) ) ).toBeNull();		// 0.1 ZEC
+		fireEvent.click( screen.getByText( T.send.back ) );
+
+		fireEvent.change( await screen.findByLabelText( T.send.amount ), { target: { value: "0.00005" } } );
+		await Review();
+		expect( screen.getByText( T.send.dust( "0.00005" ) ) ).toBeTruthy();
 	} );
 } );
 
@@ -381,5 +431,108 @@ describe( "a reminder's payment", () => {
 		fireEvent.click( screen.getByText( T.send.action( "0.10" ) ) );
 		await screen.findByText( T.send.doneTitle );
 		await vi.waitFor( () => expect( engine.repeatsDone ).toEqual( [ "rent" ] ) );
+	} );
+} );
+
+// W2-05: a scan for someone else starts that person's payment afresh: the draft's amount,
+// Max, memo, who it was and a repeat it paid were the last person's. The same address
+// scanned again keeps what the draft has and the scan doesn't say
+describe( "a scanned request in the draft", () => {
+	const OTHER = "tmQb2W5uXbpuXbpuXbpuXbpuXbpuXbpuXbq";
+	const draft = { to: PUBLIC_ADDR, amount: "1.5", max: false, memo: "for Alice", from: null, toLabel: "Alice", also: [], repeatId: "rent" };
+	const scan = ( address: string, more: Partial< scanned_t > = {} ) => Test_Scanned( address, "sapling", more );
+
+	it( "starts afresh for another address", async () => {
+		const { Com_DraftFromScan } = await import( "./ui_send" );
+		const bob = Com_DraftFromScan( draft, scan( OTHER ) );
+		expect( bob ).toMatchObject( { to: OTHER, amount: "", max: false, memo: "", toLabel: null, repeatId: null, also: [] } );
+		expect( Com_DraftFromScan( { ...draft, amount: "", max: true }, scan( OTHER ) ).max, "Max was for Alice" ).toBe( false );
+		expect( Com_DraftFromScan( draft, scan( OTHER, { amount: 20_000_000, memo: "Order 7" } ) ) ).toMatchObject( { amount: "0.20", memo: "Order 7" } );
+	} );
+
+	it( "keeps the draft for the same address, where the scan says nothing", async () => {
+		const { Com_DraftFromScan } = await import( "./ui_send" );
+		expect( Com_DraftFromScan( draft, scan( PUBLIC_ADDR ) ) ).toMatchObject( { amount: "1.5", memo: "for Alice", toLabel: "Alice", repeatId: "rent" } );
+		expect( Com_DraftFromScan( draft, scan( PUBLIC_ADDR, { memo: "new" } ) ).memo ).toBe( "new" );
+	} );
+} );
+
+// Send From Public Money (Settings > Advanced): off, public money is only
+// offered to be shielded; on, it's a From choice like the others, said to
+// be public, and the request asks the engine for it
+describe( "public money in From", () => {
+	const BOTH = Test_Balance( { ironwood: { confirmed: 2 * ZATS }, transparent: { confirmed: ZATS } } );
+
+	it( "is offered only to be shielded while the setting is off", async () => {
+		await Open( BOTH );
+		expect( screen.getByText( T.send.publicTitle ) ).toBeTruthy();
+		expect( screen.queryByRole( "radio", { name: /Transparent/ } ) ).toBeNull();
+	} );
+
+	it( "is a choice once it's on, and the payment asks for it", async () => {
+		engine.publicOk = true;
+		await Open( BOTH );
+		const choice = await screen.findByRole( "radio", { name: /Transparent/ } );
+		expect( choice.textContent ).toContain( T.send.publicSend );
+		expect( screen.queryByText( T.send.publicTitle ) ).toBeNull();
+		fireEvent.click( choice );
+		await Review();
+		expect( engine.quoted[engine.quoted.length - 1]?.from ).toBe( "transparent" );
+	} );
+} );
+
+// all of it public: Automatic spends private money only, so Send says so
+// before an amount, with the ways on, not "not enough money" after one
+describe( "only public money", () => {
+	const PUBLIC = Test_Balance( { transparent: { confirmed: ZATS } } );
+
+	it( "says Automatic can't spend it, and offers to send it publicly once that's allowed", async () => {
+		engine.publicOk = true;
+		await Open( PUBLIC );
+		expect( await screen.findByText( T.send.onlyPublic ) ).toBeTruthy();
+		expect( screen.getByRole( "button", { name: new RegExp( T.send.shieldFirst ) } ) ).toBeTruthy();
+		fireEvent.click( await screen.findByRole( "button", { name: T.send.useTransparent } ) );
+		expect( screen.getByRole( "radio", { name: /Transparent/ } ).getAttribute( "aria-checked" ) ).toBe( "true" );
+		expect( screen.queryByText( T.send.onlyPublic ) ).toBeNull();
+	} );
+
+	it( "offers only Shield while sending publicly is off", async () => {
+		await Open( PUBLIC );
+		expect( await screen.findByText( T.send.onlyPublic ) ).toBeTruthy();
+		expect( screen.queryByRole( "button", { name: T.send.useTransparent } ) ).toBeNull();
+	} );
+
+	it( "says nothing while there's private money too", async () => {
+		await Open( Test_Balance( { ironwood: { confirmed: ZATS }, transparent: { confirmed: ZATS } } ) );
+		expect( screen.queryByText( T.send.onlyPublic ) ).toBeNull();
+	} );
+} );
+
+// a public send that spends from several public addresses ties them together
+// on the chain for good: the review says so, with how many; one address, no word
+describe( "public addresses tied together", () => {
+	const BOTH = Test_Balance( { ironwood: { confirmed: 2 * ZATS }, transparent: { confirmed: ZATS } } );
+
+	async function ReviewFromPublic() {
+		engine.publicOk = true;
+		await Open( BOTH );
+		fireEvent.click( await screen.findByRole( "radio", { name: /Transparent/ } ) );
+		await Review();
+	}
+
+	it( "says nothing when one address pays it", async () => {
+		await ReviewFromPublic();
+		expect( screen.queryByText( T.send.linksAddresses( 2 ) ) ).toBeNull();
+	} );
+
+	it( "says the change goes private", async () => {
+		await ReviewFromPublic();
+		expect( screen.getByText( T.send.publicChange ) ).toBeTruthy();
+	} );
+
+	it( "says how many when it spends from several", async () => {
+		engine.links = 3;
+		await ReviewFromPublic();
+		expect( screen.getByText( T.send.linksAddresses( 3 ) ) ).toBeTruthy();
 	} );
 } );

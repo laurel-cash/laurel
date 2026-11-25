@@ -77,17 +77,20 @@ pub enum network_t {
 }
 
 // the networks this build opens. The Play beta's (feature testnet-only) opens
-// testnet alone: a request for mainnet is refused in the engine
-// (W_NetworkOffered), whoever makes it, not only left out of the ui
-pub const NETWORKS: &[ network_t ] = if cfg!( feature = "testnet-only" ) {
+// testnet alone: a request for mainnet is refused in the engine (W_NetworkOffered),
+// whoever makes it, not only left out of the ui. The real-money build (v1, D-033)
+// opens mainnet alone, the same way. The first is where a first start is
+pub const NETWORKS: &[ network_t ] = if cfg!( feature = "v1" ) {
+	&[ network_t::NET_MAINNET ]
+} else if cfg!( feature = "testnet-only" ) {
 	&[ network_t::NET_TESTNET ]
 } else {
 	&[ network_t::NET_TESTNET, network_t::NET_MAINNET ]
 };
 
 // the same, as words kept in the engine's library: scripts/play_bundle.mjs reads
-// them in the bundle Play gets, which must be the testnet build
-pub const NETWORKS_MARK: &str = if cfg!( feature = "testnet-only" ) { "laurel-networks:testnet-only" } else { "laurel-networks:all" };
+// them in the bundle Play gets, which must be its line's: the testnet build, or v1
+pub const NETWORKS_MARK: &str = if cfg!( feature = "v1" ) { "laurel-networks:v1" } else if cfg!( feature = "testnet-only" ) { "laurel-networks:testnet-only" } else { "laurel-networks:all" };
 
 impl network_t {
 	// as the person reads it, in messages
@@ -109,229 +112,336 @@ pub enum walletKind_t {
 	WK_KEY,				// zcashd's Sapling keys, an account each: spends, but receives nothing (no phrase backs it up)
 }
 
+/*
+==================
+werr_decl! / werr_log!
+
+Every error is declared once, in the list below: its English (#[error]),
+what the log may keep of it, and the values its sentence has room for.
+Code, Args and LogText are made from the list, so a new kind has nothing
+else to be added to, and it doesn't compile until its log is decided:
+
+	WERR_X( u32, String ) |n, word| log: redact( format!( "WERR_X: word {n} (the word is not logged)" ) ), args: vec![ n.to_string(), word.clone() ],
+
+log: public keeps the error whole, its English and its Detail: Laurel's
+own words, the engine's or the server's, nothing the person typed.
+log: redact( text ) keeps that text alone, for an error built from what
+the person typed (a mistyped phrase word gives the real one away) or from
+who they pay: a log file on disk must never hold those. args are the
+sentence's {0}, {1}, in order; a detail (a server's own words) goes under
+Details instead, never in a sentence. check_owners holds ui_text.ts to how
+many values each sends, and make_errors.mjs reads the English from here.
+==================
+*/
+macro_rules! werr_log {
+	( $name:ident, $whole:ident, public ) => { $whole() };
+	( $name:ident, $whole:ident, redact ( $text:expr ) ) => { $text };
+	( $name:ident, $whole:ident, $( $other:tt )* ) => {
+		compile_error!( concat!( stringify!( $name ), ": log is public, or redact( what the log keeps instead )" ) )
+	};
+}
+
+macro_rules! werr_decl {
+	(
+		$( #[$meta:meta] )*
+		pub enum $enum:ident {
+			$(
+				$( #[$attr:meta] )*
+				$name:ident $( ( $( $ty:ty ),+ ) )? $( | $( $bind:pat_param ),+ | )? log: $policy:ident $( ( $text:expr ) )?, args: $args:expr
+			),* $(,)?
+		}
+	) => {
+		// the type's name is the list's: make_errors.mjs and check_owners find
+		// the list by it, and nothing else here spells it
+		$( #[$meta] )*
+		pub enum $enum {
+			$( $( #[$attr] )* $name $( ( $( $ty ),+ ) )?, )*
+		}
+
+		impl $enum {
+			// an error as the ui's text knows it: its name, and the values its
+			// sentence has room for ({0}, {1}), in order
+			pub fn Code( &self ) -> &'static str {
+				match self { $( $enum::$name { .. } => stringify!( $name ), )* }
+			}
+
+			#[allow( unused_variables )]		// a value only the log keeps
+			pub fn Args( &self ) -> Vec< String > {
+				match self { $( $enum::$name $( ( $( $bind ),+ ) )? => $args, )* }
+			}
+
+			// what the log may keep of this error, as its declaration says.
+			// Debug prints this too, so {e:?} is safe as well as {e}.
+			#[allow( unused_variables )]		// a value only the screen is given
+			pub fn LogText( &self ) -> String {
+				let whole = || format!( "{self}{}", self.Detail().map_or( String::new(), |d| format!( " ({d})" ) ) );
+				match self { $( $enum::$name $( ( $( $bind ),+ ) )? => werr_log!( $name, whole, $policy $( ( $text ) )? ), )* }
+			}
+		}
+	};
+}
+
 // errors cross to the ui as errorInfo_t (Info), thrown by the command.
 // Display and Debug are for logs and never carry what the person typed or
 // who they pay: the specific text for the screen is built only by
 // UiMessage. So no way of printing an error can leak it.
+werr_decl! {
 #[derive( thiserror::Error, Type )]
 #[specta( type = String )]
 pub enum werr_t {
 	#[error( "That wallet isn't open." )]
-	WERR_NO_WALLET,
+	WERR_NO_WALLET log: public, args: vec![],
 	#[error( "That account doesn't exist." )]
-	WERR_NO_ACCOUNT,
+	WERR_NO_ACCOUNT log: public, args: vec![],
 	#[error( "View-only wallets can't have more accounts. Restore the wallet from its recovery phrase to add one." )]
-	WERR_VIEWONLY,
+	WERR_VIEWONLY log: public, args: vec![],
 	#[error( "A wallet can hold up to {0} accounts." )]
-	WERR_TOO_MANY_ACCOUNTS( u32 ),
+	WERR_TOO_MANY_ACCOUNTS( u32 ) |a| log: public, args: vec![ a.to_string() ],
 	#[error( "Names can't be empty." )]
-	WERR_EMPTY_NAME,
+	WERR_EMPTY_NAME log: public, args: vec![],
 	#[error( "Another wallet is being added right now. Try again in a moment." )]
-	WERR_BUSY,
+	WERR_BUSY log: public, args: vec![],
 	#[error( "Word {0} of that recovery phrase isn't a recovery phrase word." )]		// never the word: it's what was typed (Args takes it to the screen only)
-	WERR_SEED_WORD( u32, String ),
+	WERR_SEED_WORD( u32, String ) |a, b| log: redact( format!( "WERR_SEED_WORD: word {a} of the recovery phrase isn't a phrase word (the word is not logged)" ) ), args: vec![ a.to_string(), b.clone() ],
 	#[error( "Recovery phrases have 12, 15, 18, 21 or 24 words." )]
-	WERR_SEED_LENGTH,
+	WERR_SEED_LENGTH log: public, args: vec![],
 	#[error( "Every word is valid, but they don't form a recovery phrase together. Check the order, or look for a word swapped for a similar one." )]
-	WERR_SEED_CHECKSUM,
+	WERR_SEED_CHECKSUM log: public, args: vec![],
 	#[error( "That doesn't look like a viewing key for this network. It should start with \"{0}\"." )]
-	WERR_VIEWKEY( &'static str ),
+	WERR_VIEWKEY( &'static str ) |a| log: public, args: vec![ a.to_string() ],
 	#[error( "Laurel couldn't get an answer from the Zcash server." )]
-	WERR_SERVER( String ),
+	WERR_SERVER( String ) |_| log: public, args: vec![],
 	#[error( "The Zcash server is a moment behind the network. Laurel tries again shortly." )]
-	WERR_SERVER_BEHIND,
+	WERR_SERVER_BEHIND log: public, args: vec![],
 	#[error( "This Zcash server can't serve everything syncing needs (Ironwood's data, or a current protocol). In automatic mode Laurel moves to another server; if you chose this one, choose another under Server in Settings." )]
-	WERR_SERVER_OUTDATED( String ),
+	WERR_SERVER_OUTDATED( String ) |_| log: public, args: vec![],
 	#[error( "The Zcash network has upgraded, and this version of Laurel can't read it yet. Update Laurel to keep syncing. Your money is safe; only syncing waits." )]
-	WERR_NETWORK_NEWER,
+	WERR_NETWORK_NEWER log: public, args: vec![],
 	#[error( "The Zcash server isn't answering in time. If an antivirus scans secure connections (HTTPS scanning), it can slow them down; otherwise the server may be busy." )]
-	WERR_SERVER_SLOW,
+	WERR_SERVER_SLOW log: public, args: vec![],
 	#[error( "Laurel cannot verify the server's certificate issuer. HTTPS scanning by antivirus or a proxy can cause this; the server may also have an incomplete certificate chain." )]
-	WERR_INTERCEPTED,
+	WERR_INTERCEPTED log: public, args: vec![],
 	#[error( "Notifications are not allowed. Enable them for Laurel in your device's notification settings, then try again." )]
 	#[cfg_attr( desktop, allow( dead_code ) )]		// asked for on phones only
-	WERR_NOTIFICATIONS,
+	WERR_NOTIFICATIONS log: public, args: vec![],
 	#[error( "That doesn't look like a server address. It looks like https://example.com:443" )]
-	WERR_SERVER_URL,
+	WERR_SERVER_URL log: public, args: vec![],
 	#[error( "Laurel talks to a server only over a secure connection (https), unless the server runs on this device." )]
-	WERR_SERVER_PLAIN,
+	WERR_SERVER_PLAIN log: public, args: vec![],
 	#[error( "That server is for {0}, but Laurel is on {1}." )]
-	WERR_SERVER_NETWORK( String, &'static str ),
+	WERR_SERVER_NETWORK( String, &'static str ) |a, b| log: public, args: vec![ a.clone(), b.to_string() ],
 	#[error( "That address is already in your address book." )]		// the contact's name only in UiMessage
-	WERR_CONTACT_EXISTS( String ),
+	WERR_CONTACT_EXISTS( String ) |a| log: redact( "WERR_CONTACT_EXISTS: that address already has a contact (the name is not logged)".to_string() ), args: vec![ a.clone() ],
+	#[cfg_attr( not( feature = "prices" ), allow( dead_code ) )]		// asked only where prices are (D-031); the ui knows every error in every build
 	#[error( "Laurel isn't asking for prices. Turn them on first." )]
-	WERR_PRICE_OFF,
+	WERR_PRICE_OFF log: public, args: vec![],
+	#[cfg_attr( not( feature = "prices" ), allow( dead_code ) )]
 	#[error( "CoinGecko is busy right now. Laurel tries again in a moment." )]
-	WERR_PRICE_BUSY,
+	WERR_PRICE_BUSY log: public, args: vec![],
+	#[cfg_attr( not( feature = "prices" ), allow( dead_code ) )]
 	#[error( "Couldn't get the ZEC price." )]
-	WERR_PRICE( String ),
+	WERR_PRICE( String ) |_| log: public, args: vec![],
 	#[error( "Laurel couldn't fetch Sapling's proving key. Spending Sapling money needs it, once: 48 MB from z.cash, checked before it's used. Check the internet connection, then try again." )]
-	WERR_SPEND_KEY_FETCH( String ),
+	WERR_SPEND_KEY_FETCH( String ) |_| log: public, args: vec![],
 	#[error( "Spending Sapling money needs Sapling's proving key (sapling-spend.params, 48 MB), and it isn't on this device. Copy it from a computer that has Laurel or another Zcash wallet into {0}, then try again." )]
-	WERR_SPEND_KEY_MISSING( String ),
+	WERR_SPEND_KEY_MISSING( String ) |a| log: public, args: vec![ a.clone() ],
 	#[error( "Laurel is locked. Enter your password to unlock it." )]
-	WERR_LOCKED,
+	WERR_LOCKED log: public, args: vec![],
 	#[error( "A note holds at most {0} characters." )]
-	WERR_NOTE_TOO_LONG( u32 ),
+	WERR_NOTE_TOO_LONG( u32 ) |a| log: public, args: vec![ a.to_string() ],
 	#[error( "That password isn't right." )]
-	WERR_BAD_PASSWORD,
+	WERR_BAD_PASSWORD log: public, args: vec![],
 	#[error( "Enter your password to do this." )]
-	WERR_CONFIRM,
+	WERR_CONFIRM log: public, args: vec![],
 	#[error( "Use at least {0} characters." )]
-	WERR_WEAK_PASSWORD( u32 ),
+	WERR_WEAK_PASSWORD( u32 ) |a| log: public, args: vec![ a.to_string() ],
 	#[error( "Laurel can't find the key that unlocks your wallets (laurel-vault.json). If you have a backup of that file, put it back where it was. Otherwise, restore each wallet from its recovery phrase." )]
-	WERR_VAULT_MISSING,
+	WERR_VAULT_MISSING log: public, args: vec![],
 	#[error( "Laurel couldn't save its key safely, so it changed nothing. Check that the disk has room, then try again." )]
-	WERR_VAULT_WRITE,
+	WERR_VAULT_WRITE log: public, args: vec![],
 	#[error( "These wallets were saved by a newer version of Laurel. Update Laurel to open them." )]
-	WERR_VAULT_NEWER,
+	WERR_VAULT_NEWER log: public, args: vec![],
 	#[error( "Windows couldn't unlock Laurel's key ({0}). This happens when Laurel's files are copied from another computer or Windows account. Restore your wallets from their recovery phrases." )]
 	#[cfg_attr( not( windows ), allow( dead_code ) )]		// only Windows' key store raises it
-	WERR_OS_KEY( String ),
+	WERR_OS_KEY( String ) |a| log: public, args: vec![ a.clone() ],
 	#[error( "This system has no secure key store Laurel can use yet, so Laurel needs a password." )]
 	#[cfg_attr( windows, allow( dead_code ) )]		// only raised where there is no key store
-	WERR_NO_OS_PROTECTION,
+	WERR_NO_OS_PROTECTION log: public, args: vec![],
 	#[error( "That isn't a Zcash address or payment request." )]
-	WERR_NOT_ZCASH,
+	WERR_NOT_ZCASH log: public, args: vec![],
 	#[error( "That's a {0} address, but Laurel is on {1}. Coins can't move between the two." )]
-	WERR_WRONG_NETWORK( &'static str, &'static str ),
+	WERR_WRONG_NETWORK( &'static str, &'static str ) |a, b| log: public, args: vec![ a.to_string(), b.to_string() ],
 	#[error( "{0} addresses can't receive payments any more." )]
-	WERR_OLD_ADDRESS( &'static str ),
+	WERR_OLD_ADDRESS( &'static str ) |a| log: public, args: vec![ a.to_string() ],
 	#[error( "Laurel is in the middle of a sync step. Try again in a moment." )]
-	WERR_SYNC_BUSY,
+	WERR_SYNC_BUSY log: public, args: vec![],
 	#[error( "This wallet's saved sync data has a problem Laurel couldn't repair by checking again. Restoring the wallet from its recovery phrase fixes it." )]
-	WERR_SYNC_DATA( String ),
+	WERR_SYNC_DATA( String ) |_| log: public, args: vec![],
 	#[error( "Enter an amount above zero." )]
-	WERR_NO_AMOUNT,
+	WERR_NO_AMOUNT log: public, args: vec![],
+	#[error( "That's more ZEC than will ever exist: there will only ever be 21 million." )]
+	WERR_MORE_THAN_EXISTS log: public, args: vec![],
 	#[error( "Public addresses can't receive a memo. Remove it, or pay a private address." )]
-	WERR_MEMO_PUBLIC,
+	WERR_MEMO_PUBLIC log: public, args: vec![],
 	#[error( "That memo is too long: {0} bytes, and a memo holds 512." )]
-	WERR_MEMO_TOO_LONG( usize ),
-	#[error( "Public money can't be sent directly. Shield it first, then send it privately." )]
-	WERR_FROM_PUBLIC,
+	WERR_MEMO_TOO_LONG( usize ) |a| log: public, args: vec![ a.to_string() ],
+	#[error( "This request has a memo that isn't text, which Laurel can't show or send. Ask for a request with a written memo, or none." )]
+	WERR_MEMO_NOT_TEXT log: public, args: vec![],
+	#[error( "Public money can't be sent directly. Shield it first, then send it privately, or turn on Send From Public Money in Settings > Advanced." )]
+	WERR_FROM_PUBLIC log: public, args: vec![],
 	#[error( "There isn't enough money in this account for this amount plus the network fee." )]
-	WERR_NOT_ENOUGH,
+	WERR_NOT_ENOUGH log: public, args: vec![],
 	#[error( "There isn't enough money in that pool for this amount plus the network fee." )]
-	WERR_NOT_ENOUGH_POOL,
+	WERR_NOT_ENOUGH_POOL log: public, args: vec![],
+	#[error( "Your private balance can't cover this, but your public money can. Shield it first to send it privately, or choose Transparent above to send it as it is: everyone can see the amount." )]
+	WERR_ONLY_PUBLIC log: public, args: vec![],
 	#[error( "The public money here is less than the network fee to shield it. It can be shielded once more arrives." )]
-	WERR_SHIELD_BELOW_FEE,
+	WERR_SHIELD_BELOW_FEE log: public, args: vec![],
 	#[error( "There's no Orchard money in this account to move." )]
-	WERR_NOTHING_TO_MIGRATE,
+	WERR_NOTHING_TO_MIGRATE log: public, args: vec![],
 	#[error( "This test version of Laurel doesn't start moving Orchard money to Ironwood yet. Your Orchard money stays where it is, safe." )]
-	WERR_MIGRATE_OFF,
+	WERR_MIGRATE_OFF log: public, args: vec![],
 	#[error( "There's no Sapling money in this account to move." )]
-	WERR_NOTHING_TO_MOVE,
+	WERR_NOTHING_TO_MOVE log: public, args: vec![],
 	#[error( "The Sapling money here is less than the network fee to move it. It stays private where it is." )]
-	WERR_MOVE_BELOW_FEE,
+	WERR_MOVE_BELOW_FEE log: public, args: vec![],
 	#[error( "This wallet only views, so it can't move money. The device with its recovery phrase can." )]
-	WERR_VIEWONLY_MOVE,
+	WERR_VIEWONLY_MOVE log: public, args: vec![],
 	#[error( "This wallet only views, so it can't sign a payment. Save a signing request, and sign it on the device with the recovery phrase." )]
-	WERR_VIEWONLY_SPEND,
+	WERR_VIEWONLY_SPEND log: public, args: vec![],
 	#[error( "This wallet came from zcashd keys, and its private pool here isn't backed up by any recovery phrase. Send the money to a wallet that has one instead." )]
-	WERR_KEY_WALLET_MOVE,
+	WERR_KEY_WALLET_MOVE log: public, args: vec![],
 	#[error( "Locking needs a password. Turn one on in Settings first." )]
-	WERR_NO_PASSWORD,
+	WERR_NO_PASSWORD log: public, args: vec![],
 	#[error( "Laurel is still checking the newest blocks for your money. Payments can be made as soon as it's done, usually in a moment." )]
-	WERR_CATCHING_UP,
+	WERR_CATCHING_UP log: public, args: vec![],
 	#[error( "There's no public money in this account to shield." )]
-	WERR_NOTHING_TO_SHIELD,
-	#[error( "This payment was already sent, or what you reviewed is out of date. Review it again before sending." )]
-	WERR_PAYMENT_DONE,
+	WERR_NOTHING_TO_SHIELD log: public, args: vec![],
+	#[error( "This payment was already sent from this review. Check History before sending it again." )]
+	WERR_PAYMENT_DONE log: public, args: vec![],
+	#[error( "This review is out of date, so nothing was sent. Review it again: the numbers may have changed." )]
+	WERR_REVIEW_EXPIRED log: public, args: vec![],
 	#[error( "That payment request asks for {0} payments without saying how much each one is. Laurel only pays what it can show you exactly." )]
-	WERR_MULTI_PAYMENT( u32 ),
+	WERR_MULTI_PAYMENT( u32 ) |a| log: public, args: vec![ a.to_string() ],
 	#[error( "One payment can pay at most {0} people. Split it into more than one." )]
-	WERR_TOO_MANY_PAYMENTS( u32 ),
+	WERR_TOO_MANY_PAYMENTS( u32 ) |a| log: public, args: vec![ a.to_string() ],
 	#[error( "Block {0} hasn't been made yet: the newest is {1}. Check the number, or choose a month instead." )]
-	WERR_BIRTHDAY_AHEAD( u32, u32 ),
+	WERR_BIRTHDAY_AHEAD( u32, u32 ) |a, b| log: public, args: vec![ a.to_string(), b.to_string() ],
 	#[error( "\"Max\" sends everything to one person. With more than one, enter each amount." )]
-	WERR_MAX_ONE,
+	WERR_MAX_ONE log: public, args: vec![],
 	#[error( "That isn't a private key, or it has a typo. Check it letter by letter: capitals count." )]
-	WERR_KEY_TYPO,
+	WERR_KEY_TYPO log: public, args: vec![],
 	#[error( "That's a {0} private key, but Laurel is on {1}." )]
-	WERR_KEY_NETWORK( &'static str, &'static str ),
+	WERR_KEY_NETWORK( &'static str, &'static str ) |a, b| log: public, args: vec![ a.to_string(), b.to_string() ],
 	#[error( "That's an older, uncompressed private key. Laurel can't sweep those yet." )]
-	WERR_KEY_UNCOMPRESSED,
+	WERR_KEY_UNCOMPRESSED log: public, args: vec![],
 	#[error( "There's no money at this key's address. If you expected some, it may have been moved already." )]
-	WERR_KEY_EMPTY,
+	WERR_KEY_EMPTY log: public, args: vec![],
 	#[error( "The money at this key is less than the network fee to move it." )]
-	WERR_KEY_TOO_SMALL( u64, u64 ),
+	WERR_KEY_TOO_SMALL( u64, u64 ) |_, _| log: public, args: vec![],
 	#[error( "This account has no public address to receive into." )]
-	WERR_NO_PUBLIC_ADDRESS,
+	WERR_NO_PUBLIC_ADDRESS log: public, args: vec![],
+	#[error( "That public address has nothing to shield right now. Its money may have just been shielded or spent: check the list again." )]
+	WERR_NOT_HELD_HERE log: public, args: vec![],
+	#[error( "Your current public address hasn't received anything yet. Use it first: a new one is made only after the last one is used, so restoring your phrase in any wallet still finds everything." )]
+	WERR_PUBLIC_UNUSED log: public, args: vec![],
 	#[error( "This account has no Sapling address to give: its viewing key has no Sapling part." )]
-	WERR_NO_SAPLING_ADDRESS,
+	WERR_NO_SAPLING_ADDRESS log: public, args: vec![],
 	#[error( "This wallet's viewing key has no private part, so it has no private address to give." )]
-	WERR_NO_SHIELDED_KEYS,
+	WERR_NO_SHIELDED_KEYS log: public, args: vec![],
 	#[error( "The Zcash network refused this transaction." )]
-	WERR_REJECTED( String ),
+	WERR_REJECTED( String ) |_| log: public, args: vec![],
 	#[error( "Laurel can't tell whether this payment went out. Don't send it again: Laurel sends this same payment once this wallet has caught up, and if it never gets in, the money comes back by itself." )]
-	WERR_SENT_UNSURE( String ),
+	WERR_SENT_UNSURE( String ) |_| log: public, args: vec![],
 	#[error( "This payment is signed and waiting: Laurel couldn't write the wallet to disk, and sends it once it can (free up disk space, or check your antivirus). Don't send it again: it would be a second payment." )]
-	WERR_SEND_QUEUED( String ),		// its txid, for the log; never a Try Again
+	WERR_SEND_QUEUED( String ) |_| log: public, args: vec![],		// its txid, for the log; never a Try Again
 	#[error( "Laurel can't tell whether the sweep went out. Look at this wallet's history in a few minutes before sweeping again: the same coins can only be swept once." )]
-	WERR_SWEEP_UNSURE( String ),
+	WERR_SWEEP_UNSURE( String ) |_| log: public, args: vec![],
+	#[cfg_attr( not( feature = "offline-signing" ), allow( dead_code ) )]
 	#[error( "Laurel can't tell whether this signed payment went out. Don't sign another: it shows here once it's in, and you can send this same file again meanwhile. Until it shows up, or its time to be mined has passed, this account makes no new request." )]
-	WERR_OFFLINE_SENT_UNSURE( String ),
+	WERR_OFFLINE_SENT_UNSURE( String ) |_| log: public, args: vec![],
+	#[cfg_attr( not( feature = "offline-signing" ), allow( dead_code ) )]
 	#[error( "A payment signed for this account may already have gone out. Laurel makes no new request from it until that payment shows up here, or its time to be mined has passed (about an hour)." )]
-	WERR_OFFLINE_UNSURE,
+	WERR_OFFLINE_UNSURE log: public, args: vec![],
 	#[error( "This wallet holds keys imported from zcashd, so it doesn't receive: nothing backs up its new addresses. Receive into a wallet with a recovery phrase, and move this one's money there." )]
-	WERR_KEY_WALLET_RECEIVE,
+	WERR_KEY_WALLET_RECEIVE log: public, args: vec![],
 	#[error( "A wallet of imported zcashd keys has one account per key. To add one, import its key." )]
-	WERR_KEY_WALLET_ACCOUNTS,
+	WERR_KEY_WALLET_ACCOUNTS log: public, args: vec![],
 	#[error( "There's no zcashd Sapling key (secret-extended-key…) in what you pasted." )]
-	WERR_ZCASHD_NONE,
+	WERR_ZCASHD_NONE log: public, args: vec![],
 	#[error( "A key in what you pasted has a typo. Copy it again from zcashd, whole." )]
-	WERR_ZCASHD_TYPO,
+	WERR_ZCASHD_TYPO log: public, args: vec![],
 	#[error( "Those are Sprout keys (SK…). Laurel can't import Sprout: move that money with Zallet first." )]
-	WERR_ZCASHD_SPROUT,
+	WERR_ZCASHD_SPROUT log: public, args: vec![],
 	#[error( "That wallet is already on this device." )]		// its name only in UiMessage
-	WERR_WALLET_EXISTS( String ),
+	WERR_WALLET_EXISTS( String ) |a| log: redact( "WERR_WALLET_EXISTS: that wallet is already on this computer (its name is not logged)".to_string() ), args: vec![ a.clone() ],
 	#[error( "That was asked for {0}, but Laurel is on {1}." )]
-	WERR_NETWORK( &'static str, &'static str ),
+	WERR_NETWORK( &'static str, &'static str ) |a, b| log: public, args: vec![ a.to_string(), b.to_string() ],
 	#[error( "This version of Laurel is for test coins only, and doesn't open {0}." )]
-	WERR_NETWORK_OFF( &'static str ),
+	WERR_NETWORK_OFF( &'static str ) |a| log: public, args: vec![ a.to_string() ],
 	#[error( "A file Laurel keeps is damaged: {0}." )]
-	WERR_CORRUPT( file_t ),
+	WERR_CORRUPT( file_t ) |a| log: public, args: vec![ a.Name().to_string() ],		// named in the screen's words by UiMessageIn
 	#[error( "This file isn't a Laurel encrypted file, or it was cut short." )]
-	WERR_NOT_SEALED,
+	WERR_NOT_SEALED log: public, args: vec![],
 	#[error( "This file is damaged, or was encrypted with a different key." )]
-	WERR_WRONG_KEY,
+	WERR_WRONG_KEY log: public, args: vec![],
+	#[cfg_attr( not( feature = "folder-sync" ), allow( dead_code ) )]
 	#[error( "That sync code isn't right. Check it against the one your other device showed." )]		// never the code itself
-	WERR_SYNC_CODE,
+	WERR_SYNC_CODE log: public, args: vec![],
+	#[cfg_attr( not( feature = "folder-sync" ), allow( dead_code ) )]
 	#[error( "Laurel can't reach the sync folder. If it's on a drive or a USB stick, connect it and try again." )]
-	WERR_SYNC_FOLDER,
+	WERR_SYNC_FOLDER log: public, args: vec![],
+	#[cfg_attr( not( feature = "folder-sync" ), allow( dead_code ) )]
 	#[error( "A device syncing with this one runs a newer Laurel. Update Laurel here to keep syncing." )]
-	WERR_SYNC_NEWER,
+	WERR_SYNC_NEWER log: public, args: vec![],
+	#[cfg_attr( not( feature = "folder-sync" ), allow( dead_code ) )]
 	#[error( "Sync is already on for this device. Stop it first to start again." )]
-	WERR_SYNC_ON,
+	WERR_SYNC_ON log: public, args: vec![],
 	#[error( "Opening and saving files isn't available in Laurel for iPhone yet. Use Laurel on a computer or an Android phone for this." )]
 	#[cfg_attr( not( target_os = "ios" ), allow( dead_code ) )]		// only iOS has no document picker yet
-	WERR_NO_FILES,
+	WERR_NO_FILES log: public, args: vec![],
+	#[cfg_attr( not( feature = "offline-signing" ), allow( dead_code ) )]
 	#[error( "This signed payment spends money this wallet doesn't hold. It wasn't sent." )]
-	WERR_OFFLINE_FOREIGN_INPUT,
+	WERR_OFFLINE_FOREIGN_INPUT log: public, args: vec![],
+	#[cfg_attr( not( feature = "offline-signing" ), allow( dead_code ) )]
 	#[error( "This signed payment doesn't pay what was requested. It wasn't sent. If nothing was changed on purpose, don't use the offline computer until you know why." )]
-	WERR_OFFLINE_MISMATCH,
+	WERR_OFFLINE_MISMATCH log: public, args: vec![],
+	#[cfg_attr( not( feature = "offline-signing" ), allow( dead_code ) )]
 	#[error( "This signed payment moves money the viewing key can't see. It wasn't sent. Don't use the offline computer until you know why." )]
-	WERR_OFFLINE_HIDDEN,
+	WERR_OFFLINE_HIDDEN log: public, args: vec![],
+	#[cfg_attr( not( feature = "offline-signing" ), allow( dead_code ) )]
 	#[error( "This isn't a Laurel signing file, or it was damaged in copying. Copy it again." )]
-	WERR_OFFLINE_FILE,
+	WERR_OFFLINE_FILE log: public, args: vec![],
+	#[cfg_attr( not( feature = "offline-signing" ), allow( dead_code ) )]
 	#[error( "This file was made by a newer Laurel. Update Laurel on this computer to use it." )]
-	WERR_OFFLINE_NEWER,
+	WERR_OFFLINE_NEWER log: public, args: vec![],
+	#[cfg_attr( not( feature = "offline-signing" ), allow( dead_code ) )]
 	#[error( "This wallet can send by itself: use Send. Signing on another computer is for wallets added with a viewing key." )]
-	WERR_OFFLINE_CAN_SEND,
+	WERR_OFFLINE_CAN_SEND log: public, args: vec![],
+	#[cfg_attr( not( feature = "offline-signing" ), allow( dead_code ) )]
 	#[error( "This payment takes two transactions (an exchange-only address), which can't be signed on another computer yet. Send it from a wallet with its recovery phrase." )]
-	WERR_OFFLINE_TWO_STEPS,
+	WERR_OFFLINE_TWO_STEPS log: public, args: vec![],
+	#[cfg_attr( not( feature = "offline-signing" ), allow( dead_code ) )]
 	#[error( "This signed payment isn't for a request made on this computer, or that request was already sent or forgotten." )]
-	WERR_OFFLINE_NOT_OURS,
+	WERR_OFFLINE_NOT_OURS log: public, args: vec![],
+	#[cfg_attr( not( feature = "offline-signing" ), allow( dead_code ) )]
 	#[error( "No wallet on this computer can sign this request. Restore the wallet from its recovery phrase here first." )]
-	WERR_OFFLINE_NO_SIGNER,
+	WERR_OFFLINE_NO_SIGNER log: public, args: vec![],
+	#[cfg_attr( not( feature = "offline-signing" ), allow( dead_code ) )]
 	#[error( "The matching wallet on this computer only views. Signing needs the wallet restored from its recovery phrase." )]
-	WERR_OFFLINE_SIGNER_VIEWS,
+	WERR_OFFLINE_SIGNER_VIEWS log: public, args: vec![],
+	// a module this build leaves out (D-031): its command is there, nothing behind it. With
+	// every module in, nothing says it (and a phone's build refuses the warning, lib.rs)
+	#[cfg_attr( all( feature = "offline-signing", feature = "folder-sync", feature = "prices", feature = "repeat-payments" ), allow( dead_code ) )]
+	#[error( "This version of Laurel doesn't include that." )]
+	WERR_NOT_IN_BUILD log: public, args: vec![],
 	#[error( "Something went wrong inside Laurel's wallet engine." )]
-	WERR_ENGINE( String ),
+	WERR_ENGINE( String ) |_| log: public, args: vec![],
 	// an error from handling what the person typed (a phrase, a viewing key):
 	// the engine's words may quote it, so they reach the screen, never the log
 	#[error( "{0}" )]
-	WERR_TYPED( Box< werr_t > ),
+	WERR_TYPED( Box< werr_t > ) |inner| log: redact( format!( "{inner} (its detail is not logged: it may quote what was typed)" ) ), args: inner.Args(),
+}
 }
 
 impl std::fmt::Debug for werr_t {
@@ -412,11 +522,17 @@ pub struct noticeWords_t {
 	pub sent:			String,
 	pub failed:			String,
 	pub sample:			String,
-	pub due:			String,
-	pub rose:			String,		// {0}: the price asked about
+	#[cfg_attr( not( feature = "repeat-payments" ), allow( dead_code ) )]
+	pub due:			String,			// a repeating payment's notice; the ui sends it in every build (D-031)
+	#[cfg_attr( not( feature = "prices" ), allow( dead_code ) )]
+	pub rose:			String,		// {0}: the price asked about; an alert's notices, sent by the ui in every build (D-031)
+	#[cfg_attr( not( feature = "prices" ), allow( dead_code ) )]
 	pub fell:			String,		// {0}: the price asked about
+	#[cfg_attr( not( feature = "prices" ), allow( dead_code ) )]
 	pub priceNow:		String,		// {0}: the price now
+	#[cfg_attr( not( feature = "offline-signing" ), allow( dead_code ) )]		// the file pickers' words, sent by the ui in every build (D-031)
 	pub requestFile:	String,
+	#[cfg_attr( not( feature = "offline-signing" ), allow( dead_code ) )]
 	pub signedFile:		String,
 }
 
@@ -467,137 +583,6 @@ pub struct errorInfo_t {
 	pub message:	String,
 	pub detail:		Option< String >,
 	pub retry:		bool,		// trying again in a moment can work, so the ui may, on its own
-}
-
-impl werr_t {
-	/*
-	==================
-	werr_t::Code / werr_t::Args
-
-	An error as the ui's text knows it: its name, and the values its
-	sentence has room for ({0}, {1}), in order. A value that is a detail
-	(a server's own words) goes under Details instead, never in a
-	sentence. Every kind is decided here, with no default: a new one
-	doesn't compile until it is. check_owners holds ui_text.ts's errors
-	to these names and to how many values each has.
-	==================
-	*/
-	pub fn Code( &self ) -> &'static str {
-		macro_rules! named {
-			( $( $v:ident ),* $(,)? ) => { match self { $( werr_t::$v { .. } => stringify!( $v ), )* } };
-		}
-		named!( WERR_NO_WALLET, WERR_NO_ACCOUNT, WERR_VIEWONLY, WERR_TOO_MANY_ACCOUNTS, WERR_EMPTY_NAME, WERR_BUSY, WERR_SEED_WORD, WERR_SEED_LENGTH, WERR_SEED_CHECKSUM, WERR_VIEWKEY, WERR_SERVER, WERR_SERVER_BEHIND, WERR_SERVER_OUTDATED, WERR_NETWORK_NEWER, WERR_SERVER_SLOW, WERR_INTERCEPTED, WERR_NOTIFICATIONS, WERR_SERVER_URL, WERR_SERVER_PLAIN, WERR_SERVER_NETWORK, WERR_CONTACT_EXISTS, WERR_PRICE_OFF, WERR_PRICE_BUSY, WERR_PRICE, WERR_SPEND_KEY_FETCH, WERR_SPEND_KEY_MISSING, WERR_LOCKED, WERR_NOTE_TOO_LONG, WERR_BAD_PASSWORD, WERR_CONFIRM, WERR_WEAK_PASSWORD, WERR_VAULT_MISSING, WERR_VAULT_WRITE, WERR_VAULT_NEWER, WERR_OS_KEY, WERR_NO_OS_PROTECTION, WERR_NOT_ZCASH, WERR_WRONG_NETWORK, WERR_OLD_ADDRESS, WERR_SYNC_BUSY, WERR_SYNC_DATA, WERR_NO_AMOUNT, WERR_MEMO_PUBLIC, WERR_MEMO_TOO_LONG, WERR_FROM_PUBLIC, WERR_NOT_ENOUGH, WERR_NOT_ENOUGH_POOL, WERR_SHIELD_BELOW_FEE, WERR_NOTHING_TO_MIGRATE, WERR_MIGRATE_OFF, WERR_NOTHING_TO_MOVE, WERR_MOVE_BELOW_FEE, WERR_VIEWONLY_MOVE, WERR_VIEWONLY_SPEND, WERR_KEY_WALLET_MOVE, WERR_NO_PASSWORD, WERR_CATCHING_UP, WERR_NOTHING_TO_SHIELD, WERR_PAYMENT_DONE, WERR_MULTI_PAYMENT, WERR_TOO_MANY_PAYMENTS, WERR_BIRTHDAY_AHEAD, WERR_MAX_ONE, WERR_KEY_TYPO, WERR_KEY_NETWORK, WERR_KEY_UNCOMPRESSED, WERR_KEY_EMPTY, WERR_KEY_TOO_SMALL, WERR_NO_PUBLIC_ADDRESS, WERR_NO_SAPLING_ADDRESS, WERR_NO_SHIELDED_KEYS, WERR_REJECTED, WERR_SENT_UNSURE, WERR_SEND_QUEUED, WERR_SWEEP_UNSURE, WERR_OFFLINE_SENT_UNSURE, WERR_OFFLINE_UNSURE, WERR_KEY_WALLET_RECEIVE, WERR_KEY_WALLET_ACCOUNTS, WERR_ZCASHD_NONE, WERR_ZCASHD_TYPO, WERR_ZCASHD_SPROUT, WERR_WALLET_EXISTS, WERR_NETWORK, WERR_NETWORK_OFF, WERR_CORRUPT, WERR_NOT_SEALED, WERR_WRONG_KEY, WERR_SYNC_CODE, WERR_SYNC_FOLDER, WERR_SYNC_NEWER, WERR_SYNC_ON, WERR_NO_FILES, WERR_OFFLINE_FOREIGN_INPUT, WERR_OFFLINE_MISMATCH, WERR_OFFLINE_HIDDEN, WERR_OFFLINE_FILE, WERR_OFFLINE_NEWER, WERR_OFFLINE_CAN_SEND, WERR_OFFLINE_TWO_STEPS, WERR_OFFLINE_NOT_OURS, WERR_OFFLINE_NO_SIGNER, WERR_OFFLINE_SIGNER_VIEWS, WERR_ENGINE, WERR_TYPED )
-	}
-
-	pub fn Args( &self ) -> Vec< String > {
-		match self {
-			werr_t::WERR_NO_WALLET => vec![],
-			werr_t::WERR_NO_ACCOUNT => vec![],
-			werr_t::WERR_VIEWONLY => vec![],
-			werr_t::WERR_TOO_MANY_ACCOUNTS( a ) => vec![ a.to_string() ],
-			werr_t::WERR_EMPTY_NAME => vec![],
-			werr_t::WERR_BUSY => vec![],
-			werr_t::WERR_SEED_WORD( a, b ) => vec![ a.to_string(), b.clone() ],
-			werr_t::WERR_SEED_LENGTH => vec![],
-			werr_t::WERR_SEED_CHECKSUM => vec![],
-			werr_t::WERR_VIEWKEY( a ) => vec![ a.to_string() ],
-			werr_t::WERR_SERVER( _ ) => vec![],
-			werr_t::WERR_SERVER_BEHIND => vec![],
-			werr_t::WERR_SERVER_OUTDATED( _ ) => vec![],
-			werr_t::WERR_NETWORK_NEWER => vec![],
-			werr_t::WERR_SERVER_SLOW => vec![],
-			werr_t::WERR_INTERCEPTED => vec![],
-			werr_t::WERR_NOTIFICATIONS => vec![],
-			werr_t::WERR_SERVER_URL => vec![],
-			werr_t::WERR_SERVER_PLAIN => vec![],
-			werr_t::WERR_SERVER_NETWORK( a, b ) => vec![ a.clone(), b.to_string() ],
-			werr_t::WERR_CONTACT_EXISTS( a ) => vec![ a.clone() ],
-			werr_t::WERR_PRICE_OFF => vec![],
-			werr_t::WERR_PRICE_BUSY => vec![],
-			werr_t::WERR_PRICE( _ ) => vec![],
-			werr_t::WERR_SPEND_KEY_FETCH( _ ) => vec![],
-			werr_t::WERR_SPEND_KEY_MISSING( a ) => vec![ a.clone() ],
-			werr_t::WERR_LOCKED => vec![],
-			werr_t::WERR_NOTE_TOO_LONG( a ) => vec![ a.to_string() ],
-			werr_t::WERR_BAD_PASSWORD => vec![],
-			werr_t::WERR_CONFIRM => vec![],
-			werr_t::WERR_WEAK_PASSWORD( a ) => vec![ a.to_string() ],
-			werr_t::WERR_VAULT_MISSING => vec![],
-			werr_t::WERR_VAULT_WRITE => vec![],
-			werr_t::WERR_VAULT_NEWER => vec![],
-			werr_t::WERR_OS_KEY( a ) => vec![ a.clone() ],
-			werr_t::WERR_NO_OS_PROTECTION => vec![],
-			werr_t::WERR_NOT_ZCASH => vec![],
-			werr_t::WERR_WRONG_NETWORK( a, b ) => vec![ a.to_string(), b.to_string() ],
-			werr_t::WERR_OLD_ADDRESS( a ) => vec![ a.to_string() ],
-			werr_t::WERR_SYNC_BUSY => vec![],
-			werr_t::WERR_SYNC_DATA( _ ) => vec![],
-			werr_t::WERR_NO_AMOUNT => vec![],
-			werr_t::WERR_MEMO_PUBLIC => vec![],
-			werr_t::WERR_MEMO_TOO_LONG( a ) => vec![ a.to_string() ],
-			werr_t::WERR_FROM_PUBLIC => vec![],
-			werr_t::WERR_NOT_ENOUGH => vec![],
-			werr_t::WERR_NOT_ENOUGH_POOL => vec![],
-			werr_t::WERR_SHIELD_BELOW_FEE => vec![],
-			werr_t::WERR_NOTHING_TO_MIGRATE => vec![],
-			werr_t::WERR_MIGRATE_OFF => vec![],
-			werr_t::WERR_NOTHING_TO_MOVE => vec![],
-			werr_t::WERR_MOVE_BELOW_FEE => vec![],
-			werr_t::WERR_VIEWONLY_MOVE => vec![],
-			werr_t::WERR_VIEWONLY_SPEND => vec![],
-			werr_t::WERR_KEY_WALLET_MOVE => vec![],
-			werr_t::WERR_NO_PASSWORD => vec![],
-			werr_t::WERR_CATCHING_UP => vec![],
-			werr_t::WERR_NOTHING_TO_SHIELD => vec![],
-			werr_t::WERR_PAYMENT_DONE => vec![],
-			werr_t::WERR_MULTI_PAYMENT( a ) => vec![ a.to_string() ],
-			werr_t::WERR_TOO_MANY_PAYMENTS( a ) => vec![ a.to_string() ],
-			werr_t::WERR_BIRTHDAY_AHEAD( a, b ) => vec![ a.to_string(), b.to_string() ],
-			werr_t::WERR_MAX_ONE => vec![],
-			werr_t::WERR_KEY_TYPO => vec![],
-			werr_t::WERR_KEY_NETWORK( a, b ) => vec![ a.to_string(), b.to_string() ],
-			werr_t::WERR_KEY_UNCOMPRESSED => vec![],
-			werr_t::WERR_KEY_EMPTY => vec![],
-			werr_t::WERR_KEY_TOO_SMALL( _, _ ) => vec![],
-			werr_t::WERR_NO_PUBLIC_ADDRESS => vec![],
-			werr_t::WERR_NO_SAPLING_ADDRESS => vec![],
-			werr_t::WERR_NO_SHIELDED_KEYS => vec![],
-			werr_t::WERR_REJECTED( _ ) => vec![],
-			werr_t::WERR_SENT_UNSURE( _ ) => vec![],
-			werr_t::WERR_SWEEP_UNSURE( _ ) => vec![],
-			werr_t::WERR_SEND_QUEUED( _ ) => vec![],
-			werr_t::WERR_OFFLINE_SENT_UNSURE( _ ) => vec![],
-			werr_t::WERR_OFFLINE_UNSURE => vec![],
-			werr_t::WERR_KEY_WALLET_RECEIVE => vec![],
-			werr_t::WERR_KEY_WALLET_ACCOUNTS => vec![],
-			werr_t::WERR_ZCASHD_NONE => vec![],
-			werr_t::WERR_ZCASHD_TYPO => vec![],
-			werr_t::WERR_ZCASHD_SPROUT => vec![],
-			werr_t::WERR_WALLET_EXISTS( a ) => vec![ a.clone() ],
-			werr_t::WERR_NETWORK( a, b ) => vec![ a.to_string(), b.to_string() ],
-			werr_t::WERR_NETWORK_OFF( a ) => vec![ a.to_string() ],
-			werr_t::WERR_CORRUPT( a ) => vec![ a.Name().to_string() ],		// named in the screen's words by UiMessageIn
-			werr_t::WERR_NOT_SEALED => vec![],
-			werr_t::WERR_WRONG_KEY => vec![],
-			werr_t::WERR_SYNC_CODE => vec![],
-			werr_t::WERR_SYNC_FOLDER => vec![],
-			werr_t::WERR_SYNC_NEWER => vec![],
-			werr_t::WERR_SYNC_ON => vec![],
-			werr_t::WERR_NO_FILES => vec![],
-			werr_t::WERR_OFFLINE_FOREIGN_INPUT => vec![],
-			werr_t::WERR_OFFLINE_MISMATCH => vec![],
-			werr_t::WERR_OFFLINE_HIDDEN => vec![],
-			werr_t::WERR_OFFLINE_FILE => vec![],
-			werr_t::WERR_OFFLINE_NEWER => vec![],
-			werr_t::WERR_OFFLINE_CAN_SEND => vec![],
-			werr_t::WERR_OFFLINE_TWO_STEPS => vec![],
-			werr_t::WERR_OFFLINE_NOT_OURS => vec![],
-			werr_t::WERR_OFFLINE_NO_SIGNER => vec![],
-			werr_t::WERR_OFFLINE_SIGNER_VIEWS => vec![],
-			werr_t::WERR_ENGINE( _ ) => vec![],
-			werr_t::WERR_TYPED( inner ) => inner.Args(),
-		}
-	}
 }
 
 impl werr_t {
@@ -687,48 +672,6 @@ impl werr_t {
 	}
 }
 
-impl werr_t {
-	/*
-	==================
-	werr_t::LogText
-
-	What the log may keep of this error, decided for each kind with no
-	default: some are built from what the person typed (a mistyped phrase
-	word gives the real one away) or from who they pay, and a log file on
-	disk must never hold those. A new kind of error must be decided here.
-	Debug prints this too, so {e:?} is safe as well as {e}.
-	==================
-	*/
-	pub fn LogText( &self ) -> String {
-		use werr_t::*;
-
-		let whole = || format!( "{self}{}", self.Detail().map_or( String::new(), |d| format!( " ({d})" ) ) );
-		match self {
-			// what the person typed, or who they pay: the kind, never the words
-			WERR_SEED_WORD( n, _ )		=> format!( "WERR_SEED_WORD: word {n} of the recovery phrase isn't a phrase word (the word is not logged)" ),
-			WERR_CONTACT_EXISTS( _ )	=> "WERR_CONTACT_EXISTS: that address already has a contact (the name is not logged)".to_string(),
-			WERR_WALLET_EXISTS( _ )		=> "WERR_WALLET_EXISTS: that wallet is already on this computer (its name is not logged)".to_string(),
-			WERR_TYPED( inner )			=> format!( "{inner} (its detail is not logged: it may quote what was typed)" ),
-
-			// Laurel's own words, the engine's or the server's: nothing the person typed
-			WERR_NO_WALLET | WERR_NO_ACCOUNT | WERR_VIEWONLY | WERR_TOO_MANY_ACCOUNTS( _ ) | WERR_EMPTY_NAME | WERR_BUSY
-			| WERR_VIEWKEY( _ ) | WERR_SERVER( _ ) | WERR_SERVER_OUTDATED( _ ) | WERR_NETWORK_NEWER | WERR_SERVER_BEHIND | WERR_SERVER_SLOW | WERR_INTERCEPTED | WERR_NOTIFICATIONS | WERR_SERVER_URL
-			| WERR_SERVER_PLAIN | WERR_SERVER_NETWORK( _, _ ) | WERR_LOCKED | WERR_BAD_PASSWORD | WERR_CONFIRM | WERR_NOTE_TOO_LONG( _ ) | WERR_WEAK_PASSWORD( _ )
-			| WERR_VAULT_MISSING | WERR_VAULT_NEWER | WERR_VAULT_WRITE | WERR_OS_KEY( _ ) | WERR_NO_OS_PROTECTION | WERR_NOT_ZCASH
-			| WERR_WRONG_NETWORK( _, _ ) | WERR_OLD_ADDRESS( _ ) | WERR_SYNC_BUSY | WERR_SYNC_DATA( _ ) | WERR_NO_AMOUNT
-			| WERR_MEMO_PUBLIC | WERR_MEMO_TOO_LONG( _ ) | WERR_FROM_PUBLIC | WERR_NOT_ENOUGH | WERR_NOT_ENOUGH_POOL | WERR_SEED_LENGTH | WERR_SEED_CHECKSUM | WERR_NOT_SEALED | WERR_WRONG_KEY | WERR_NOTHING_TO_MIGRATE | WERR_MIGRATE_OFF | WERR_NOTHING_TO_MOVE | WERR_MOVE_BELOW_FEE | WERR_VIEWONLY_MOVE | WERR_VIEWONLY_SPEND | WERR_KEY_WALLET_MOVE
-			| WERR_NO_PASSWORD | WERR_CATCHING_UP | WERR_NOTHING_TO_SHIELD | WERR_PAYMENT_DONE | WERR_MULTI_PAYMENT( _ ) | WERR_TOO_MANY_PAYMENTS( _ ) | WERR_BIRTHDAY_AHEAD( _, _ ) | WERR_MAX_ONE
-			| WERR_NETWORK( _, _ ) | WERR_NETWORK_OFF( _ ) | WERR_PRICE_OFF | WERR_PRICE_BUSY | WERR_PRICE( _ ) | WERR_SPEND_KEY_FETCH( _ ) | WERR_SPEND_KEY_MISSING( _ ) | WERR_CORRUPT( _ ) | WERR_ENGINE( _ )
-			| WERR_KEY_TYPO | WERR_KEY_NETWORK( _, _ ) | WERR_KEY_UNCOMPRESSED | WERR_KEY_EMPTY | WERR_KEY_TOO_SMALL( _, _ )
-			| WERR_NO_PUBLIC_ADDRESS | WERR_NO_SAPLING_ADDRESS | WERR_NO_SHIELDED_KEYS | WERR_REJECTED( _ ) | WERR_SENT_UNSURE( _ ) | WERR_SEND_QUEUED( _ ) | WERR_SWEEP_UNSURE( _ ) | WERR_OFFLINE_SENT_UNSURE( _ ) | WERR_OFFLINE_UNSURE | WERR_KEY_WALLET_RECEIVE | WERR_KEY_WALLET_ACCOUNTS
-			| WERR_ZCASHD_NONE | WERR_ZCASHD_TYPO | WERR_ZCASHD_SPROUT | WERR_SHIELD_BELOW_FEE
-			| WERR_NO_FILES | WERR_SYNC_CODE | WERR_SYNC_FOLDER | WERR_SYNC_NEWER | WERR_SYNC_ON | WERR_OFFLINE_FOREIGN_INPUT
-			| WERR_OFFLINE_MISMATCH | WERR_OFFLINE_HIDDEN | WERR_OFFLINE_FILE | WERR_OFFLINE_NEWER | WERR_OFFLINE_CAN_SEND | WERR_OFFLINE_TWO_STEPS
-			| WERR_OFFLINE_NOT_OURS | WERR_OFFLINE_NO_SIGNER | WERR_OFFLINE_SIGNER_VIEWS => whole(),
-		}
-	}
-}
-
 // every error the ui is given leaves through here, so every one is logged
 // here, as much as LogText allows: an error only the screen saw can't be
 // looked into
@@ -773,6 +716,7 @@ pub struct syncProgress_t {
 	pub etaSecs:		Option< u32 >,		// the engine's own estimate of time left; none until it has a steady rate
 	pub birthdayTime:	Option< u32 >,		// when the wallet's first block was mined, unix seconds: where sync starts
 	pub repairing:		bool,				// rescanning from the birthday to repair the wallet's sync data
+	pub preparing:		bool,				// running, nothing scanned yet: the engine is still setting up (the chain's tree sizes, the public addresses' history), so a percent would read as stuck at 0
 }
 
 // the last known state of a wallet, kept outside the engine's lock. The
@@ -787,6 +731,7 @@ pub struct slotCache_t {
 	pub running:		bool,			// the engine's mode, as last read (it can't be read while a send holds the client)
 	pub paused:			bool,
 	pub percent:		u8,				// the last percent the engine published
+	pub scannedAny:		bool,			// ...whether any of the wallet's outputs were scanned by then
 	pub engineComplete:	bool,			// ...and whether it said complete
 	pub caughtUp:		bool,			// reached the tip this session: a block or two behind is "keeping up"
 	pub failedAt:		Option< u8 >,	// the engine stopped with an error at this percent; the error stays until it gets further
@@ -821,8 +766,23 @@ impl slotCache_t {
 		self.engineComplete	= false;
 		self.caughtUp		= false;
 		self.percent		= 0;
+		self.scannedAny		= false;
 		self.etaBase		= None;
 		self.walletHeight	= 0;
+	}
+
+	/*
+	==================
+	IsPreparing
+
+	Running, not complete, and nothing scanned yet. Before its first block a
+	first sync fetches the chain's tree sizes, every public address's history
+	up to today, and the subtree roots; that can take minutes, and as a
+	percent it was a 0% that looked stuck.
+	==================
+	*/
+	pub fn IsPreparing( &self, slack: u32 ) -> bool {
+		self.running && !self.scannedAny && !self.IsComplete( slack )
 	}
 
 	/*
@@ -863,11 +823,30 @@ pub struct poolZats_t {
 	pub transparent:	u64,
 }
 
-// what shielding would do, before it's done: shown for confirmation
-#[derive( Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, Type )]
-// shielding public money, or moving Sapling money (w_move.rs): what arrives in the private pool
+// what shielding public money would do, before it's done: shown for confirmation
+#[derive( Clone, Debug, PartialEq, Eq, Serialize, Deserialize, Type )]
 pub struct shieldQuote_t {
+	pub from:			Option< String >,		// the one public address asked for (Shield on its row); none: Laurel's pick (W_ShieldPublic)
 	pub amount:			u64,		// zats arriving in the private pool
+	pub fee:			u64,
+	pub feeNote:		Option< feeNote_t >,
+	pub more:			u32,		// other public addresses still holding money after this shield: each is shielded on its own
+	pub links:			u32,		// the public addresses this shield spends from: more than one ties them together publicly
+}
+
+// one public address of an account, with the money it holds that can be
+// shielded now (W_PublicBalances); anyone can see both on the chain
+#[derive( Clone, Debug, PartialEq, Eq, Serialize, Deserialize, Type )]
+pub struct publicHeld_t {
+	pub address:		String,
+	pub zats:			u64,
+}
+
+// what moving Sapling money into Ironwood would do (w_move.rs): a shield's
+// numbers without its public addresses, since a move spends none
+#[derive( Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, Type )]
+pub struct moveQuote_t {
+	pub amount:			u64,		// zats arriving in Ironwood
 	pub fee:			u64,
 	pub feeNote:		Option< feeNote_t >,
 }
@@ -981,6 +960,7 @@ pub struct historyItem_t {
 	pub fee:		Option< u64 >,		// when this account paid it and it's known
 	pub state:		txState_t,
 	pub from:		Vec< pool_t >,		// pools this account's money came out of
+	pub fromAddresses:	Vec< String >,	// the public addresses it left from (W_SpentFromAddresses); private money has none to name
 	pub into:		Vec< pool_t >,		// pools it went into, for this account
 	pub counterparty:	Option< String >,	// who was paid, when a payment went out
 	pub memo:		Option< String >,
@@ -1046,6 +1026,7 @@ pub struct sendQuote_t {
 	pub memo:		Option< String >,
 	pub feeNote:	Option< feeNote_t >,	// the fee is worth a word, and why
 	pub also:		Vec< quotedPay_t >,		// the further payments, each as it will be made; the first is to/amount-less-these/memo
+	pub publicAddresses:	u32,		// the wallet's public addresses it spends from: 2 or more are tied together on the chain for good
 }
 
 // a quote (or plan) as the person sees it, with the intent it was made
@@ -1072,6 +1053,16 @@ pub enum shieldResult_t {
 	CHANGED { quoted: quoted_t< shieldQuote_t > },
 }
 
+// what pressing Move did, the same way
+#[derive( Clone, Debug, Serialize, Deserialize, Type )]
+#[serde( tag = "kind" )]
+pub enum moveResult_t {
+	#[serde( rename = "sent" )]
+	SENT { txid: String },
+	#[serde( rename = "changed" )]
+	CHANGED { quoted: quoted_t< moveQuote_t > },
+}
+
 // what sweeping a private key would move, before it's done (w_sweep.rs)
 #[derive( Clone, Debug, PartialEq, Eq, Serialize, Deserialize, Type )]
 pub struct sweepQuote_t {
@@ -1082,6 +1073,7 @@ pub struct sweepQuote_t {
 	pub total:		u64,		// zats the spent coins hold
 	pub fee:		u64,
 	pub amount:		u64,		// zats arriving: total less the fee
+	pub coinsPrint:	String,		// the coins the server reported, as one print (Com_CoinsPrint): other coins, another review
 }
 
 // what pressing Sweep did
@@ -1160,6 +1152,11 @@ pub struct meta_t {
 	pub accounts:		Vec< String >,	// account names, by zip-32 index
 	pub backedUp:		bool,			// passed the phrase check, or was restored from the phrase
 	pub created:		u64,			// unix time laurel added it; sorts the list
+	// the network it is on (D-033): written by every new wallet, given its folder's when
+	// missing (one from before), and a wallet whose names say the other network is
+	// never opened (W_Load)
+	#[serde( default, skip_serializing_if = "Option::is_none" )]
+	pub network:		Option< network_t >,
 }
 
 #[derive( Clone, Debug, Serialize, Type )]
@@ -1185,7 +1182,7 @@ pub struct walletSummary_t {
 	pub sameWords:		Vec< String >,			// other open wallets from the same recovery words, with another passphrase (W_SameWords)
 }
 
-// what a wallet may be asked to do; which kinds may is W_Allow's alone (w_main.rs)
+// what a wallet may be asked to do; which kinds may is W_Allow's alone (w_registry.rs)
 #[derive( Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, Type )]
 pub enum walletAct_t {
 	WA_SPEND,			// sign a payment here
@@ -1284,6 +1281,8 @@ pub enum freshAddress_t {
 	FA_PRIVATE,
 	#[serde( rename = "sapling" )]
 	FA_SAPLING,
+	#[serde( rename = "public" )]
+	FA_PUBLIC,
 }
 
 #[derive( Clone, Debug, Serialize, Type )]
@@ -1356,6 +1355,7 @@ pub struct constants_t {
 	pub categories:			Vec< txCategory_t >,	// every category, in menu order (TX_CATEGORIES)
 	pub textScales:			Vec< u32 >,		// text sizes in percent (w_settings.rs refuses anything else)
 	pub maxPayments:		u32,			// payments one transaction may make (MAX_PAYMENTS, w_send.rs)
+	pub dustZats:			u32,			// at most this, a payment arrives as nothing to spend (DUST_ZATS, w_send.rs)
 	pub noteMaxChars:		u32,			// a note, a contact's or a transaction's (Com_CleanNote)
 	pub networks:			Vec< network_t >,	// what this build opens (NETWORKS): the Play beta's, testnet alone
 }

@@ -32,11 +32,13 @@ use std::time::{ Duration, Instant };
 
 use serde::{ Deserialize, Serialize };
 use specta::Type;
+use zcash_protocol::consensus::{ BlockHeight, NetworkUpgrade, Parameters };
+use zingo_netutils::lightwallet_protocol::{ BlockId, TreeState };
 use zingo_netutils::{ GrpcIndexer, Indexer };
 
 use crate::w_disk::{ Com_ReadJson, Com_WriteJson };
 use crate::w_local::*;
-use crate::w_net::{ Com_Classify, W_StatusError };
+use crate::w_net::{ Com_Classify, W_ChainType, W_StatusError };
 
 const PICK_BATCH: usize			= 4;		// servers asked at once: few, so few learn of this computer
 const PICK_WAIT_SECS: u64		= 8;		// an answer slower than this isn't worth having
@@ -52,30 +54,16 @@ const TESTNET_SERVERS: &[ &str ] = &[
 	"https://zaino.testnet.unsafe.zec.rocks:443",		// the fail-over: experimental Zaino
 ];
 // Unused until mainnet: a testnet-only build offers none of them
-// (Com_Servers; a_testnet_only_build_offers_no_mainnet_server).
+// (Com_Servers; a_testnet_only_build_offers_no_mainnet_server). Only operators
+// Laurel can name (T-052, docs/ENGINE.md says who and why): the census's other
+// servers were run by people known only by a forum name, or by no one said
 const MAINNET_SERVERS: &[ &str ] = &[
-	"https://zec.rocks:443",
+	"https://zec.rocks:443",					// ZecRocks (emersonian)
 	"https://na.zec.rocks:443",
 	"https://sa.zec.rocks:443",
 	"https://eu.zec.rocks:443",
 	"https://ap.zec.rocks:443",
-	"https://zec-node.cakewallet.com:443",
-	"https://lwd.zcashexplorer.app:9067",
-	"https://us.zec.stardust.rest:443",
-	"https://eu.zec.stardust.rest:443",
-	"https://l.ombie.cash:443",
-	"https://z.ombie.cash:443",
-	"https://zec.0xrpc.io:443",
-	"https://zec.alexxiy.top:9067",
-	"https://zec.alexxiy.top:8137",
-	"https://lwd.z0n.jp:443",
-	"https://lwd.blakyniica.xyz:443",
-	"https://carover0.xyz:9067",
-	"https://myzec.cryptover.site:443",
-	"https://zcashlw.devshore.ovh:443",
-	"https://znode.roamerx.win:443",
-	"https://lightwalletd.mainnet.cipherscan.app:443",
-	"https://webhighway.website:443",
+	"https://zec-node.cakewallet.com:443",		// Cake Labs (Cake Wallet)
 ];
 
 // the ui's view of the choice
@@ -103,6 +91,7 @@ struct serverFile_t {
 struct netServer_t {
 	loaded:		bool,
 	own:		Option< String >,
+	ownChecked:	bool,		// own, as W_CheckServer last found it: set with it, or read back and checked since
 	current:	Option< String >,
 	latencyMs:	Option< u32 >,
 	benched:	BTreeMap< String, Instant >,
@@ -120,7 +109,7 @@ fn Com_NetIndex( net: network_t ) -> usize {
 
 fn Com_Servers( net: network_t ) -> &'static [ &'static str ] {
 	match net {
-		network_t::NET_MAINNET if cfg!( feature = "testnet-only" ) => &[],
+		_ if !NETWORKS.contains( &net ) => &[],		// testnet-only: no mainnet server; v1: no testnet one (D-033)
 		network_t::NET_MAINNET => MAINNET_SERVERS,
 		network_t::NET_TESTNET => TESTNET_SERVERS,
 	}
@@ -202,14 +191,15 @@ pub fn Com_ServerOf( uri: &http::Uri ) -> Option< String > {
 ==================
 Com_ServesNetwork
 
-lightwalletd names its chain "main" or "test"; zaino says "mainnet"
+lightwalletd names its chain "main" or "test"; zaino says "mainnet". Whole
+names only (W2-04): one that merely starts like them is another chain
 ==================
 */
 fn Com_ServesNetwork( chainName: &str, net: network_t ) -> bool {
 	let served = chainName.to_ascii_lowercase();
 	match net {
-		network_t::NET_MAINNET => served.starts_with( "main" ),
-		network_t::NET_TESTNET => served.starts_with( "test" ),
+		network_t::NET_MAINNET => served == "main" || served == "mainnet",
+		network_t::NET_TESTNET => served == "test" || served == "testnet",
 	}
 }
 
@@ -225,6 +215,25 @@ readable, so nothing follows from it
 fn Com_KnowsBranch( branchHex: &str ) -> Option< bool > {
 	let id = u32::from_str_radix( branchHex.trim().trim_start_matches( "0x" ), 16 ).ok()?;
 	Some( zcash_protocol::consensus::BranchId::try_from( id ).is_ok() )
+}
+
+/*
+==================
+Com_CheckInfo
+
+What a server says of its chain, as a pick or the person's own server must
+have it: net's chain, on a consensus branch this build knows (W2-04: past
+an upgrade it doesn't, nothing synced from that server could be read)
+==================
+*/
+fn Com_CheckInfo( net: network_t, chainName: &str, branchHex: &str ) -> wresult_t< () > {
+	if ( !Com_ServesNetwork( chainName, net ) ) {
+		return Err( werr_t::WERR_SERVER_NETWORK( chainName.to_string(), Com_NetName( net ) ) );
+	}
+	if ( Com_KnowsBranch( branchHex ) == Some( false ) ) {
+		return Err( werr_t::WERR_NETWORK_NEWER );
+	}
+	Ok( () )
 }
 
 /*
@@ -282,6 +291,38 @@ fn Com_Candidates( net: network_t, benched: &BTreeMap< String, Instant > ) -> Ve
 
 /*
 ==================
+Com_TreesServed
+
+A server's tree state for a block: every pool active there has a tree, or
+sync can't start from it (the engine's TreeStateNotServed). The pool it
+leaves out, if any.
+==================
+*/
+fn Com_TreesServed( net: network_t, height: u32, t: &TreeState ) -> Option< &'static str > {
+	let chain = W_ChainType( net );
+	let at = BlockHeight::from_u32( height );
+	// below its activation a server omits a pool's tree; from it on, an empty tree is
+	// still a serialized one, so an omitted tree means the pool isn't served
+	[ ( "Sapling", &t.sapling_tree, NetworkUpgrade::Sapling ), ( "Orchard", &t.orchard_tree, NetworkUpgrade::Nu5 ), ( "Ironwood", &t.ironwood_tree, NetworkUpgrade::Nu6_3 ) ]
+		.into_iter()
+		.find( |( _, tree, upgrade )| tree.is_empty() && chain.is_nu_active( *upgrade, at ) )
+		.map( |( pool, _, _ )| pool )
+}
+
+/*
+==================
+Com_Benches
+
+The failures a server sits out for: it didn't answer, or answered too late,
+too far behind, or without what sync needs
+==================
+*/
+fn Com_Benches( e: &werr_t ) -> bool {
+	matches!( e, werr_t::WERR_SERVER( _ ) | werr_t::WERR_SERVER_OUTDATED( _ ) | werr_t::WERR_SERVER_SLOW | werr_t::WERR_SERVER_BEHIND )
+}
+
+/*
+==================
 W_Connect
 
 A connection to one server (a uri from Com_ServerUri)
@@ -297,25 +338,35 @@ pub async fn W_Connect( uri: &str ) -> wresult_t< GrpcIndexer > {
 ==================
 W_CheckServer
 
-Asks one server what chain it serves and how far it is, and times it
+Asks one server what chain it serves and how far it is, and times it; then
+whether it serves the tip's trees, as sync asks for them (W2-01: one that
+answers the first but not the second would hold sync up for good)
 ==================
 */
 pub async fn W_CheckServer( net: network_t, uri: String ) -> wresult_t< serverCheck_t > {
 	let started = Instant::now();
+	let wait = Duration::from_secs( PICK_WAIT_SECS );
 	let ask = async {
 		let mut indexer = W_Connect( &uri ).await?;
-		indexer.get_lightd_info( Duration::from_secs( PICK_WAIT_SECS ) ).await.map_err( W_StatusError )
+		let info = indexer.get_lightd_info( wait ).await.map_err( W_StatusError )?;
+		Ok::< _, werr_t >( ( indexer, info ) )
 	};
-	let info = tokio::time::timeout( Duration::from_secs( PICK_WAIT_SECS ), ask ).await
+	let ( mut indexer, info ) = tokio::time::timeout( wait, ask ).await
 		.map_err( |_| werr_t::WERR_SERVER_SLOW )??;
 
-	if ( !Com_ServesNetwork( &info.chain_name, net ) ) {
-		return Err( werr_t::WERR_SERVER_NETWORK( info.chain_name, Com_NetName( net ) ) );
+	Com_CheckInfo( net, &info.chain_name, &info.consensus_branch_id )?;
+	let latencyMs = started.elapsed().as_millis() as u32;
+
+	let tip = BlockId { height: info.block_height, hash: vec![] };
+	let trees = tokio::time::timeout( wait, indexer.get_tree_state( tip, wait ) ).await
+		.map_err( |_| werr_t::WERR_SERVER_SLOW )?.map_err( W_StatusError )?;
+	if let Some( pool ) = Com_TreesServed( net, info.block_height as u32, &trees ) {
+		return Err( werr_t::WERR_SERVER_OUTDATED( format!( "{uri} serves no {pool} tree at {}", info.block_height ) ) );
 	}
 	Ok( serverCheck_t {
 		uri:		uri,
 		height:		info.block_height as u32,
-		latencyMs:	started.elapsed().as_millis() as u32,
+		latencyMs:	latencyMs,		// its answer's, as before: the trees are a check, not the race
 	} )
 }
 
@@ -393,14 +444,30 @@ pub async fn W_Server( net: network_t ) -> wresult_t< String > {
 		let mut s = w_servers.lock().unwrap();
 		let n = &mut s[ Com_NetIndex( net ) ];
 		Sv_Load( net, n );
-		if let Some( own ) = &n.own {
-			return Ok( own.clone() );
-		}
-		if let Some( current ) = &n.current {
-			return Ok( current.clone() );
+		match ( &n.own, n.ownChecked ) {
+			( Some( own ), true ) => return Ok( own.clone() ),
+			( Some( _ ), false ) => {},
+			( None, _ ) => if let Some( current ) = &n.current {
+				return Ok( current.clone() );
+			},
 		}
 	}
-	W_PickServer( net ).await
+	let own = w_servers.lock().unwrap()[ Com_NetIndex( net ) ].own.clone();
+	let Some( own ) = own else {
+		return W_PickServer( net ).await;
+	};
+
+	// W2-04: the person's own server, read back from its file, checked as it was when they
+	// set it, once a run; failing, it is refused, never swapped for one they didn't choose
+	let check = W_CheckServer( net, own.clone() ).await
+		.inspect_err( |e| log::warn!( "W_Server: the own server failed its check: {}", e.LogText() ) )?;
+	let mut s = w_servers.lock().unwrap();
+	let n = &mut s[ Com_NetIndex( net ) ];
+	if ( n.own.as_deref() == Some( own.as_str() ) ) {
+		n.ownChecked	= true;
+		n.latencyMs		= Some( check.latencyMs );
+	}
+	Ok( own )
 }
 
 /*
@@ -412,7 +479,7 @@ next connection picks again. uri None means the current one.
 ==================
 */
 pub fn W_ServerFailed( net: network_t, uri: Option< &str >, e: &werr_t ) {
-	if ( !matches!( e, werr_t::WERR_SERVER( _ ) | werr_t::WERR_SERVER_SLOW | werr_t::WERR_SERVER_BEHIND ) ) {
+	if ( !Com_Benches( e ) ) {
 		return;		// intercepted, or not the server's doing
 	}
 	let mut s = w_servers.lock().unwrap();
@@ -467,6 +534,7 @@ pub async fn W_SetServer( net: network_t, own: Option< String > ) -> wresult_t< 
 	let mut s = w_servers.lock().unwrap();
 	let n = &mut s[ Com_NetIndex( net ) ];
 	n.loaded	= true;
+	n.ownChecked	= own.is_some();
 	n.own		= own;
 	n.current	= check.as_ref().map( |c| c.uri.clone() );
 	n.latencyMs	= check.as_ref().map( |c| c.latencyMs );
@@ -517,7 +585,9 @@ mod tests {
 				assert!( matches!( Com_ServerUri( u ), Ok( ref v ) if v == u ), "{u} is https with its port" );
 			}
 		}
-		assert_eq!( Com_Candidates( network_t::NET_TESTNET, &BTreeMap::new() ), TESTNET_SERVERS, "testnet.zec.rocks first, the Zaino fail-over second" );
+		if ( NETWORKS.contains( &network_t::NET_TESTNET ) ) {		// v1 offers no testnet server (D-033)
+			assert_eq!( Com_Candidates( network_t::NET_TESTNET, &BTreeMap::new() ), TESTNET_SERVERS, "testnet.zec.rocks first, the Zaino fail-over second" );
+		}
 	}
 
 	#[test]
@@ -525,9 +595,33 @@ mod tests {
 		assert_eq!( TESTNET_SERVERS, [ "https://testnet.zec.rocks:443", "https://zaino.testnet.unsafe.zec.rocks:443" ] );
 	}
 
+	// T-052: mainnet only through operators Laurel can name, each said in docs/ENGINE.md:
+	// a server is trusted with this computer's address and every wallet's sync, and an
+	// anonymous one can't be asked about it, or held to it
+	const KNOWN_OPERATORS: &[ ( &str, &str ) ] = &[
+		( "zec.rocks",		"ZecRocks, run by emersonian (who also runs Hosh, the servers' uptime census)" ),
+		( "cakewallet.com",	"Cake Labs, Cake Wallet's maker" ),
+	];
+
+	#[test]
+	fn every_mainnet_server_has_an_operator_we_can_name() {
+		for u in MAINNET_SERVERS {
+			let host = u.trim_start_matches( "https://" ).split( ':' ).next().unwrap();
+			assert!( KNOWN_OPERATORS.iter().any( |( d, _ )| host == *d || host.ends_with( &format!( ".{d}" ) ) ), "{u}: who runs it? (docs/ENGINE.md)" );
+		}
+	}
+
 	#[test]
 	fn no_experimental_server_for_mainnet() {
 		assert!( MAINNET_SERVERS.iter().all( |u| !u.contains( ".unsafe." ) ) );
+	}
+
+	// D-033: a network the build doesn't open has no server (v1: none for testnet)
+	#[test]
+	fn a_network_the_build_doesnt_open_has_no_server() {
+		for net in [ network_t::NET_TESTNET, network_t::NET_MAINNET ] {
+			assert_eq!( Com_Candidates( net, &BTreeMap::new() ).is_empty(), !NETWORKS.contains( &net ), "{net:?}" );
+		}
 	}
 
 	#[test]
@@ -537,13 +631,38 @@ mod tests {
 
 	#[test]
 	fn a_server_sits_out_unless_every_one_is() {
-		let all = Com_Candidates( network_t::NET_TESTNET, &BTreeMap::new() );
+		let net = NETWORKS[0];		// the build's own: v1 has no testnet server
+		let all = Com_Candidates( net, &BTreeMap::new() );
 		let mut benched = BTreeMap::new();
 		benched.insert( all[0].clone(), Instant::now() );
-		assert!( !Com_Candidates( network_t::NET_TESTNET, &benched ).contains( &all[0] ) );
+		assert!( !Com_Candidates( net, &benched ).contains( &all[0] ) );
 
 		let every: BTreeMap< String, Instant > = all.iter().map( |u| ( u.clone(), Instant::now() ) ).collect();
-		assert_eq!( Com_Candidates( network_t::NET_TESTNET, &every ), all );
+		assert_eq!( Com_Candidates( net, &every ), all );
+	}
+
+	// W2-01: a server that can't serve the tip's trees sits out, as one that fails to answer does
+	#[test]
+	fn a_server_that_cant_serve_sync_sits_out() {
+		assert!( Com_Benches( &werr_t::WERR_SERVER_OUTDATED( "x".into() ) ) );
+		assert!( Com_Benches( &werr_t::WERR_SERVER( "x".into() ) ) && Com_Benches( &werr_t::WERR_SERVER_SLOW ) && Com_Benches( &werr_t::WERR_SERVER_BEHIND ) );
+		assert!( !Com_Benches( &werr_t::WERR_INTERCEPTED ), "the network's doing, not the server's" );
+		assert!( !Com_Benches( &werr_t::WERR_ENGINE( "x".into() ) ) );
+	}
+
+	#[test]
+	fn a_pool_active_at_the_tip_must_have_a_tree() {
+		for net in [ network_t::NET_MAINNET, network_t::NET_TESTNET ] {
+			let at = |u: NetworkUpgrade| u32::from( W_ChainType( net ).activation_height( u ).unwrap() );
+			let trees = |s: &str, o: &str, i: &str| TreeState { sapling_tree: s.into(), orchard_tree: o.into(), ironwood_tree: i.into(), ..Default::default() };
+			let ironwood = at( NetworkUpgrade::Nu6_3 );
+			assert_eq!( Com_TreesServed( net, ironwood, &trees( "00", "00", "00" ) ), None, "{net:?}" );
+			assert_eq!( Com_TreesServed( net, ironwood, &trees( "00", "00", "" ) ), Some( "Ironwood" ), "{net:?}" );
+			assert_eq!( Com_TreesServed( net, ironwood - 1, &trees( "00", "00", "" ) ), None, "before Ironwood: {net:?}" );
+			assert_eq!( Com_TreesServed( net, at( NetworkUpgrade::Nu5 ), &trees( "00", "", "" ) ), Some( "Orchard" ), "{net:?}" );
+			assert_eq!( Com_TreesServed( net, at( NetworkUpgrade::Sapling ), &trees( "", "", "" ) ), Some( "Sapling" ), "{net:?}" );
+			assert_eq!( Com_TreesServed( net, at( NetworkUpgrade::Sapling ) - 1, &trees( "", "", "" ) ), None, "{net:?}" );
+		}
 	}
 
 	#[test]
@@ -597,9 +716,57 @@ mod tests {
 			println!( "{net:?}: {picked:?} after {:.1} s", t.elapsed().as_secs_f32() );
 			assert!( picked.is_ok() );
 		}
+		// every listed server serves the tip's trees (W2-01): one that didn't would never be picked
+		for net in [ network_t::NET_TESTNET, network_t::NET_MAINNET ] {
+			for uri in Com_Servers( net ) {
+				let check = W_CheckServer( net, uri.to_string() ).await;
+				println!( "{net:?} {uri}: {check:?}" );
+			}
+		}
 		let wrong = W_CheckServer( network_t::NET_MAINNET, "https://testnet.zec.rocks:443".into() ).await;
 		println!( "testnet server for mainnet: {wrong:?}" );
 		assert!( matches!( wrong, Err( werr_t::WERR_SERVER_NETWORK( .. ) ) ) );
+	}
+
+	// W2-04: the chain's own names, whole; not a name that starts like one
+	#[test]
+	fn a_chain_is_named_exactly() {
+		for ( name, net ) in [ ( "main", network_t::NET_MAINNET ), ( "mainnet", network_t::NET_MAINNET ), ( "test", network_t::NET_TESTNET ), ( "TestNet", network_t::NET_TESTNET ) ] {
+			assert!( Com_ServesNetwork( name, net ), "{name}" );
+		}
+		for ( name, net ) in [ ( "maintenance", network_t::NET_MAINNET ), ( "main-fork", network_t::NET_MAINNET ), ( "testing", network_t::NET_TESTNET ), ( "regtest", network_t::NET_TESTNET ) ] {
+			assert!( !Com_ServesNetwork( name, net ), "{name}" );
+		}
+	}
+
+	// W2-04: a server past an upgrade this build doesn't know is no pick, and no one's own
+	#[test]
+	fn a_server_on_an_unknown_branch_is_refused() {
+		assert!( Com_CheckInfo( network_t::NET_MAINNET, "main", "37a5165b" ).is_ok() );
+		assert!( Com_CheckInfo( network_t::NET_MAINNET, "main", "" ).is_ok(), "nothing said, nothing follows" );
+		assert!( matches!( Com_CheckInfo( network_t::NET_MAINNET, "main", "deadbeef" ), Err( werr_t::WERR_NETWORK_NEWER ) ) );
+		assert!( matches!( Com_CheckInfo( network_t::NET_MAINNET, "test", "37a5165b" ), Err( werr_t::WERR_SERVER_NETWORK( .. ) ) ) );
+	}
+
+	// W2-04: the person's own server, read back from its file, is checked on the first
+	// connection as it was when they set it: one that no longer answers is refused, and
+	// never quietly replaced by one they didn't choose
+	#[tokio::test( flavor = "multi_thread" )]
+	async fn a_saved_own_server_is_checked_before_it_is_used() {
+		let net = network_t::NET_TESTNET;
+		let gone = "https://127.0.0.1:1".to_string();
+		{
+			let mut s = w_servers.lock().unwrap();
+			let n = &mut s[ Com_NetIndex( net ) ];
+			n.loaded	= true;		// as Sv_Load leaves it
+			n.own		= Some( gone.clone() );
+		}
+		let used = W_Server( net ).await;
+		{
+			let mut s = w_servers.lock().unwrap();
+			s[ Com_NetIndex( net ) ] = netServer_t::default();
+		}
+		assert!( used.is_err(), "{used:?}" );
 	}
 
 	#[test]

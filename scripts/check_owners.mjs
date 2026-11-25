@@ -81,7 +81,7 @@ const OWNERS = [
 	{ dir: ENGINE,	shape: /SystemTime::now\s*\(/,								owner: "w_date.rs",			use: "Com_Now or Com_NowMsec: seven places read the clock, three through helpers of their own" },
 	{ dir: ENGINE,	shape: /\bConfirmationStatus\b|\.is_confirmed\s*\(/,
 																				owner: "w_history.rs",		use: "Com_TxState: the engine's transaction states are read in one place, each as itself (\"not confirmed\" once hid an expired payment, and its change read as money received)" },
-	{ dir: ENGINE,	shape: /(?<!fn )\bV_Made\s*\(/,									owner: "w_main.rs",			use: "V_Confirm: a phrase or a looser lock is for someone just asked; V_Made is only for the wallet W_Create has just made" },
+	{ dir: ENGINE,	shape: /(?<!fn )\bV_Made\s*\(/,									owner: "w_import.rs",		use: "V_Confirm: a phrase or a looser lock is for someone just asked; V_Made is only for the wallet W_Create has just made" },
 	{ dir: ENGINE,	shape: /\b(why|msg|message|chain|cause|err|error|e)\s*\.\s*(contains|starts_with|ends_with|find)\s*\(/,
 																				owner: null,				use: "Com_Classify in w_net.rs: decide from the error's type, never its words" },
 ];
@@ -91,10 +91,19 @@ function Lines( dir, file ) {
 	const lines = readFileSync( join( dir, file ), "utf8" ).split( "\n" );
 	// the test module is "#[cfg( test )]" with "mod tests" under it: any other
 	// test-only item (a shorter timeout, say) once hid the rest of the file,
-	// most of w_engine.rs, from every rule here
-	const tests = lines.findIndex( ( l, i ) => /^#\[cfg\(\s*test\s*\)\]/.test( l ) && /^mod tests\b/.test( lines[i + 1] ?? "" ) );
+	// most of w_engine.rs, from every rule here. A module a build may leave out
+	// (D-031) has its tests under all( test, … ), and those for a build without
+	// it in "mod left_out", after them: its stubs come before, and are read
+	const tests = lines.findIndex( ( l, i ) => /^#\[cfg\(\s*(test|all\(\s*test\s*,.*\))\s*\)\]/.test( l ) && /^mod (tests|left_out)\b/.test( lines[i + 1] ?? "" ) );
+	if ( TEST_ONLY.includes( file ) ) {
+		return [];
+	}
 	return tests < 0 ? lines : lines.slice( 0, tests );
 }
+
+// files that are tests whole: built only under "#[cfg( test )] mod …;" in lib.rs,
+// so nothing in them reaches a build (the helpers several modules' tests share)
+const TEST_ONLY = [ "w_test.rs" ];
 
 // the files that hold module state, and the line that makes them restart the page
 const RELOADS = [ "ui_store.ts", "ui_query.ts" ];
@@ -379,12 +388,18 @@ for ( const file of readdirSync( UI ).filter( ( f ) => /^ui_text.*\.ts$/.test( f
 
 // rust's errors in the ui's words (ui_text.ts errors, w_local.rs werr_t):
 // one sentence for every kind and none for a kind that's gone, and no
-// sentence asking for a value ({1}) its kind doesn't send (werr_t::Args)
+// sentence asking for a value ({1}) its kind doesn't send (werr_t::Args).
+// Each kind's declaration says what it sends (werr_decl!: "args: vec![ ... ]")
 const RUST_LOCAL = readFileSync( join( APP_SRC, "w_local.rs" ), "utf8" ).replace( /\r\n/g, "\n" );
 const kinds = new Map();		// name -> how many values Args sends
-const argsFn = RUST_LOCAL.slice( RUST_LOCAL.indexOf( "pub fn Args( &self )" ) );
-for ( const m of argsFn.slice( 0, argsFn.indexOf( "\n\t}\n" ) ).matchAll( /werr_t::(WERR_\w+)[^=\n]*=> (vec!\[([^\]]*)\]|inner\.Args\(\))/g ) ) {
+const declStart = RUST_LOCAL.indexOf( "pub enum werr_t {" );
+const declared = RUST_LOCAL.slice( declStart, RUST_LOCAL.indexOf( "\n}\n", declStart ) );
+for ( const m of declared.matchAll( /^\t(WERR_\w+)[^\n]*\blog: [^\n]*?, args: (vec!\[([^\]]*)\]|inner\.Args\(\)),/gm ) ) {
 	kinds.set( m[1], m[3] === undefined ? -1 : m[3].trim() === "" ? 0 : m[3].split( "," ).length );
+}
+if ( kinds.size !== [ ...declared.matchAll( /^\t(WERR_\w+)/gm ) ].length ) {
+	console.error( `${APP_SRC}/w_local.rs werr_t: ${kinds.size} of its kinds read as "log: …, args: …,": check_owners can't see what the rest send` );
+	bad++;
 }
 // English is Rust's own (make_errors.mjs), with the screen's few wordings of its own over it
 if ( Com_ErrorsFile() !== readFileSync( join( UI, "generated", "errors.ts" ), "utf8" ).replace( /\r\n/g, "\n" ) ) {

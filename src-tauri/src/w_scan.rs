@@ -16,7 +16,7 @@ use zcash_address::{ ConversionError, TryFromAddress, ZcashAddress };
 use zcash_protocol::consensus::NetworkType;
 use zcash_protocol::memo::Memo;
 use zcash_protocol::value::Zatoshis;
-use zip321::{ Payment, TransactionRequest };
+use zip321::{ Payment, TransactionRequest, Zip321Error };
 
 use crate::w_local::*;
 use crate::w_net::engineResult_t;
@@ -32,8 +32,10 @@ impl TryFromAddress for addrKind_t {
 		Ok( addrKind_t::ADDR_SAPLING )
 	}
 
-	fn try_from_unified( _: NetworkType, _: zcash_address::unified::Address ) -> Result< Self, ConversionError< () > > {
-		Ok( addrKind_t::ADDR_UNIFIED )
+	// by its receivers, not its encoding (W2-02): without a shielded one this wallet can
+	// pay, it is paid in public, as a t-address is
+	fn try_from_unified( _: NetworkType, ua: zcash_address::unified::Address ) -> Result< Self, ConversionError< () > > {
+		Ok( if ( ua.can_receive_memo() ) { addrKind_t::ADDR_UNIFIED } else { addrKind_t::ADDR_TRANSPARENT } )
 	}
 
 	fn try_from_transparent_p2pkh( _: NetworkType, _: [ u8; 20 ] ) -> Result< Self, ConversionError< () > > {
@@ -95,7 +97,10 @@ The same parser that reads a scanned request reads it back.
 pub fn W_RequestUri( net: network_t, address: &str, amount: u64, memo: Option< String > ) -> wresult_t< String > {
 	let addr = ZcashAddress::try_from_encoded( address ).map_err( |_| werr_t::WERR_NOT_ZCASH )?;
 	let kind = W_KindOf( &addr, net )?;
-	let zats = Zatoshis::from_u64( amount ).ok().filter( |z| !z.is_zero() ).ok_or( werr_t::WERR_NO_AMOUNT )?;
+	let zats = Zatoshis::from_u64( amount ).map_err( |_| werr_t::WERR_MORE_THAN_EXISTS )?;
+	if ( zats.is_zero() ) {
+		return Err( werr_t::WERR_NO_AMOUNT );
+	}
 	let memo = crate::w_send::W_CheckMemo( &memo, kind )?;
 	let payment = Payment::new( addr, Some( zats ), memo, None, None, vec![] ).map_err( |_| werr_t::WERR_MEMO_PUBLIC )?;
 	Ok( TransactionRequest::new( vec![ payment ] ).engine()?.to_uri() )
@@ -156,7 +161,10 @@ pub fn W_ParseScan( net: network_t, text: &str ) -> wresult_t< scanned_t > {
 
 	// the scheme and address may be in capitals; what follows them never is
 	let ( head, rest ) = text.split_at( text.find( '?' ).unwrap_or( text.len() ) );
-	let request = TransactionRequest::from_uri( &( Com_Uncapital( head ) + rest ) ).map_err( |_| werr_t::WERR_NOT_ZCASH )?;
+	let request = TransactionRequest::from_uri( &( Com_Uncapital( head ) + rest ) ).map_err( |e| match e {
+		Zip321Error::TransparentMemo( _ ) => werr_t::WERR_MEMO_PUBLIC,		// a request, just not one Laurel can pay as asked
+		_ => werr_t::WERR_NOT_ZCASH,
+	} )?;
 	let payments = request.payments();
 	let Some( first ) = payments.values().next() else {
 		return Err( werr_t::WERR_NOT_ZCASH );
@@ -172,15 +180,20 @@ pub fn W_ParseScan( net: network_t, text: &str ) -> wresult_t< scanned_t > {
 	}
 	let addr = first.recipient_address();
 
-	let text = |p: &zip321::Payment| p.memo().and_then( |m| match Memo::try_from( m.clone() ) {
-		Ok( Memo::Text( t ) ) => Some( t.to_string() ),
-		_ => None,
-	} );
-	let memo = text( first );
+	// W2-03: a memo that isn't text can be neither shown nor sent, and whoever asked may
+	// need it (an exchange, to credit a deposit): the request is refused, never paid without
+	let text = |p: &zip321::Payment| -> wresult_t< Option< String > > {
+		match p.memo().map( |m| Memo::try_from( m.clone() ) ) {
+			None | Some( Ok( Memo::Empty ) ) => Ok( None ),
+			Some( Ok( Memo::Text( t ) ) ) => Ok( Some( t.to_string() ) ),
+			Some( _ ) => Err( werr_t::WERR_MEMO_NOT_TEXT ),
+		}
+	};
+	let memo = text( first )?;
 	let mut also = vec![];
 	for p in payments.values().skip( 1 ) {
 		W_KindOf( p.recipient_address(), net )?;		// every one on this network, or the whole request is refused
-		also.push( payTo_t { to: p.recipient_address().encode(), zats: p.amount().map_or( 0, |z| z.into_u64() ), memo: text( p ) } );
+		also.push( payTo_t { to: p.recipient_address().encode(), zats: p.amount().map_or( 0, |z| z.into_u64() ), memo: text( p )? } );
 	}
 
 	Ok( scanned_t {
@@ -202,6 +215,90 @@ mod tests {
 	// the ZIP-321 specification's own example addresses
 	const MAIN_SAPLING: &str = "zs1qqqqqqqqqqqqqqqqqqcguyvaw2vjk4sdyeg0lc970u659lvhqq7t0np6hlup5lusxle75c8v35z";
 	const MAIN_T: &str = "t1PKtYdJJHhc3Pxowmznkg7vdTwnhEsCvR4";
+
+	/*
+	==================
+	a_unified_address_without_a_shielded_receiver_is_public
+
+	W2-02: ZIP 316 Revision 2 lets a unified address (tu1...) hold a public
+	receiver alone, and Revision 0 one beside a receiver this wallet can't
+	pay. Paid, either is public: shown so, with no memo, and warned of
+	==================
+	*/
+	#[test]
+	fn a_unified_address_without_a_shielded_receiver_is_public() {
+		use zcash_address::unified::{ self, Encoding, Receiver, Revision, Uitem };
+		let ua = |rev: Revision, items: Vec< Receiver >| unified::Address::try_from_items( rev, items.into_iter().map( Uitem::Data ).collect() ).unwrap().encode( &NetworkType::Main );
+		let unknown = || Receiver::Unknown { typecode: 0x30, data: vec![ 7; 32 ] };
+
+		let alone = ua( Revision::R2, vec![ Receiver::P2pkh( [ 1; 20 ] ) ] );
+		assert!( alone.starts_with( "tu1" ), "{alone}" );
+		for public in [ alone, ua( Revision::R0, vec![ Receiver::P2pkh( [ 1; 20 ] ), unknown() ] ) ] {
+			let s = W_ParseScan( network_t::NET_MAINNET, &public ).unwrap();
+			assert_eq!( s.kind, addrKind_t::ADDR_TRANSPARENT, "{public}" );
+			assert!( matches!( crate::w_send::W_CheckMemo( &Some( "hi".into() ), s.kind ), Err( werr_t::WERR_MEMO_PUBLIC ) ) );
+		}
+
+		for private in [ ua( Revision::R0, vec![ Receiver::Orchard( [ 0; 43 ] ), Receiver::P2pkh( [ 1; 20 ] ) ] ), ua( Revision::R0, vec![ Receiver::Sapling( [ 0; 43 ] ) ] ) ] {
+			assert_eq!( W_ParseScan( network_t::NET_MAINNET, &private ).map( |s| s.kind ).ok(), Some( addrKind_t::ADDR_UNIFIED ), "{private}" );
+		}
+	}
+
+	// W2-02: and the engine pays one, in public: it reads it as a unified address with a
+	// public receiver alone, which its input selection pays with a transparent output
+	// (zcash_client_backend 0.25, input_selection.rs), as it pays the t-address
+	#[test]
+	fn the_engine_reads_a_unified_address_without_a_shielded_receiver_as_public() {
+		#[allow( deprecated )]		// zcash_keys's, as the engine has it
+		use zcash_client_backend::address::Address;
+		use zcash_address::unified::{ self, Encoding, Receiver, Revision, Uitem };
+
+		let tu = unified::Address::try_from_items( Revision::R2, vec![ Uitem::Data( Receiver::P2pkh( [ 1; 20 ] ) ) ] ).unwrap().encode( &NetworkType::Main );
+		let read = Address::try_from_zcash_address( &zcash_protocol::consensus::MAIN_NETWORK, ZcashAddress::try_from_encoded( &tu ).unwrap() );
+		let Ok( Address::Unified( ua ) ) = read else {
+			panic!( "{tu}: {read:?}" );
+		};
+		assert!( ua.has_transparent() && !ua.has_sapling() && !ua.has_orchard() );
+	}
+
+	/*
+	==================
+	a_request_keeps_its_memo_or_is_refused
+
+	W2-03: a memo that isn't text (ZIP 302's arbitrary bytes, or a kind not
+	yet defined) can't be shown or sent, and an exchange may need it to
+	credit the deposit: the request is refused, never paid without it. An
+	empty memo is no memo. A memo for a public address is refused as that,
+	not as a code that isn't Zcash's
+	==================
+	*/
+	#[test]
+	fn a_request_keeps_its_memo_or_is_refused() {
+		let bytes = |b: &[ u8 ]| base64::Engine::encode( &base64::engine::general_purpose::URL_SAFE_NO_PAD, b );
+		let first = |memo: &str| W_ParseScan( network_t::NET_MAINNET, &format!( "zcash:{MAIN_SAPLING}?amount=1&memo={memo}" ) );
+		let second = |memo: &str| W_ParseScan( network_t::NET_MAINNET, &format!( "zcash:?address={MAIN_SAPLING}&amount=1&address.1={MAIN_SAPLING}&amount.1=1&memo.1={memo}" ) );
+
+		for memo in [ bytes( &[ 0xFF, 1, 2, 3 ] ), bytes( &[ 0xF5, 9 ] ) ] {
+			assert!( matches!( first( &memo ), Err( werr_t::WERR_MEMO_NOT_TEXT ) ), "{memo}: {:?}", first( &memo ) );
+			assert!( matches!( second( &memo ), Err( werr_t::WERR_MEMO_NOT_TEXT ) ), "{memo}: {:?}", second( &memo ) );
+		}
+		assert_eq!( first( &bytes( &[ 0xF6 ] ) ).unwrap().memo, None, "the empty memo" );
+		assert_eq!( first( &bytes( b"Order 42" ) ).unwrap().memo.as_deref(), Some( "Order 42" ) );
+
+		let public = format!( "zcash:{MAIN_T}?amount=1&memo={}", bytes( b"hi" ) );
+		assert!( matches!( W_ParseScan( network_t::NET_MAINNET, &public ), Err( werr_t::WERR_MEMO_PUBLIC ) ), "{:?}", W_ParseScan( network_t::NET_MAINNET, &public ) );
+		let publicSecond = format!( "zcash:?address={MAIN_SAPLING}&amount=1&address.1={MAIN_T}&amount.1=1&memo.1={}", bytes( b"hi" ) );
+		assert!( matches!( W_ParseScan( network_t::NET_MAINNET, &publicSecond ), Err( werr_t::WERR_MEMO_PUBLIC ) ) );
+	}
+
+	// W2-10: a request for more than exists says so; for nothing, that
+	#[test]
+	fn a_request_for_more_than_exists_says_so() {
+		let max = zcash_protocol::value::MAX_MONEY;
+		assert!( W_RequestUri( network_t::NET_MAINNET, MAIN_SAPLING, max, None ).is_ok() );
+		assert!( matches!( W_RequestUri( network_t::NET_MAINNET, MAIN_SAPLING, max + 1, None ), Err( werr_t::WERR_MORE_THAN_EXISTS ) ) );
+		assert!( matches!( W_RequestUri( network_t::NET_MAINNET, MAIN_SAPLING, 0, None ), Err( werr_t::WERR_NO_AMOUNT ) ) );
+	}
 
 	#[test]
 	fn reads_a_plain_address() {

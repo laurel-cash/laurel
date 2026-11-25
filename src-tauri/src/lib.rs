@@ -17,6 +17,14 @@ See the LICENSE file for details.
 // (an exit made unreachable by Sys_End once went out unseen)
 #![cfg_attr( target_os = "android", deny( warnings ) )]
 
+// the real-money build (v1, D-033) has no module until its own audit, and isn't the beta:
+// one place, so allowing a module after its audit is one line a reviewer sees. prices
+// passed its audit 2026-11-18 (D-035): a build may name it, none is given it unasked
+#[cfg( all( feature = "v1", any( feature = "offline-signing", feature = "folder-sync", feature = "repeat-payments" ) ) )]
+compile_error!( "v1 ships no module until its own audit (D-031, D-033): offline-signing, folder-sync and repeat-payments stay off" );
+#[cfg( all( feature = "v1", feature = "testnet-only" ) )]
+compile_error!( "v1 and testnet-only are two different builds: real money, or test coins (D-033)" );
+
 // Coldcard lost its users' coins in July 2026 to a build setting that quietly
 // swapped its generator, so a build that sets any getrandom_backend (even one
 // naming an OS source: none is needed) stops here instead of shipping. The cfg
@@ -51,6 +59,8 @@ mod w_engine;
 mod w_export;
 mod w_folder;
 mod w_history;
+mod w_import;
+mod w_lifecycle;
 mod w_local;
 mod w_log;
 mod w_main;
@@ -62,9 +72,12 @@ mod w_net;
 mod w_notice;
 mod w_notes;
 mod w_offline;
+mod w_persist;
 mod w_phrase;
 mod w_price;
 mod w_probe;
+mod w_public;
+mod w_registry;
 mod w_repeat;
 mod w_scan;
 mod w_server;
@@ -84,9 +97,7 @@ use std::time::Duration;
 
 use specta_typescript::Typescript;
 use tauri::Manager;
-use tauri_specta::{ collect_commands, collect_events, Builder, ErrorHandlingMode, Event };
-
-use w_cmds::*;
+use tauri_specta::{ collect_events, Builder, ErrorHandlingMode, Event };
 
 // where the generated ui bindings live, relative to src-tauri
 pub const BINDINGS_PATH: &str = "../src/bindings.ts";
@@ -109,8 +120,9 @@ const MAIN_WINDOW: &str = "main";
 ==================
 Sys_Specta
 
-The single list of everything the ui can call or listen to. Adding a
-command means adding it here, and nowhere else by hand.
+Everything the ui can call or listen to. The commands are w_cmds.rs's
+list (W_Commands): adding one means writing it there, and nowhere else
+by hand. The events are listed here.
 
 Errors are thrown as their message string. Zatoshi u64s are exported as
 numbers: the whole zec supply, 2.1e15 zatoshis, is far below 2^53.
@@ -118,99 +130,7 @@ numbers: the whole zec supply, 2.1e15 zatoshis, is far below 2^53.
 */
 fn Sys_Specta() -> Builder< tauri::Wry > {
 	Builder::< tauri::Wry >::new()
-		.commands( collect_commands![
-			V_Open_f,
-			V_Status_f,
-			V_Unlock_f,
-			V_Create_f,
-			V_SetPassword_f,
-			V_ChangePassword_f,
-			V_RemovePassword_f,
-			W_Constants_f,
-			W_List_f,
-			W_Create_f,
-			W_Restore_f,
-			W_RestoreViewKey_f,
-			W_RenameWallet_f,
-			W_Recovery_f,
-			W_MarkBackedUp_f,
-			W_AddAccount_f,
-			W_RenameAccount_f,
-			W_Receive_f,
-			Sync_Retry_f,
-			Sync_Pause_f,
-			Sync_Resume_f,
-			W_BalanceHistory_f,
-			W_Transactions_f,
-			W_QuoteShield_f,
-			W_ShieldNow_f,
-			W_QuoteMove_f,
-			W_MoveNow_f,
-			W_CheckKey_f,
-			W_CheckZcashdKeys_f,
-			W_ImportZcashdKeys_f,
-			W_QuoteSweep_f,
-			W_SweepNow_f,
-			W_QuoteSend_f,
-			W_SendNow_f,
-			W_Lock_f,
-			W_RemoveWallet_f,
-			W_StartOver_f,
-			W_PlanMigration_f,
-			W_MigrateNow_f,
-			W_MigrationStatus_f,
-			W_ParseScan_f,
-			W_Request_f,
-			W_ExportCsv_f,
-			Nt_Save_f,
-			Sto_Measure_f,
-			W_ServerStatus_f,
-			S_Get_f,
-			W_SetNetwork_f,
-			P_Series_f,
-			Sk_Here_f,
-			W_SetWords_f,
-			W_ValueHistory_f,
-			Rp_List_f,
-			Rp_Save_f,
-			Rp_Remove_f,
-			Rp_Done_f,
-			Al_List_f,
-			Al_Add_f,
-			Al_Remove_f,
-			F_Status_f,
-			F_Sync_f,
-			F_Start_f,
-			F_Join_f,
-			F_Stop_f,
-			F_Forget_f,
-			F_PickFolder_f,
-			D_Result_f,
-			D_Clear_f,
-			O_Pending_f,
-			O_SaveRequest_f,
-			O_Forget_f,
-			O_Finish_f,
-			O_Open_f,
-			O_Sign_f,
-			O_Close_f,
-			D_Info_f,
-			D_Reveal_f,
-			D_Report_f,
-			Sync_Rescan_f,
-			S_Set_f,
-			S_SetAutoLock_f,
-			S_SetLockAway_f,
-			M_Shown_f,
-			S_TestNotice_f,
-			Ct_List_f,
-			Ct_Save_f,
-			Ct_Remove_f,
-			W_SetServer_f,
-			W_CheckPhrase_f,
-			W_Wordlist_f,
-			W_HeightForDate_f,
-		] )
+		.commands( w_cmds::W_Commands() )
 		.events( collect_events![ w_local::syncEvent_t, w_local::paymentEvent_t, w_local::closingEvent_t, w_local::vaultChangedEvent_t, w_repeat::repeatDueEvent_t, w_alert::priceAlertEvent_t, w_folder::folderSyncedEvent_t, w_documents::documentChangedEvent_t ] )
 		.error_handling( ErrorHandlingMode::Throw )
 		.dangerously_cast_bigints_to_number()
@@ -240,14 +160,25 @@ disk-space problem Laurel set out not to have. Addresses, transaction ids
 and keys are masked in every line, whoever wrote it (w_log.rs).
 ==================
 */
+// where the log goes: always the file; the terminal only while developing,
+// since a release's stdout is the phone's logcat, readable over adb (W1-04)
+fn Sys_LogTargets( debug: bool ) -> Vec< tauri_plugin_log::TargetKind > {
+	use tauri_plugin_log::TargetKind;
+
+	let mut kinds = vec![ TargetKind::LogDir { file_name: Some( "laurel".into() ) } ];
+	if ( debug ) {
+		kinds.push( TargetKind::Stdout );
+	}
+	kinds
+}
+
 fn Sys_Logger() -> tauri::plugin::TauriPlugin< tauri::Wry > {
-	use tauri_plugin_log::{ RotationStrategy, Target, TargetKind };
+	use tauri_plugin_log::{ RotationStrategy, Target };
 
 	tauri_plugin_log::Builder::new()
-		.clear_targets()
-		.target( Target::new( TargetKind::LogDir { file_name: Some( "laurel".into() ) } ) )
-		// the terminal only while developing: a release's stdout is the phone's logcat, readable over adb (W1-04)
-		.targets( if cfg!( debug_assertions ) { vec![ Target::new( TargetKind::Stdout ) ] } else { vec![] } )
+		// every target in one list: targets() replaces the list, and once took the
+		// file away from every build, debug and release alike, so nothing was logged
+		.targets( Sys_LogTargets( cfg!( debug_assertions ) ).into_iter().map( Target::new ) )
 		.level( log::LevelFilter::Info )
 		.level_for( "tonic", log::LevelFilter::Warn )
 		.level_for( "h2", log::LevelFilter::Warn )
@@ -334,7 +265,7 @@ fn Sys_MainWindow( app: &tauri::App ) -> tauri::Result< () > {
 Sys_Close
 
 The one way Laurel closes: the window says it's saving, every engine
-stops and every wallet is written (w_main::W_Shutdown), within a budget
+stops and every wallet is written (w_persist::W_Shutdown), within a budget
 built from its parts (SHUTDOWN_BUDGET_SECS), then the process exits.
 Once only: a second request while saving is the same close.
 On Android it comes when the system ends the activity (swiped away,
@@ -348,7 +279,7 @@ fn Sys_Close( app: &tauri::AppHandle, code: i32 ) {
 	let _ = w_local::closingEvent_t {}.emit( app );
 	let app = app.clone();
 	tauri::async_runtime::spawn( async move {
-		if ( tokio::time::timeout( Duration::from_secs( w_engine::SHUTDOWN_BUDGET_SECS ), w_main::W_Shutdown() ).await.is_err() ) {
+		if ( tokio::time::timeout( Duration::from_secs( w_engine::SHUTDOWN_BUDGET_SECS ), w_persist::W_Shutdown() ).await.is_err() ) {
 			log::warn!( "Sys_Close: saving took longer than {} s; closing anyway", w_engine::SHUTDOWN_BUDGET_SECS );
 		}
 		#[cfg( target_os = "android" )]
@@ -502,5 +433,14 @@ mod tests {
 		let have = norm( std::fs::read_to_string( BINDINGS_PATH ).unwrap_or_default() );
 
 		assert!( want == have, "src/bindings.ts is stale: run a debug build (npm run tauri dev) to regenerate it" );
+	}
+
+	#[test]
+	fn every_build_logs_to_the_file() {
+		for debug in [ false, true ] {
+			let kinds = Sys_LogTargets( debug );
+			assert!( kinds.iter().any( |k| matches!( k, tauri_plugin_log::TargetKind::LogDir { .. } ) ), "debug {debug}: no log file" );
+			assert_eq!( kinds.iter().any( |k| matches!( k, tauri_plugin_log::TargetKind::Stdout ) ), debug, "the terminal only while developing" );
+		}
 	}
 }

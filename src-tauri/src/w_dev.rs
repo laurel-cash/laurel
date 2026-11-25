@@ -20,7 +20,7 @@ use specta::Type;
 use tauri::AppHandle;
 
 use crate::w_local::*;
-use crate::w_main::{ W_Ids, W_Slot };
+use crate::w_registry::{ W_Ids, W_Slot };
 use crate::w_server::W_ServerStatus;
 use crate::w_storage::{ Sto_Measure, Sto_Paths };
 

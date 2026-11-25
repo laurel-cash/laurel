@@ -19,9 +19,9 @@ See the LICENSE file for details.
 //
 // Quote, then confirm, as a shield is (w_shield.rs says why): the quote
 // keeps nothing, and the move is sent only if it is what the person saw,
-// once per quote seen. It is quoted and answered in a shield's shapes
-// (shieldQuote_t, shieldResult_t): money arriving in the private pool,
-// its fee, and sent or changed.
+// once per quote seen. It is quoted and answered as a shield is, in its
+// own shapes (moveQuote_t, moveResult_t): a shield's numbers name the
+// public addresses it spends, and a move spends none.
 //
 // Orchard has its own way into Ironwood (w_migrate.rs, ZIP 318). Both
 // ask W_Allow first (WA_MOVE_WITHIN): who may move money within at all.
@@ -32,7 +32,7 @@ use zcash_protocol::PoolType;
 
 use crate::w_engine::*;
 use crate::w_local::*;
-use crate::w_main::{ W_Allowed, W_Engine, W_Paying };
+use crate::w_registry::{ W_Allowed, W_Engine, W_Paying };
 use crate::w_net::engineResult_t;
 
 
@@ -64,13 +64,13 @@ Everything in Sapling, to the account's own address; less than the fee
 to move it is said as that, not as "not enough money"
 ==================
 */
-async fn W_ProposeMove( f: &mut fenced_t< '_ >, account: zip32::AccountId, to: &ZcashAddress ) -> wresult_t< shieldQuote_t > {
+async fn W_ProposeMove( f: &mut fenced_t< '_ >, account: zip32::AccountId, to: &ZcashAddress ) -> wresult_t< moveQuote_t > {
 	let p = E_ProposeSend( f, account, sendWhat_t::ALL( to.clone(), None ), Some( PoolType::SAPLING ) ).await
 		.map_err( |e| match e {
 			werr_t::WERR_NOT_ENOUGH => werr_t::WERR_MOVE_BELOW_FEE,
 			e => e,
 		} )?;
-	Ok( shieldQuote_t {
+	Ok( moveQuote_t {
 		amount:		p.amount,
 		fee:		p.fee,
 		feeNote:	crate::w_send::Com_FeeNote( p.fee, p.amount, p.coins ),
@@ -85,7 +85,7 @@ What moving would do, under a new intent. The engine's proposal is
 dropped at once, so sync keeps running while the person reads.
 ==================
 */
-pub async fn W_QuoteMove( id: &str, account: u32 ) -> wresult_t< quoted_t< shieldQuote_t > > {
+pub async fn W_QuoteMove( id: &str, account: u32 ) -> wresult_t< quoted_t< moveQuote_t > > {
 	let ( accountId, client, to ) = W_MoveAccount( id, account ).await?;
 	let quote = E_Fenced( &mut *E_Client( &client ).await?, fence_t::FENCE_SCANNED, async |f| E_Quote( f, async |f| W_ProposeMove( f, accountId, &to ).await ).await ).await?;
 	Ok( E_Intend( id, account, quote ) )
@@ -101,11 +101,14 @@ hold of the engine, if it is what the person saw. It spends Sapling
 notes, so Sapling's spend key comes first (W_SendNow).
 ==================
 */
-pub async fn W_MoveNow( id: &str, account: u32, intent: String, seen: shieldQuote_t ) -> wresult_t< shieldResult_t > {
+pub async fn W_MoveNow( id: &str, account: u32, intent: String, seen: moveQuote_t ) -> wresult_t< moveResult_t > {
 	let ( accountId, client, to ) = W_MoveAccount( id, account ).await?;		// its refusals before a download
 	crate::w_spendkey::Sk_Ensure().await?;
-	let ( slot, _, _ ) = W_Paying( id, account, &intent ).await?;
+	let ( slot, _, _, quoted ) = W_Paying( id, account, &intent ).await?;
 
-	let done = E_Fenced( &mut *E_Client( &client ).await?, fence_t::FENCE_SCANNED, async |f| E_SendIfSeen( f, &slot, &seen, async |f| W_ProposeMove( f, accountId, &to ).await ).await ).await?;
-	Ok( crate::w_shield::W_Answer( id, account, done ) )
+	let done = E_Fenced( &mut *E_Client( &client ).await?, fence_t::FENCE_SCANNED, async |f| E_SendIfSeen( f, &slot, &quoted, &seen, async |f| W_ProposeMove( f, accountId, &to ).await ).await ).await?;
+	Ok( match done {
+		confirmed_t::SENT( txid )		=> moveResult_t::SENT { txid: txid },
+		confirmed_t::CHANGED( quote )	=> moveResult_t::CHANGED { quoted: E_Intend( id, account, quote ) },
+	} )
 }

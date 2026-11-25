@@ -14,18 +14,17 @@ See the LICENSE file for details.
 
 import { useEffect, useRef, useState } from "react";
 import QrScanner from "./ui_qr";
-import { ArrowUpRight, ClipboardPaste, Eye, ImageUp, ScanLine, ShieldCheck, TriangleAlert } from "lucide-react";
+import { ArrowUpRight, ClipboardPaste, Eye, ImageUp, ScanLine, ShieldCheck } from "lucide-react";
 
-import { addrKind_t, commands, Com_ErrorString, Com_MemoAsksForSecrets, scanned_t } from "./ui_local";
+import { commands, Com_ErrorString, Com_IsPublicKind, Com_MemoAsksForSecrets, scanned_t } from "./ui_local";
 import { T } from "./ui_text";
 import { useAction } from "./ui_hooks";
-import { sheetProps_t, UI_Alert, UI_Amount, UI_CopyButton, UI_Sheet, UI_SheetButtons, UI_SheetClose, UI_Spinner, UI_Waiting } from "./ui_widgets";
+import { sheetProps_t, UI_Alert, UI_Amount, UI_Callout, UI_CopyButton, UI_Sheet, UI_SheetButtons, UI_SheetClose, UI_Spinner, UI_Waiting } from "./ui_widgets";
 import { UI_AddressLine } from "./ui_receive";
 import { UI_PayList } from "./ui_pays";
 
 type camera_t = { kind: "starting" } | { kind: "on" } | { kind: "none" } | { kind: "failed"; why: string };
 
-const PUBLIC_KINDS: addrKind_t[] = [ "transparent", "tex" ];
 
 
 /*
@@ -93,7 +92,7 @@ UI_ScanResult
 function UI_ScanResult( props: { result: scanned_t; onAgain: () => void; onPay: ( r: scanned_t ) => void } ) {
 	const r			= props.result;
 	const kind		= T.scan.kinds[r.kind];
-	const isPublic	= PUBLIC_KINDS.includes( r.kind );
+	const isPublic	= Com_IsPublicKind( r.kind );
 
 	return (
 		<div className="scan-result">
@@ -116,7 +115,7 @@ function UI_ScanResult( props: { result: scanned_t; onAgain: () => void; onPay: 
 				</dl>
 			)}
 			{[ r.label, r.message, r.memo ].some( ( t ) => t != null && Com_MemoAsksForSecrets( t ) ) && (
-				<div className="warn-note"><TriangleAlert aria-hidden="true" /><span>{T.memo.asksForSecrets}</span></div>
+				<UI_Callout kind="warn">{T.memo.asksForSecrets}</UI_Callout>
 			)}
 			<UI_PayList pays={r.also.map( ( p ) => ( { to: p.to, amount: p.zats, memo: p.memo } ) )} />
 			<UI_SheetButtons busy={false} action={{ label: T.scan.pay, onRun: () => props.onPay( r ), icon: <ArrowUpRight aria-hidden="true" /> }}>

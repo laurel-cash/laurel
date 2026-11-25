@@ -14,30 +14,150 @@ See the LICENSE file for details.
 
 // the library says how it was built (w_local.rs NETWORKS_MARK, w_probe.rs PROBE_MARK)
 export const TESTNET_MARK	= "laurel-networks:testnet-only";
+export const V1_MARK		= "laurel-networks:v1";		// the real-money build, mainnet alone (D-033)
 export const PROBE_ON		= "laurel-kdf-probe:on";
 
+// the modules a build may leave out (D-031), each a Cargo feature of that name,
+// off unless named; `full` names all four. A module's code carries its mark,
+// in the library (its MODULE_MARK, logged where it starts) and in the ui
+// bundle (its screen's data-module): where the mark is, the code is
+export const MODULES	= [ "offline-signing", "folder-sync", "prices", "repeat-payments" ];
+export const Com_ModuleMark = ( module ) => `laurel-module:${module}`;
+// the modules a v1 build may name, each after its own audit (lib.rs's compile_error
+// says the same): prices, 2026-11-18 (D-035). The rest stay out of real money
+export const V1_AUDITED	= [ "prices" ];
+
+// the modules a feature list turns on, as Cargo reads it ("testnet-only,full")
+export function Com_Features( list ) {
+	const named = new Set( ( list ?? "" ).split( /[\s,]+/ ).filter( Boolean ) );
+	return new Set( MODULES.filter( ( m ) => named.has( m ) || named.has( "full" ) ) );
+}
+
+// a module's code where its feature is off, or none where it is on: of every
+// module, or of those named (the ui's, as each is cut: vite.config.ts UI_MODULES)
+// A module's hosts: a build without it never names them (the site's promise for
+// prices: no request to the price source, not even one that can't be made). The
+// host, not the name: the ui's words may say "CoinGecko"
+export const MODULE_HOSTS = { "prices": [ "coingecko.com" ] };
+
+export function Com_ModuleProblems( text, on, where, modules = MODULES ) {
+	const problems = [];
+	for ( const module of modules ) {
+		const has = text.includes( Com_ModuleMark( module ) );
+		if ( has && !on.has( module ) ) {
+			problems.push( `${where} has ${module}'s code, and this build leaves it out (D-031)` );
+		}
+		for ( const host of on.has( module ) ? [] : MODULE_HOSTS[module] ?? [] ) {
+			if ( text.includes( host ) ) {
+				problems.push( `${where} names ${host}, ${module}'s host, and this build leaves ${module} out (D-031)` );
+			}
+		}
+		if ( !has && on.has( module ) ) {
+			problems.push( `${where} has no ${module} code, and this build turns it on: the feature didn't reach it` );
+		}
+	}
+	return problems;
+}
+
 // Cargo.toml: the engine's mixnet transport stays out (standing
-// constraints), and the KDF probe is never on by default
+// constraints), and neither the KDF probe nor a module is on by default
 export function Com_CargoProblems( cargo ) {
 	const problems = [];
 	if ( /["']nym["']|zingolib\/nym/.test( cargo ) ) {
 		problems.push( "src-tauri/Cargo.toml turns on zingolib's nym feature: the mixnet path stays off without a new legal review" );
 	}
-	if ( /^\s*default\s*=\s*\[[^\]]*["']kdf-probe["']/m.test( cargo ) ) {
+	const byDefault = /^\s*default\s*=\s*\[([^\]]*)\]/m.exec( cargo )?.[1] ?? "";
+	if ( /["']kdf-probe["']/.test( byDefault ) ) {
 		problems.push( "src-tauri/Cargo.toml turns the kdf-probe feature on by default: it is a test build's only (w_probe.rs)" );
+	}
+	if ( [ "full", ...MODULES ].some( ( m ) => byDefault.includes( `"${m}"` ) || byDefault.includes( `'${m}'` ) ) ) {
+		problems.push( "src-tauri/Cargo.toml turns a module on by default: a build gets one only by naming it (D-031)" );
+	}
+	if ( /["']v1["']/.test( byDefault ) ) {
+		problems.push( "src-tauri/Cargo.toml makes v1 the default build: real money is built only by naming it (D-033)" );
 	}
 	return problems;
 }
 
-// the phone's library: the testnet build, and never the KDF probe's
-export function Com_LibraryProblems( library ) {
+// Play's two lines, each one build (D-033): the beta's test coins with every module for
+// its testers (testnet-only,full), and v1, real money, mainnet alone and no module. A
+// build with neither is the desktop's two networks, never Play's; a line must be named
+export const LINES = [ "testnet", "v1" ];
+
+export function Com_LineProblems( line, features ) {
+	const named = new Set( ( features ?? "" ).split( /[\s,]+/ ).filter( Boolean ) );
+	const modules = Com_Features( features );
+	if ( !LINES.includes( line ) ) {
+		return [ `name the line: --line ${LINES.join( " or --line " )}` ];
+	}
 	const problems = [];
-	if ( !library.includes( TESTNET_MARK ) ) {
-		problems.push( "the library isn't the testnet build (NETWORKS_MARK): build with --features testnet-only" );
+	if ( line === "testnet" ) {
+		if ( !named.has( "testnet-only" ) || named.has( "v1" ) ) {
+			problems.push( `the testnet line is the testnet-only build, and this is --features ${features || "(none)"}: build with --features testnet-only,full` );
+		}
+		if ( modules.size !== MODULES.length ) {
+			problems.push( `the testnet line has every module (${MODULES.filter( ( m ) => !modules.has( m ) ).join( ", " )} missing): build with --features testnet-only,full` );
+		}
+	}
+	if ( line === "v1" ) {
+		if ( !named.has( "v1" ) || named.has( "testnet-only" ) ) {
+			problems.push( `the v1 line is the v1 build, and this is --features ${features || "(none)"}: build with --features v1` );
+		} else if ( modules.size ) {
+			problems.push( `v1 ships no module until its own audit (${[ ...modules ].join( ", " )}): build with --features v1` );
+		}
+	}
+	return problems;
+}
+
+/*
+==================
+Com_ActivityProblems
+
+The Android activity (MainActivity.kt) keeps screenshots and the task
+switcher's preview out (FLAG_SECURE), and from Android 14 marks Laurel's
+web view sensitive to accessibility (T-055): WebView hands a password
+field's typed text to every accessibility service, and a sensitive view
+is closed to all but declared accessibility tools (TalkBack still reads
+it). Below 14 there's no such mark: SECURITY.md says so. Code in comments
+doesn't count, and the mark must sit behind its API check
+==================
+*/
+export function Com_ActivityProblems( activity ) {
+	const code = activity.split( "\n" ).filter( ( l ) => !/^\s*\/\//.test( l ) ).join( "\n" );
+	const problems = [];
+	if ( !/addFlags\(\s*WindowManager\.LayoutParams\.FLAG_SECURE\s*\)/.test( code ) ) {
+		problems.push( "MainActivity.kt doesn't set FLAG_SECURE: screenshots and the task switcher would show recovery phrases and balances" );
+	}
+	const guarded = /SDK_INT\s*>=\s*(Build\.VERSION_CODES\.UPSIDE_DOWN_CAKE|34)\b[^}]*?(setAccessibilityDataSensitive\(\s*View\.ACCESSIBILITY_DATA_SENSITIVE_YES\s*\)|accessibilityDataSensitive\s*=\s*View\.ACCESSIBILITY_DATA_SENSITIVE_YES)/;
+	if ( !guarded.test( code ) ) {
+		problems.push( "MainActivity.kt doesn't mark the web view accessibility-data-sensitive behind SDK_INT >= UPSIDE_DOWN_CAKE (T-055): any accessibility app could read what's typed in Laurel" );
+	}
+	return problems;
+}
+
+// the phone's library, or the Store's exe. The testnet line (the Play beta): the
+// testnet build, with all four modules for its testers. v1: the v1 build, with
+// exactly the audited modules its build names (`modules`, none unless named: D-033,
+// D-035). Neither the KDF probe's
+export function Com_LibraryProblems( library, line = "testnet", modules = [] ) {
+	if ( !LINES.includes( line ) ) {
+		return [ `no line ${line}: ${LINES.join( " or " )}` ];
+	}
+	const problems = [];
+	const unaudited = modules.filter( ( m ) => !V1_AUDITED.includes( m ) );
+	if ( line === "v1" && unaudited.length ) {
+		return [ `v1 ships no module until its own audit (${unaudited.join( ", " )}): only ${V1_AUDITED.join( ", " )} has had one` ];
+	}
+	if ( line === "testnet" && !library.includes( TESTNET_MARK ) ) {
+		problems.push( "the library isn't the testnet build (NETWORKS_MARK): build with --features testnet-only,full" );
+	}
+	if ( line === "v1" && !library.includes( V1_MARK ) ) {
+		problems.push( "the library isn't the v1 build, mainnet alone (NETWORKS_MARK): build with --features v1" );
 	}
 	if ( library.includes( PROBE_ON ) ) {
 		problems.push( "the library is a KDF probe build (kdf-probe): a test build's only, never Play's" );
 	}
+	problems.push( ...Com_ModuleProblems( library, line === "testnet" ? new Set( MODULES ) : new Set( modules ), "the library" ) );
 	return problems;
 }
 

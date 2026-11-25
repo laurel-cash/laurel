@@ -12,7 +12,7 @@ See the LICENSE file for details.
 // the pointer lands on the nearest price; the change is from the range's start
 
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { cleanup, fireEvent, render, screen } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { QueryClientProvider } from "@tanstack/react-query";
 
 import { T } from "./ui_text";
@@ -39,7 +39,8 @@ vi.mock( "./bindings", async () => ( {
 		},
 		pSeriesF: async ( range: string ) => {
 			engine.asked.push( range );
-			return { range: range, fetchedAt: Math.floor( Date.now() / 1000 ), points: [ { time: 1000, usd: 20 }, { time: 2000, usd: 25 } ] };
+			const now = Math.floor( Date.now() / 1000 );		// today's prices: an old one says nothing (Com_NowPrice)
+			return { range: range, fetchedAt: now, points: [ { time: now - 120, usd: 20 }, { time: now - 60, usd: 25 } ] };
 		},
 	},
 	events: ( await import( "./test_engine" ) ).TEST_EVENTS,
@@ -67,6 +68,27 @@ describe( "UI_PriceView", () => {
 		await screen.findByText( "+25.00%" );		// 20 to 25 over the range
 		expect( engine.settings?.showPrice ).toBe( true );
 		expect( engine.asked ).toEqual( [ "1d" ] );
+	} );
+} );
+
+// found on the real wallet: turned off, the balance went on saying "≈ $2.72" from the
+// answer the query kept
+describe( "UI_Usd", () => {
+	it( "says an amount in dollars while prices are on, and nothing the moment they're off", async () => {
+		const { UI_Usd } = await import( "./ui_price" );
+		const { useStore } = await import( "./ui_store" );
+		const { QUERY, KEYS } = await import( "./ui_query" );
+		QUERY.clear();
+		useStore.setState( { network: "mainnet", hideAmounts: false } );
+		engine.settings = { ...engine.settings!, showPrice: true };
+		render( <QueryClientProvider client={QUERY}><UI_Usd zats={100_000_000} /></QueryClientProvider> );
+
+		const said = await screen.findByText( T.price.about( "$25.00" ) );
+		expect( said.getAttribute( "title" ) ).toBe( T.price.per( "$25.00" ) );
+
+		engine.settings = { ...engine.settings!, showPrice: false };		// as the Settings switch saves it
+		await act( async () => { QUERY.setQueryData( KEYS.settings(), engine.settings ); } );
+		await waitFor( () => expect( screen.queryByText( T.price.about( "$25.00" ) ) ).toBeNull() );
 	} );
 } );
 

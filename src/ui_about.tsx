@@ -13,13 +13,15 @@ See the LICENSE file for details.
 
 import { useMemo, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
-import { ChevronLeft, FileText, Scale, Search, Sparkles } from "lucide-react";
+import { ChevronLeft, FileText, Scale, ScrollText, Search, Sparkles } from "lucide-react";
+import { openUrl } from "@tauri-apps/plugin-opener";
 
 import { APP_VERSION, Com_ErrorOf } from "./ui_local";
 import { T } from "./ui_text";
 import { sheetProps_t, UI_Alert, UI_Sheet, UI_SheetClose, UI_Spinner } from "./ui_widgets";
 import { UI_AppIcon } from "./ui_chrome";
 import { UI_ReleaseNotesSheet } from "./ui_notes";
+import { TERMS_URL } from "./ui_terms";
 import LAUREL_LICENSE from "../LICENSE?raw";
 
 type notice_t	= { name: string; version: string; license: string; kind: "rust" | "ui"; text: number | null };
@@ -150,6 +152,14 @@ export function UI_AboutSection() {
 						<span className="set-sub">{T.about.licensesHint}</span>
 					</span>
 					<span className="set-actions"><button className="btn" onClick={() => setOpen( "licenses" )}>{T.about.read}</button></span>
+				</li>
+				<li className="set-row">
+					<span className="set-icon"><ScrollText aria-hidden="true" /></span>
+					<span className="set-text">
+						<span className="set-label">{T.about.terms}</span>
+						<span className="set-sub">{T.about.termsHint}</span>
+					</span>
+					<span className="set-actions"><button className="btn" onClick={() => void Promise.resolve().then( () => openUrl( TERMS_URL ) ).catch( ( e: unknown ) => console.error( "openUrl", e ) )}>{T.about.open}</button></span>
 				</li>
 			</ul>
 			<UI_LicensesSheet open={open === "licenses"} onOpenChange={( o ) => setOpen( o ? "licenses" : "none" )} />

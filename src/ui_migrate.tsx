@@ -17,13 +17,13 @@ See the LICENSE file for details.
 
 import { useState } from "react";
 import { useQuery } from "@tanstack/react-query";
-import { ArrowRight, CircleCheck, Info, ShieldCheck } from "lucide-react";
+import { ArrowRight, CircleCheck, ShieldCheck } from "lucide-react";
 
 import { Com_ErrorOf, commands, migratePlan_t, quoted_t } from "./ui_local";
 import { T } from "./ui_text";
 import { useConfirm } from "./ui_hooks";
 import { KEYS, QUERY } from "./ui_query";
-import { sheetProps_t, UI_Alert, UI_Amount, UI_Sheet, UI_SheetButtons, UI_SheetClose, UI_Waiting } from "./ui_widgets";
+import { sheetProps_t, UI_Alert, UI_Amount, UI_Callout, UI_Sheet, UI_SheetButtons, UI_SheetClose, UI_Waiting } from "./ui_widgets";
 import { UI_CatchingUp, usePayable } from "./ui_sync";
 import { UI_Flow, UI_ReviewFrom } from "./ui_payment";
 
@@ -111,7 +111,7 @@ export function UI_MigrateSheet( props: sheetProps_t & { walletId: string; accou
 					{p.residual > 0 && <div className="fact"><dt>{T.migrate.stays}</dt><dd><UI_Amount zats={p.residual} unit /></dd></div>}
 				</dl>
 				<p className="hint">{T.migrate.tradeoff}</p>
-				{move.changed && !move.busy && <div className="info-note"><Info aria-hidden="true" /><span>{T.migrate.changed}</span></div>}
+				{move.changed && !move.busy && <UI_Callout kind="info">{T.migrate.changed}</UI_Callout>}
 				{move.error && <UI_Alert title={T.migrate.failed} message={move.error} />}
 				{move.busy && <div className="sheet-loading"><UI_Waiting text={T.migrate.moving} size={16} /></div>}
 			</>

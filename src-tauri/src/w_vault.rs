@@ -174,9 +174,13 @@ pub enum purpose_t {
 	PURPOSE_META,
 	PURPOSE_CONTACTS,
 	PURPOSE_NOTES,
-	PURPOSE_REPEATS,
-	PURPOSE_SYNC,			// this computer's sync state: the sync key among it (w_folder.rs)
+	#[cfg_attr( not( feature = "repeat-payments" ), allow( dead_code ) )]
+	PURPOSE_REPEATS,		// kept in every build: a repeats.json sealed with it still means it (D-031)
+	#[cfg_attr( not( feature = "folder-sync" ), allow( dead_code ) )]
+	PURPOSE_SYNC,			// kept in every build, with what it sealed (D-031); this computer's sync state: the sync key among it (w_folder.rs)
+	#[cfg_attr( not( feature = "folder-sync" ), allow( dead_code ) )]
 	PURPOSE_SYNC_FILE,		// a computer's file in the shared folder, sealed with the sync key
+	#[cfg_attr( not( feature = "offline-signing" ), allow( dead_code ) )]
 	PURPOSE_OFFLINE,		// signing requests waiting for their signed payment (w_offline.rs)
 }
 
@@ -283,7 +287,7 @@ Com_Hash
 A BLAKE2b digest of data, len bytes long; the 16-byte personalization
 separates its uses. This is an unkeyed checksum, not authentication.
 The one place a hash is made: the recovery words' print, the sync code's
-checksum, a signing file's hash.
+checksum, a signing file's hash, a sweep's coins.
 ==================
 */
 pub fn Com_Hash( personal: &[ u8; 16 ], len: usize, data: &[ u8 ] ) -> Vec< u8 > {
@@ -298,6 +302,7 @@ pub fn Com_RandomHex( n: usize ) -> String {
 }
 
 // 32 random bytes, for a key (the sync key)
+#[cfg_attr( not( feature = "folder-sync" ), allow( dead_code ) )]
 pub fn Com_RandomKey() -> [ u8; KEY_LEN ] {
 	let mut key = [ 0u8; KEY_LEN ];
 	OsRng.fill_bytes( &mut key );

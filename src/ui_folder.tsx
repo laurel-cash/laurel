@@ -16,14 +16,14 @@ See the LICENSE file for details.
 
 import { useState } from "react";
 import { useQuery } from "@tanstack/react-query";
-import { Check, FolderOpen, FolderSync, Laptop, Lock, LogOut, TriangleAlert } from "lucide-react";
+import { Check, FolderOpen, FolderSync, Laptop, Lock, LogOut } from "lucide-react";
 
 import { commands, Com_Ago, Com_ErrorOf, pickedFolder_t, syncComputer_t, syncStatus_t } from "./ui_local";
 import { T } from "./ui_text";
 import { KEYS, QUERY } from "./ui_query";
 import { useAction } from "./ui_hooks";
 import { useStore } from "./ui_store";
-import { SECRET_FIELD, sheetProps_t, UI_Alert, UI_ConfirmSheet, UI_CopyButton, UI_Info, UI_Sheet, UI_SheetButtons, UI_SheetClose, UI_Spinner, UI_Waiting } from "./ui_widgets";
+import { SECRET_FIELD, sheetProps_t, UI_Alert, UI_Callout, UI_ConfirmSheet, UI_CopyButton, UI_Info, UI_Sheet, UI_SheetButtons, UI_SheetClose, UI_Spinner, UI_Waiting } from "./ui_widgets";
 
 // what a sync said, kept for everything that shows it; without its word, the status is read again
 function Com_Synced( s?: syncStatus_t ) {
@@ -86,7 +86,7 @@ export function UI_StartSheet( props: sheetProps_t & { initialFolder?: pickedFol
 		return (
 			<UI_Sheet open={props.open} onOpenChange={Close} title={T.folder.codeTitle} description={T.folder.codeLede}>
 				<code className="sync-code">{code}</code>
-				<div className="warn-note"><TriangleAlert aria-hidden="true" /><span>{T.folder.codeWarn}</span></div>
+				<UI_Callout kind="warn">{T.folder.codeWarn}</UI_Callout>
 				<UI_SheetClose onClose={() => Close( false )} label={T.folder.codeDone} primary>
 					<UI_CopyButton text={code} label={T.folder.copyCode} />
 				</UI_SheetClose>
@@ -151,7 +151,7 @@ export function UI_JoinSheet( props: sheetProps_t & { initialFolder?: pickedFold
 			<UI_Sheet open={props.open} onOpenChange={Close} title={T.folder.joinedTitle}>
 				{others > 0
 					? <p className="lede">{T.folder.joined( others )}</p>
-					: <div className="warn-note"><TriangleAlert aria-hidden="true" /><span>{T.folder.joinedNone}</span></div>}
+					: <UI_Callout kind="warn">{T.folder.joinedNone}</UI_Callout>}
 				<UI_SheetClose onClose={() => Close( false )} primary />
 			</UI_Sheet>
 		);

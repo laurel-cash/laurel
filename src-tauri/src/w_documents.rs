@@ -17,6 +17,7 @@ use serde::Deserialize;
 use crate::w_local::*;
 
 pub const DOCUMENT_MAX_BYTES: u64 = 64 * 1024 * 1024;
+#[cfg_attr( not( feature = "folder-sync" ), allow( dead_code ) )]		// a folder's listing is folder sync's alone (D-031)
 const LIST_MAX: usize = 1024;		// of a prefix's files; DocumentsPlugin.kt is told it
 
 #[derive( Clone, serde::Serialize, serde::Deserialize, specta::Type )]
@@ -78,6 +79,7 @@ pub fn Doc_Report< T >( _app: &tauri::AppHandle, _result: &wresult_t< T >, _map:
 	}
 }
 
+#[cfg_attr( not( feature = "folder-sync" ), allow( dead_code ) )]
 #[derive( Deserialize )]
 pub struct documentEntry_t {
 	pub name: String,
@@ -92,6 +94,7 @@ Provider metadata can be absent or wrong. Enforce the limit while reading,
 including pipes and a file that grows after selection.
 ==================
 */
+#[cfg_attr( not( any( feature = "folder-sync", feature = "offline-signing" ) ), allow( dead_code ) )]		// the modules' files alone (D-031)
 pub fn Doc_ReadBounded( reader: impl Read, limit: u64 ) -> wresult_t< zeroize::Zeroizing< Vec< u8 > > > {
 	let mut bytes = zeroize::Zeroizing::new( Vec::new() );
 	reader.take( limit.saturating_add( 1 ) ).read_to_end( &mut bytes ).map_err( |e| werr_t::WERR_ENGINE( e.to_string() ) )?;
@@ -101,6 +104,7 @@ pub fn Doc_ReadBounded( reader: impl Read, limit: u64 ) -> wresult_t< zeroize::Z
 	Ok( bytes )
 }
 
+#[cfg_attr( not( any( feature = "folder-sync", feature = "offline-signing" ) ), allow( dead_code ) )]
 pub fn Doc_Read( path: &Path, limit: u64 ) -> wresult_t< zeroize::Zeroizing< Vec< u8 > > > {
 	Doc_ReadBounded( Doc_Open( path, false )?, limit )
 }
@@ -111,6 +115,7 @@ fn Doc_IsProvided( path: &Path ) -> bool {
 	path.to_string_lossy().starts_with( "content://" )
 }
 
+#[cfg_attr( not( any( feature = "folder-sync", feature = "offline-signing" ) ), allow( dead_code ) )]
 fn Doc_Open( path: &Path, write: bool ) -> wresult_t< std::fs::File > {
 	#[cfg( target_os = "android" )]
 	if ( Doc_IsProvided( path ) ) {
@@ -125,6 +130,7 @@ fn Doc_Open( path: &Path, write: bool ) -> wresult_t< std::fs::File > {
 	std::fs::OpenOptions::new().read( !write ).write( write ).open( path ).map_err( |e| werr_t::WERR_ENGINE( e.to_string() ) )
 }
 
+#[cfg_attr( not( any( feature = "folder-sync", feature = "offline-signing" ) ), allow( dead_code ) )]
 pub fn Doc_Write( path: &Path, bytes: &[ u8 ] ) -> wresult_t< () > {
 	if ( bytes.len() as u64 > DOCUMENT_MAX_BYTES ) { return Err( werr_t::WERR_OFFLINE_FILE ); }
 	#[cfg( target_os = "android" )]
@@ -151,6 +157,7 @@ drive's root, with thousands of files), and a limit over every entry
 once failed sync there as "can't reach the folder".
 ==================
 */
+#[cfg_attr( not( feature = "folder-sync" ), allow( dead_code ) )]
 pub fn Doc_List( folder: &Path, prefix: &str ) -> wresult_t< Vec< documentEntry_t > > {
 	let listed = Doc_ListUpTo( folder, prefix, LIST_MAX + 1 )?;
 	if ( listed.len() > LIST_MAX ) {
@@ -161,6 +168,7 @@ pub fn Doc_List( folder: &Path, prefix: &str ) -> wresult_t< Vec< documentEntry_
 
 // at most max of them, the provider's or the file system's; one past
 // LIST_MAX is how Doc_List knows there were too many, on either
+#[cfg_attr( not( feature = "folder-sync" ), allow( dead_code ) )]
 fn Doc_ListUpTo( folder: &Path, prefix: &str, max: usize ) -> wresult_t< Vec< documentEntry_t > > {
 	#[cfg( target_os = "android" )]
 	if ( Doc_IsProvided( folder ) ) {
@@ -193,6 +201,7 @@ pub fn Doc_Name( path: &Path ) -> wresult_t< String > {
 	Ok( path.display().to_string() )
 }
 
+#[cfg_attr( not( feature = "folder-sync" ), allow( dead_code ) )]
 pub fn Doc_RemoveChild( folder: &Path, name: &str ) -> wresult_t< () > {
 	#[cfg( target_os = "android" )]
 	if ( Doc_IsProvided( folder ) ) {
@@ -211,6 +220,7 @@ temporary document is fully written before it replaces this device's snapshot.
 SAF providers do not promise atomic rename, so a failed publication is retried.
 ==================
 */
+#[cfg_attr( not( feature = "folder-sync" ), allow( dead_code ) )]
 pub fn Doc_WriteChild( folder: &Path, name: &str, bytes: &[ u8 ] ) -> wresult_t< () > {
 	if ( bytes.len() as u64 > DOCUMENT_MAX_BYTES ) { return Err( werr_t::WERR_SYNC_FOLDER ); }
 	#[cfg( target_os = "android" )]

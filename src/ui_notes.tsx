@@ -18,7 +18,8 @@ See the LICENSE file for details.
 import { useEffect, useState } from "react";
 
 import { Check } from "lucide-react";
-import { APP_VERSION, Com_FormatDate, Com_ReadPref, Com_ReleaseNotes, Com_WritePref, PREF_NOTES_SEEN, releaseNote_t } from "./ui_local";
+import { commands } from "./bindings";
+import { APP_VERSION, Com_FormatDate, Com_NoteTagsHere, Com_ReadPref, Com_ReleaseNotes, Com_WritePref, PREF_NOTES_SEEN, releaseNote_t } from "./ui_local";
 import { T } from "./ui_text";
 import { sheetProps_t, UI_Sheet, UI_SheetClose } from "./ui_widgets";
 import { UI_AppIcon } from "./ui_chrome";
@@ -28,7 +29,7 @@ import NOTES_TEXT from "../docs/RELEASE-NOTES.md?raw";
 
 
 // versions and days (data); what each says is the language's (T.releaseNotes)
-export const RELEASE_NOTES = Com_ReleaseNotes( NOTES_TEXT );
+export const RELEASE_NOTES = Com_ReleaseNotes( NOTES_TEXT, Com_NoteTagsHere );
 
 // a version's changes in the screen's language; English where a translation has none yet
 function Com_NoteItems( note: releaseNote_t ): readonly string[] {
@@ -94,6 +95,53 @@ export function useWhatsNew( known: boolean, firstRun: boolean ) {
 		setOpen( next );
 	}
 	return { open, onOpenChange: OnOpenChange };
+}
+
+/*
+==================
+useBetaWallets
+
+D-033: v1 opens mainnet alone, and a device that ran the beta keeps its
+test wallets, unopened. The engine says whether to tell (once, only
+where they are: S_BetaWalletsDue); closing the sheet, however, is told.
+==================
+*/
+export function useBetaWallets( known: boolean ) {
+	const [ open, setOpen ] = useState( false );
+
+	useEffect( () => {
+		if ( !known ) {
+			return;
+		}
+		let live = true;
+		void Promise.resolve()
+			.then( () => commands.sBetaWalletsDueF() )
+			.then( ( due ) => {
+				if ( live && due ) {
+					setOpen( true );
+				}
+			} )
+			.catch( ( e: unknown ) => console.error( "sBetaWalletsDueF", e ) );
+		return () => {
+			live = false;
+		};
+	}, [ known ] );
+
+	function OnOpenChange( next: boolean ) {
+		if ( !next ) {
+			void Promise.resolve().then( () => commands.sBetaWalletsSeenF() ).catch( ( e: unknown ) => console.error( "sBetaWalletsSeenF", e ) );		// unsaved: said once more next start
+		}
+		setOpen( next );
+	}
+	return { open, onOpenChange: OnOpenChange };
+}
+
+export function UI_BetaWalletsSheet( props: sheetProps_t ) {
+	return (
+		<UI_Sheet open={props.open} onOpenChange={props.onOpenChange} title={T.betaWallets.title} description={T.betaWallets.text}>
+			<UI_SheetClose onClose={() => props.onOpenChange( false )} label={T.betaWallets.ok} primary large />
+		</UI_Sheet>
+	);
 }
 
 // one version's changes, each beside its mark

@@ -36,6 +36,10 @@ const FRAMES = "new Promise( ( ok ) => requestAnimationFrame( () => requestAnima
 // the longest any one step may take before the check says so; LAUREL_LAYOUT_WAIT_MS for a
 // machine busy with other work (a first draw at 100% cpu took past 30s), said in the last line
 const WAIT_MS = Number( process.env.LAUREL_LAYOUT_WAIT_MS ) || 30_000;
+// a first draw compiles the page's modules on a cold dev server: beside the gate's cargo
+// builds it took past 30s (twice on 2026-11-08, 71s alone and passing), each later draw
+// a fraction of it. Only the first draws wait longer; every other step keeps WAIT_MS
+const FIRST_DRAW_MS = WAIT_MS * 4;
 
 // the default window, and the smallest at the largest text size (175%), and between
 // (a taller one too: the action hints only show above 880px, and were cut there unseen)
@@ -48,6 +52,7 @@ const SCREENS = [
 	{ name: "a pool's sheet",		click: ".pools-more .link|.pool-list li:nth-child(2) .pool-row",				drawn: ".pool-hero" },
 	{ name: "Receive",				click: ".actions .action:nth-child(2)",											drawn: ".tile-grid.three" },
 	{ name: "Receive's kinds",		click: ".actions .action:nth-child(2)|.tile-grid.three > button:last-child",	drawn: ".kind-list" },
+	{ name: "a transaction",		click: ".nav li:nth-child(4) .nav-item|.tx-row",								drawn: ".tx-route" },
 	{ name: "History's filters",	click: ".nav li:nth-child(4) .nav-item|.filter-btn",							drawn: ".chip-set" },
 	{ name: "Settings",				click: ".nav li:nth-child(5) .nav-item",										drawn: ".settings-nav" },
 	{ name: "a settings pane",		pane: "security",																drawn: ".pane-head" },
@@ -76,7 +81,7 @@ if ( !existsSync( EDGE ) ) {
 }
 
 // a promise, or the reason it never came
-const Within = ( what, promise ) => Promise.race( [ promise, new Promise( ( _, fail ) => setTimeout( () => fail( new Error( `${what} took over ${WAIT_MS / 1000}s` ) ), WAIT_MS ) ) ] );
+const Within = ( what, promise, ms = WAIT_MS ) => Promise.race( [ promise, new Promise( ( _, fail ) => setTimeout( () => fail( new Error( `${what} took over ${ms / 1000}s` ) ), ms ) ) ] );
 
 // the first line of a child's output matching re
 const Line = ( stream, re ) => new Promise( ( ok ) => {
@@ -119,7 +124,9 @@ async function Cdp( url ) {
 	return { send, close: () => socket.close() };
 }
 
-const server = spawn( process.execPath, [ "node_modules/vite/bin/vite.js", "--port", String( PORT ), "--strictPort" ], { stdio: "pipe", windowsHide: true } );
+// the page with every module a build may leave out (D-031), as the testnet line ships it,
+// unless the run names its own (LAUREL_FEATURES)
+const server = spawn( process.execPath, [ "node_modules/vite/bin/vite.js", "--port", String( PORT ), "--strictPort" ], { stdio: "pipe", windowsHide: true, env: { ...process.env, LAUREL_FEATURES: process.env.LAUREL_FEATURES ?? "full" } } );
 const profile = mkdtempSync( join( tmpdir(), "laurel-layout-" ) );
 let edge = null;
 let bad = 0;
@@ -162,7 +169,7 @@ try {
 		await cdp.send( "Page.navigate", { url: url }, sessionId );
 		return tab;
 	};
-	const Drawn = ( tab, what ) => Within( what, ( async () => { while ( !await tab.Look() ) await new Promise( ( ok ) => setTimeout( ok, 50 ) ); } )() );
+	const Drawn = ( tab, what, ms = WAIT_MS ) => Within( what, ( async () => { while ( !await tab.Look() ) await new Promise( ( ok ) => setTimeout( ok, 50 ) ); } )(), ms );
 
 	// the dashboard and the pseudo-locale load together; the screens only once the dev
 	// server has made its modules, and while the dashboard is measured. All six at once,
@@ -174,7 +181,7 @@ try {
 		Tab( `http://127.0.0.1:${PORT}/mock.html?check&pane=&locale=en-XA` ),
 	] );
 	await main.Front();
-	await Drawn( main, "the first draw" );
+	await Drawn( main, "the first draw", FIRST_DRAW_MS );
 	const screens = await Promise.all( SCREENS.map( ( s ) => Tab( `http://127.0.0.1:${PORT}/mock.html?check&pane=${s.pane ?? ""}${s.click ? `&click=${encodeURIComponent( s.click )}` : ""}&drawn=${encodeURIComponent( s.drawn )}` ) ) );
 	await main.Front();
 	for ( const [ w, h ] of SIZES ) {
@@ -234,7 +241,7 @@ try {
 	// between ⟧) are a sentence no translation would reach. The sample data's are
 	// expected: PLAIN_OK
 	await pseudo.Front();
-	await Drawn( pseudo, "the pseudo-locale's first draw" );
+	await Drawn( pseudo, "the pseudo-locale's first draw", FIRST_DRAW_MS );
 	const plain = new Set();
 	for ( const [ w, h ] of PSEUDO_SIZES ) {
 		await pseudo.Size( [ w, h ] );

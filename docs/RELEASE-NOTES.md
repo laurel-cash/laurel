@@ -8,6 +8,44 @@ heading, then one plain sentence per `- ` line (no links or markup: the app
 shows them as text). `scripts/check_version.mjs` refuses a version with no
 notes of its own.
 
+## 0.3.3 · 2026-11-24
+
+- A restored wallet says it's getting ready while Laurel sets up its first sync, instead of sitting at 0%.
+- On Home, the private, public and pending amounts go one per line when they don't fit side by side.
+- Laurel keeps its small log file again, so a problem can be looked into afterwards.
+
+## 0.3.2 · 2026-11-20
+
+- Laurel's terms of use and privacy policy now cover Laurel for Windows and real ZEC, so Laurel asks you to agree to them once more.
+- [prices] Laurel can show your balance in US dollars under it, with the ZEC price from CoinGecko. It's off until you turn it on in Settings > General, and CoinGecko sees your IP address, never anything about your wallets.
+- [prices] The chart can show what your account was worth in dollars over time, and the ZEC price itself, once prices are on.
+
+## 0.3.1 · 2026-11-18
+
+- Before you send, the review says whether the address you're paying is private or public.
+- Laurel warns before sending a payment so small that it costs its recipient as much in fees as it holds, and History explains one you received.
+- A long address in Send is shown in full, above the Paste, Scan and Choose buttons.
+- The balance chart labels small amounts clearly, and pool names on Home no longer break in two.
+
+## 0.3.0 · 2026-11-17
+
+- Each payment in History opens its own page: who was paid and from where, its confirmations, your note and category, and Send Again, Copy ID and View in Explorer.
+- Home says how many payments are still on their way, and opens History on them.
+- Settings > Advanced > Send From Public Money pays from public money as it is, for exchanges that ask for it. It's off unless you turn it on.
+- Receive > New Address gives another public address once the current one has received money.
+- Public money is shielded one address at a time, and the review says when a payment would tie public addresses together.
+- The public balance lists each address and what it holds, each with its own Shield.
+- [windows] Notifications on Windows show under Laurel's name.
+
+## 0.2.0 · 2026-11-10
+
+- Laurel now uses real ZEC on the Zcash network.
+- Before you start, Laurel asks you to agree to its terms of use and privacy policy.
+- Your test wallets from the beta stay on this device but aren't opened. Test coins have no value.
+- Payments are checked more strictly before they're sent. If Laurel can't tell whether a payment went out, it holds those coins until it knows.
+- Laurel only uses servers that are on the right network and up to date.
+- View-only wallets can't send in this version.
+
 ## 0.1.8 · 2026-11-08
 
 - Updated to the latest Zcash libraries, with the final settings for the network's recent upgrade.

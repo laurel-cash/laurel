@@ -1,6 +1,8 @@
 package com.rptxsoftware.wallet
 
+import android.os.Build
 import android.os.Bundle
+import android.view.View
 import android.view.WindowManager
 import android.webkit.WebView
 import androidx.activity.enableEdgeToEdge
@@ -16,6 +18,13 @@ class MainActivity : TauriActivity() {
 
   override fun onWebViewCreate(webView: WebView) {
     web = webView
+    // T-055: WebView hands a password field's typed text to every accessibility service.
+    // From Android 14 a sensitive view is closed to all but declared accessibility tools
+    // (TalkBack still reads it); Laurel is one web view, so this covers every screen.
+    // Below 14 there's no such mark (SECURITY.md)
+    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE) {
+      webView.setAccessibilityDataSensitive(View.ACCESSIBILITY_DATA_SENSITIVE_YES)
+    }
   }
 
   override fun onCreate(savedInstanceState: Bundle?) {

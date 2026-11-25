@@ -13,7 +13,7 @@ See the LICENSE file for details.
 // Engine types, commands, events and constants come from ./bindings,
 // generated from rust. Nothing here may mirror them.
 
-import type { addressKind_t, balance_t, errorInfo_t, network_t, paymentEvent_t, pool_t, priceAlertEvent_t, syncProgress_t, walletSummary_t } from "./bindings";
+import type { addrKind_t, addressKind_t, balance_t, errorInfo_t, network_t, paymentEvent_t, pool_t, priceAlertEvent_t, syncProgress_t, walletSummary_t } from "./bindings";
 import PACKAGE from "../package.json";
 import { LOCALE } from "./ui_locale";
 
@@ -108,7 +108,7 @@ export function Com_FormatZec( zats: number ): string {
 const DECIMAL = ( 1.5 ).toLocaleString( LOCALE ).charAt( 1 );
 
 // every way Laurel writes a time, in the language the screens speak (ui_locale.ts)
-export type dateStyle_t = "day" | "shortDay" | "monthDay" | "month" | "time";
+export type dateStyle_t = "day" | "shortDay" | "monthDay" | "month" | "time" | "moment";
 
 const DATE_STYLES: Record< dateStyle_t, Intl.DateTimeFormatOptions > = {
 	day:		{ year: "numeric", month: "long", day: "numeric" },		// March 4, 2026
@@ -116,6 +116,7 @@ const DATE_STYLES: Record< dateStyle_t, Intl.DateTimeFormatOptions > = {
 	monthDay:	{ month: "short", day: "numeric" },						// Mar 4
 	month:		{ month: "short", year: "numeric" },					// Mar 2026
 	time:		{ hour: "numeric", minute: "2-digit" },					// 3:07 PM
+	moment:		{ year: "numeric", month: "short", day: "numeric", hour: "numeric", minute: "2-digit" },	// Mar 4, 2026, 3:07 PM
 };
 
 /*
@@ -128,6 +129,20 @@ explorers say); the network's own name is the language's (Com_NetworkName)
 */
 export function Com_Unit( net: network_t ): string {
 	return net === "mainnet" ? "ZEC" : "TAZ";
+}
+
+/*
+==================
+Com_ExplorerUrl
+
+A transaction on a public block explorer, opened in the person's browser
+only when they ask (CONTROL-MAP.md): zcashexplorer.app, the Zcash
+community's, which reads the network's v6 transactions (checked 2026-11-17)
+and carries no analytics
+==================
+*/
+export function Com_ExplorerUrl( net: network_t, txid: string ): string {
+	return `https://${net === "mainnet" ? "mainnet" : "testnet"}.zcashexplorer.app/transactions/${encodeURIComponent( txid )}`;
 }
 
 
@@ -191,6 +206,19 @@ shortened: its start and its end, the parts a person compares by eye.
 */
 export function Com_Abbrev( s: string, edge = 10 ): string {
 	return s.length <= ABBREV_OVER ? s : `${s.slice( 0, edge )}…${s.slice( -edge )}`;
+}
+
+// the compact form, where room is short: a fact's id, a route's end, a menu's line
+export function Com_Short( s: string ): string {
+	return Com_Abbrev( s, 6 );
+}
+
+// what's paid to these is seen by anyone: a public address, or an exchange's
+// that takes public money alone (a unified address with a private receiver is private)
+const PUBLIC_KINDS: readonly addrKind_t[] = [ "transparent", "tex" ];
+
+export function Com_IsPublicKind( kind: addrKind_t ): boolean {
+	return PUBLIC_KINDS.includes( kind );
 }
 
 /*
@@ -378,20 +406,40 @@ Com_ReleaseNotes
 
 The notes as the file writes them: "## 0.1.0 · 2026-09-28" and a "- "
 line per change, newest first. Anything else (the file's own preface) is
-not a note.
+not a note. A change only some builds have starts with its tag ("- [prices]
+…", "- [windows] …"), kept only where `has` says this build has it, so a
+phone never reads of Windows' notifications or of dollars it can't show.
 ==================
 */
-export function Com_ReleaseNotes( text: string ): releaseNote_t[] {
+export type noteTag_t = "prices" | "windows";
+
+export function Com_ReleaseNotes( text: string, has: ( tag: noteTag_t ) => boolean = () => true ): releaseNote_t[] {
 	const notes: releaseNote_t[] = [];
 	for ( const line of text.split( /\r?\n/ ) ) {
 		const head = /^## (\S+) · (\d{4}-\d{2}-\d{2})\s*$/.exec( line );
 		if ( head ) {
 			notes.push( { version: head[1], date: head[2], items: [] } );
 		} else if ( line.startsWith( "- " ) && notes.length ) {
-			notes[notes.length - 1].items.push( line.slice( 2 ).trim() );
+			const item = line.slice( 2 ).trim();
+			const tagged = /^\[(prices|windows)\]\s+(.*)$/.exec( item );
+			if ( !tagged ) {
+				notes[notes.length - 1].items.push( item );
+			} else if ( has( tagged[1] as noteTag_t ) ) {
+				notes[notes.length - 1].items.push( tagged[2] );
+			}
 		}
 	}
 	return notes;
+}
+
+// what this build has of the tagged changes: prices by its module, Windows by the system it runs on
+export function Com_NoteTagsHere( tag: noteTag_t ): boolean {
+	switch ( tag ) {
+	case "prices":
+		return __LAUREL_PRICES__;
+	case "windows":
+		return typeof navigator !== "undefined" && /Windows/.test( navigator.userAgent );
+	}
 }
 
 /*
@@ -538,11 +586,19 @@ export function Com_HomeLayout( kept: unknown ): homeLayout_t {
 	return { order: order, hidden: hidden, chart: typeof k.chart === "boolean" ? k.chart : true };
 }
 
-// a card one place earlier (-1) or later (+1); at an end it stays
-export function Com_MoveCard( layout: homeLayout_t, card: homeCard_t, by: -1 | 1 ): homeLayout_t {
+// whether this build has a card: a module it leaves out (D-031) takes its card with
+// it, off the page and out of the dashboard's list. A kept layout keeps the card's
+// place, for a build with the module
+export const Com_InBuild = ( c: homeCard_t, repeats: boolean = __LAUREL_REPEAT_PAYMENTS__ ): boolean => c !== "repeats" || repeats;
+
+// a card one place earlier (-1) or later (+1), past any this build hasn't; at an end it stays
+export function Com_MoveCard( layout: homeLayout_t, card: homeCard_t, by: -1 | 1, inBuild: ( c: homeCard_t ) => boolean = ( c ) => Com_InBuild( c ) ): homeLayout_t {
 	const order = [ ...layout.order ];
 	const from = order.indexOf( card );
-	const to = from + by;
+	let to = from + by;
+	while ( to >= 0 && to < order.length && !inBuild( order[to] ) ) {
+		to += by;
+	}
 	if ( from < 0 || to < 0 || to >= order.length ) {
 		return layout;
 	}
@@ -556,11 +612,12 @@ Com_ShownCards
 
 The side cards to draw, in order. A hidden card that has something due
 shows anyway: hiding "Coming up" is about the page, and must not hide a
-payment that is due now (the engine says which, Rp_List).
+payment that is due now (the engine says which, Rp_List). A card this build
+hasn't never shows (Com_InBuild).
 ==================
 */
-export function Com_ShownCards( layout: homeLayout_t, due: homeCard_t[] ): homeCard_t[] {
-	return layout.order.filter( ( c ) => !layout.hidden.includes( c ) || due.includes( c ) );
+export function Com_ShownCards( layout: homeLayout_t, due: homeCard_t[], inBuild: ( c: homeCard_t ) => boolean = ( c ) => Com_InBuild( c ) ): homeCard_t[] {
+	return layout.order.filter( ( c ) => inBuild( c ) && ( !layout.hidden.includes( c ) || due.includes( c ) ) );
 }
 
 export function Com_ShowCard( layout: homeLayout_t, card: homeCard_t, on: boolean ): homeLayout_t {
@@ -586,14 +643,33 @@ export function Com_ApplyTheme( a: appearance_t ) {
 
 /*
 ==================
+Com_CssPx
+
+A CSS length an element's style sets, as a number of pixels: a custom
+property such as --split-col-pad, so code that sizes things reads the
+value the stylesheet draws with, never a copy of it. Pixels only ("16px");
+anything else, or nothing set, is 0. Here beside Com_ParseZec because
+this file owns turning text into numbers.
+==================
+*/
+export function Com_CssPx( el: Element, name: string ): number {
+	const text = getComputedStyle( el ).getPropertyValue( name ).trim();
+	const px = /^(\d+(?:\.\d+)?)px$/.exec( text );
+	return px ? Number( px[1] ) : 0;
+}
+
+/*
+==================
 Com_SyncState
 
 The one reading of the engine's sync progress into what the ui shows.
 Every place that shows sync state switches on this, so they can't
-disagree. The engine states each fact; nothing here is guessed.
+disagree. The engine states each fact; nothing here is guessed. Preparing is the
+engine's setup before its first block: a state of its own, so every view
+has to say what it shows then (a "Syncing 0%" sat there for minutes).
 ==================
 */
-export type syncState_t = "connecting" | "syncing" | "synced" | "offline" | "retrying" | "paused";
+export type syncState_t = "connecting" | "preparing" | "syncing" | "synced" | "offline" | "retrying" | "paused";
 
 export function Com_SyncState( p: syncProgress_t | undefined ): syncState_t {
 	if ( !p ) {
@@ -608,7 +684,10 @@ export function Com_SyncState( p: syncProgress_t | undefined ): syncState_t {
 	if ( p.paused ) {
 		return "paused";
 	}
-	return p.complete ? "synced" : "syncing";
+	if ( p.complete ) {
+		return "synced";
+	}
+	return p.preparing ? "preparing" : "syncing";
 }
 
 /*

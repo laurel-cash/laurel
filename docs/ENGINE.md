@@ -34,6 +34,13 @@ why. The gate (`npm run check`, step `fork`) fails if the engine differs from
 upstream plus that patch, or if a changed file isn't named here: the fork can't
 grow by an edit nobody recorded.
 
+What belongs in the patch: a fix for something the engine gets wrong, or an
+opening that lets the app make a choice the engine made by itself. What
+doesn't: the choice. A rule of Laurel's written inside the engine is re-applied
+at every upstream update and reviewed by nobody upstream, so it is written in
+`src-tauri/src` instead and handed in (which public addresses a payment or a
+shield spends: `w_public.rs`; how far a rescan looks: `w_engine.rs`).
+
     node scripts/engine.mjs fetch           # once per machine: the pinned upstream, into vendor/.upstream (ignored)
     node scripts/engine.mjs record          # after changing the engine: rewrite vendor/zingolib.patch
     node scripts/engine.mjs status          # how far upstream's newest dev is, and what taking it costs (writes nothing)
@@ -62,6 +69,54 @@ dropped every experimental (`.unsafe.`) server, and testnet's list now has one,
 Zaino (`zaino.testnet.unsafe.zec.rocks`), second, as the fail-over when
 testnet.zec.rocks is down. Mainnet's list still has none
 (`no_experimental_server_for_mainnet`).
+
+Mainnet's list has only servers whose operator Laurel can name (T-052,
+`every_mainnet_server_has_an_operator_we_can_name`): a server sees this
+computer's address and every wallet's sync, and an operator known only by a
+forum name can't be asked about it, or held to it. A person can still give any
+server of their own. As of 2026-11-09:
+
+| Servers | Operator |
+|---|---|
+| `zec.rocks`, `na.`, `sa.`, `eu.`, `ap.zec.rocks` | ZecRocks, run by emersonian, who also runs Hosh (hosh.zec.rocks), the servers' uptime census |
+| `zec-node.cakewallet.com` | Cake Labs, Cake Wallet's maker |
+
+Taken off: `lwd.zcashexplorer.app`, `us.`/`eu.zec.stardust.rest` (no operator
+said), CipherScan's (named, Kenbak, but a year old and not in Hosh's current
+list: a candidate once it is), and twelve more run under forum names alone. Most
+of the list is one operator's: if ZecRocks is down, Automatic has Cake Labs'
+one server. A server comes back on only with its operator added here.
+
+zingolib's one default server (`MAINNET_DEFAULT_INDEXER`,
+`mainnet.zainod.zingolabs.dev`, in `zingo-netutils`) is still a string in the
+library, but Laurel never connects to it: `ClientConfig::builder()` starts with
+no server, Laurel never asks for `IndexerChoice::Default`, and every client's
+server is set from the list above (`w_sync.rs`, `set_indexer`). It showed in
+the 0.2.0 v1 bundle's strings, unused (2026-11-10).
+
+Nor are the modules a build may leave out (D-031): offline signing
+(`w_offline.rs`), folder sync (`w_folder.rs`), prices with their chart and
+alerts (`w_price.rs`, `w_alert.rs`), and repeat payments (`w_repeat.rs`). Each
+is a Cargo feature, off unless a build names it (`full` names all four): its
+commands stay, answering "not in this build", and its code goes, in the engine
+and in the ui (`scripts/release_rules.mjs` refuses a library or ui bundle that
+carries a module its build left out, and a testnet one missing any; a build
+without prices never names their source's host, `coingecko.com`).
+Expected leftovers in a build without them, names and words only: each stub
+command's name (`Rp_List`, `Al_Add`, `P_Series`, `F_Join`…, the ui's
+bindings are the same in every build), the file labels a vault knows
+(`repeats.json`, `price-alerts.json`, `sync-state.json`) and the purposes it
+seals them with, and the ui's words naming CoinGecko or the sync folder in
+errors and settings text. None of them reads, writes, asks or logs anything:
+a file or a sync folder an earlier build made stays as it was.
+The real-money build is `v1` (D-033), Play's and the desktop's alike: mainnet
+alone (`NETWORKS`), a first start there, and a saved testnet read as mainnet;
+the beta's test wallets stay on disk, unopened. `lib.rs` refuses to compile
+`v1` with any of the four modules, and with `testnet-only` (`compile_error!`,
+one place): a module is allowed into it only after its own audit, one line
+taken out of that `any( … )`. The gate builds it too (`lint-v1`, `test-v1`).
+A wallet knows its network (`meta_t.network`): one whose names say the other
+network is listed, never opened.
 
 ### Rules for changing it
 
@@ -142,6 +197,9 @@ How much the patch carries is its own header (`vendor/zingolib.patch`). What eac
 | A failed broadcast frees its notes only when nothing went out (`TransmitError::proves_unsent`, `transmit::invalid_on_its_own`, `NetOpStage::RemoteRejected`) | Every failure freed the notes, also a timeout after the bytes left or an answer that wasn't a verdict on the transaction: a retry could then pay twice from other notes (security review A-03). Now only attempts that never sent the bytes, or a server's refusal of the transaction itself (a bad proof, too low a fee, expired; typed as `RemoteRejected` on the direct (nakednet) path), free them, and only when no earlier attempt of the same transmit may have delivered it (`TransmitFailed`'s earlier attempts, `TransmitError::may_have_delivered`; W1-09: a queued answer, then a dead connection, once freed them). Anything else is `Unsure`: the transaction stays Calculated, to be sent again or to expire. A resend (`retransmit_calculated`) never frees anything, nor does the migration after an unsure failure (`may_have_delivered`). |
 | Rebroadcast a dropped payment (`rebroadcast_pending`, `transmit_stored`) | Only Calculated transactions could be sent again; one that went out and was then dropped by the network (a node restart, a stall, an eviction: seen on testnet, 2026-11-06) sat pending until it expired. The same loop now also takes Transmitted and Mempool ones and sends their same bytes, leaving their status alone and freeing nothing; the txid is the same, so it pays once, and a duplicate answer counts as delivered. Each goes on its own, with its own result, so one that can't go doesn't hold back the rest. Laurel picks which (`E_DroppedOf`: its own, not within 3 blocks of expiry). The mock chain's `drop_mempool` is its test's (`a_dropped_payment_is_rebroadcast_past_one_that_fails`). |
 | Spend pool (`SpendPoolScope`, `propose_send_from`, `propose_send_all_from`) | "Pay from this pool". A thread-local scope around one proposal limits note selection to one pool, gated in `LightWallet::spendable_notes`, which every selection path goes through. |
+| Spending transparent coins (`select_spendable_transparent_outputs`) | The backend left the gather of an account's transparent coins for a payment `unimplemented!` (a crash under `panic = "abort"`), so no payment could spend them. Implemented: the account's own spendable coins, oldest first, never another account's and never a one-time (refund) address's. |
+| Proposal hooks (`create_send_proposal_with`, `create_shield_proposal_from`, `propose_send_built`, `propose_shield_built`) | The engine decided by itself what a proposal spends: any pool for a payment, every transparent address of every account for a shield. The two wallet functions are upstream's own bodies with that choice handed in (the spend policy and whether the change records recipients; the addresses a shield takes), and the two client functions store a proposal the app built, under the same pause as upstream's. **No rule about which coins lives here.** Laurel's rules (one public address when one can pay, one address per shield, only this account's) are in `src-tauri/src/w_public.rs`, with their tests. |
+| Rescan config (`LightClient::rescan_with_config`) | `rescan` always used the stored sync config. Now it can be handed one for that rescan alone; the stored config is untouched, so later syncs run as before (`sync_with_config`). What Laurel hands in (Look Further: 100 unused addresses in a row, every scope) is `Com_LookFurther` in `w_engine.rs`. |
 | Sapling spend key fetched, not embedded (`wallet/sapling_key.rs`, `lib.rs`) | The 48 MB spend key was compiled in; now only the 3.6 MB output key is (`SaplingParams::SPEND` exists only for the tests and testutils, whose mock chain proves spends; upstream's `LazySaplingProver` is not used). A payment that spends Sapling notes proves with a copy the app names, checked against the published hash at every use; other payments need none. |
 | Proving key integrity (`params_hashes.rs`, `build.rs`) | The embedded key was trusted for existing. Since 8.0.0 the build embeds it straight from the user's parameter cache, which zcash_proofs trusts once a file is there: the build checks it against the published BLAKE2b hash first, fetches a wrong one again, and stops if it is still wrong; a test checks what was embedded. |
 | Build speed (`build.rs`) | The git state behind `git describe` isn't watched: each commit rebuilt zingolib and everything above it, for a string only zingo-cli prints. |
@@ -154,7 +212,7 @@ build), `vendor/zingolib/clippy.toml` (the passphrase's seed ban), `vendor/zingo
 `vendor/zingolib/zingolib/build.rs`, `vendor/zingolib/zingolib/src/lib.rs`, `vendor/zingolib/zingolib/src/config.rs`,
 `vendor/zingolib/zingolib/src/lightclient.rs`, `vendor/zingolib/zingolib/src/lightclient/error.rs`,
 `vendor/zingolib/zingolib/src/lightclient/propose.rs`, `vendor/zingolib/zingolib/src/lightclient/save.rs`,
-`vendor/zingolib/zingolib/src/lightclient/send.rs`, `vendor/zingolib/zingolib/src/lightclient/transmit.rs`,
+`vendor/zingolib/zingolib/src/lightclient/send.rs`, `vendor/zingolib/zingolib/src/lightclient/sync.rs` (rescan config), `vendor/zingolib/zingolib/src/lightclient/transmit.rs`,
 `vendor/zingolib/zingolib/src/lightclient/indexer_history.rs` (a refusal is the server's fault), `vendor/zingolib/zingolib/src/mixnet/driver.rs`,
 `vendor/zingolib/zingo-net-diag/src/lib.rs`, `vendor/zingolib/zingolib/src/lightclient/mock_chain_tests.rs`, `vendor/zingolib/zingolib/src/testutils/mock_indexer.rs` (a dropped mempool), `vendor/zingolib/zingolib/src/lightclient/migrate.rs` (the failed broadcast), `vendor/zingolib/zingolib/src/params_hashes.rs`,
 `vendor/zingolib/zingo-cli/src/commands.rs`, `vendor/zingolib/zingo-cli/src/lib.rs` (the phrase shown by name), `vendor/zingolib/zingolib/src/wallet.rs`, `vendor/zingolib/zingolib/src/wallet/disk.rs`,
@@ -163,6 +221,7 @@ build), `vendor/zingolib/clippy.toml` (the passphrase's seed ban), `vendor/zingo
 `vendor/zingolib/zingolib/src/wallet/keys.rs`, `vendor/zingolib/zingolib/src/wallet/keys/seed.rs`,
 `vendor/zingolib/zingolib/src/wallet/keys/unified.rs`, `vendor/zingolib/zingolib/src/wallet/migration/parts.rs`,
 `vendor/zingolib/zingolib/src/wallet/migration/split.rs`, `vendor/zingolib/zingolib/src/wallet/output.rs`,
+`vendor/zingolib/zingolib/src/wallet/propose.rs` (proposal hooks), `vendor/zingolib/zingolib/src/wallet/zcb_traits.rs` (spending transparent coins),
 `vendor/zingolib/zingolib/src/wallet/sapling_key.rs`, `vendor/zingolib/zingolib/src/wallet/send.rs`,
 `vendor/zingolib/zingolib/src/wallet/transparent.rs`, `vendor/zingolib/zingolib/src/wallet/utils.rs`,
 `vendor/zingolib/pepper-sync/src/client/fetch.rs`, `vendor/zingolib/pepper-sync/src/wallet/traits.rs`,

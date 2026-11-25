@@ -12,7 +12,8 @@ See the LICENSE file for details.
 
 import { describe, expect, it } from "vitest";
 
-import { Com_DayLabel, Com_GroupByDay, Com_Matches, Com_SecsBetween, Com_TxStateView, NO_QUERY } from "./ui_history";
+import { Com_DayLabel, Com_GroupByDay, Com_Matches, NO_QUERY } from "./ui_history";
+import { Com_SecsBetween, Com_TxStateView } from "./ui_txview";
 import type { historyQuery_t, period_t } from "./ui_history";
 import { Com_FormatDate } from "./ui_local";
 import { T } from "./ui_text";
@@ -139,30 +140,22 @@ describe( "Com_TxStateView", () => {
 	it( "gives a pending payment's expiry as a time, and says not to send it again", () => {
 		const v = Com_TxStateView( { kind: "pending", expiresAt: NU7 + 140 }, NU7 + 100, ERAS, NOW );
 		expect( v.waiting ).toBe( true );
-		expect( v.line( "" ) ).toContain( T.history.expiresBy( Com_FormatDate( NOW + 40 * 25, "time" ) ) );
+		expect( v.note ).toBe( T.history.expiresBy( Com_FormatDate( NOW + 40 * 25, "time" ) ) );
 	} );
 
 	it( "gives a pre-NU7 expiry at 75 s a block", () => {
 		const w = Com_TxStateView( { kind: "pending", expiresAt: NU7 - 60 }, NU7 - 100, ERAS, NOW );
-		expect( w.line( "" ) ).toContain( T.history.expiresBy( Com_FormatDate( NOW + 40 * 75, "time" ) ) );
+		expect( w.note ).toBe( T.history.expiresBy( Com_FormatDate( NOW + 40 * 75, "time" ) ) );
 	} );
 
 	it( "says when a pending payment is already past its expiry", () => {
-		expect( Com_TxStateView( { kind: "pending", expiresAt: 140 }, 141, ERAS, NOW ).line( "" ) ).toContain( T.history.expiresNow );
+		expect( Com_TxStateView( { kind: "pending", expiresAt: 140 }, 141, ERAS, NOW ).note ).toBe( T.history.expiresNow );
 	} );
 
 	it( "never passes a failed payment off as pending or paid", () => {
 		const v = Com_TxStateView( { kind: "failed" }, 100, ERAS, NOW );
 		expect( v.waiting ).toBe( false );
 		expect( v.pill ).toBe( T.history.failed );
-		expect( v.line( "" ) ).toBe( T.history.failedLong );
-	} );
-
-	// a pending or unsent one may still go out: sending it again would pay twice
-	it( "offers sending again only for a payment that didn't go through", () => {
-		expect( Com_TxStateView( { kind: "failed" }, 100, ERAS, NOW ).again ).toBe( true );
-		expect( Com_TxStateView( { kind: "pending", expiresAt: 140 }, 100, ERAS, NOW ).again ).toBe( false );
-		expect( Com_TxStateView( { kind: "unsent" }, 100, ERAS, NOW ).again ).toBe( false );
-		expect( Com_TxStateView( { kind: "confirmed", height: 90 }, 100, ERAS, NOW ).again ).toBe( false );
+		expect( v.note ).toBe( T.history.failedLong );
 	} );
 } );

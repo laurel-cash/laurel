@@ -71,6 +71,21 @@ An app password or auto-lock doesn't protect the funds: anyone holding the
 recovery phrase can restore the wallet elsewhere without it. The lock and help
 texts say so plainly, and never imply otherwise.
 
+## Accessibility apps on Android
+
+Android lets an app you install and allow as an accessibility service read
+what's on the screen and what you type in other apps. That's how screen readers
+work, and it's also how some malware steals passwords and recovery phrases. On
+Android 14 and later, Laurel marks its screen as sensitive, so only apps that
+declare themselves accessibility tools (such as TalkBack) can read it. Google
+Play allows that only for real accessibility tools, but an app installed from
+outside Play can claim it. Below Android 14 there is no such mark: an accessibility app you've allowed can
+read what Laurel shows, including your recovery phrase while it's on screen,
+your balances and your addresses, as it can in most apps. In our tests the app
+password reached such an app only as dots, but don't rely on that. Only allow
+accessibility access to apps you trust, and check the list in Settings ›
+Accessibility now and then.
+
 ## Money-loss audit
 
 [SECURITY-TODO.md](SECURITY-TODO.md) walks 100 ways a self-custody wallet loses

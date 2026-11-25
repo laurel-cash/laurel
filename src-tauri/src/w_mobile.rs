@@ -82,7 +82,7 @@ pub async fn M_Shown( app: &tauri::AppHandle ) {
 // the vault event follows the actual lock result, including a failed save
 async fn M_Lock( app: &tauri::AppHandle ) {
 	if ( crate::w_vault::V_IsUnlocked() ) {
-		if let Err( e ) = crate::w_main::W_Lock( app ).await {
+		if let Err( e ) = crate::w_lifecycle::W_Lock( app ).await {
 			log::warn!( "M_Lock: {}", e.LogText() );
 		}
 		let _ = crate::w_local::vaultChangedEvent_t {}.emit( app );

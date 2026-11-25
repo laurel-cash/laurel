@@ -37,15 +37,19 @@ function UI_DocumentSheet( props: { result: documentResult_t; onOpenChange: ( op
 	const r = props.result;
 	const close = props.onOpenChange;
 	switch ( r.kind ) {
-	case "folder":
+	case "folder":		// only a build with folder sync asks for one (D-031)
+		if ( !__LAUREL_FOLDER_SYNC__ ) { return null; }
 		return r.join
 			? <UI_JoinSheet key={r.folder.path} open onOpenChange={close} initialFolder={r.folder} />
 			: <UI_StartSheet key={r.folder.path} open onOpenChange={close} initialFolder={r.folder} />;
-	case "review":
+	case "review":		// only a build with offline signing opens, signs or saves one (D-031)
+		if ( !__LAUREL_OFFLINE_SIGNING__ ) { return null; }
 		return <UI_SignSheet open onOpenChange={close} review={r.review} />;
 	case "sent":
+		if ( !__LAUREL_OFFLINE_SIGNING__ ) { return null; }
 		return <UI_SentSheet open onOpenChange={close} txids={r.txids} />;
 	case "saved":
+		if ( !__LAUREL_OFFLINE_SIGNING__ ) { return null; }
 		return <UI_Sheet open onOpenChange={close} title={r.signed ? T.offline.signedTitle : T.offline.savedTitle}>
 			<UI_SavedFile path={r.path} signed={r.signed} />
 			<UI_SheetClose onClose={() => close( false )} primary />

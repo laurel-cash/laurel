@@ -19,14 +19,14 @@ See the LICENSE file for details.
 
 import { useEffect, useRef, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
-import { Eye, Info, KeyRound } from "lucide-react";
+import { Eye, KeyRound } from "lucide-react";
 
 import { Com_Abbrev, Com_ErrorOf, Com_FormatZec, commands, keyCheck_t, quoted_t, sweepQuote_t } from "./ui_local";
 import { T } from "./ui_text";
 import { KEYS, QUERY } from "./ui_query";
 import { useConfirm, useLatest, useUncapturable } from "./ui_hooks";
 import { useStore } from "./ui_store";
-import { SECRET_FIELD, sheetProps_t, UI_Alert, UI_Sheet, UI_SheetButtons, UI_Working, UI_SheetWait } from "./ui_widgets";
+import { SECRET_FIELD, sheetProps_t, UI_Alert, UI_Callout, UI_Sheet, UI_SheetButtons, UI_Working, UI_SheetWait } from "./ui_widgets";
 import { UI_FeeFact, UI_Flow, UI_OfflineNote, UI_Receipt, UI_ReviewFrom } from "./ui_payment";
 
 
@@ -157,13 +157,15 @@ export function UI_SweepSheet( props: sheetProps_t & {
 				{sweep.busy ? <UI_Working since={sweep.since} title={T.sweep.working} hint={T.review.provingHint} /> : (
 					<dl className="facts">
 						<div className="fact"><dt>{T.sweep.fromAddress}</dt><dd><code className="fact-id">{Com_Abbrev( q.from )}</code></dd></div>
+						<div className="fact"><dt>{T.sweep.toAddress}</dt><dd><code className="fact-id">{Com_Abbrev( q.to )}</code></dd></div>
 						<div className="fact"><dt>{T.sweep.coins}</dt><dd>{q.coins}</dd></div>
 						<UI_FeeFact zats={q.fee} />
 					</dl>
 				)}
-				{!sweep.busy && <div className="info-note"><Info aria-hidden="true" /><span>{T.sweep.arrives}</span></div>}
-				{q.left > 0 && !sweep.busy && <div className="info-note"><Info aria-hidden="true" /><span>{T.sweep.left( q.left )}</span></div>}
-				{sweep.changed && !sweep.busy && <div className="info-note"><Info aria-hidden="true" /><span>{T.sweep.changed}</span></div>}
+				{!sweep.busy && <UI_Callout kind="info">{T.sweep.coinsSeen}</UI_Callout>}
+				{!sweep.busy && <UI_Callout kind="info">{T.sweep.arrives}</UI_Callout>}
+				{q.left > 0 && !sweep.busy && <UI_Callout kind="info">{T.sweep.left( q.left )}</UI_Callout>}
+				{sweep.changed && !sweep.busy && <UI_Callout kind="info">{T.sweep.changed}</UI_Callout>}
 				{props.offline && !sweep.busy && <UI_OfflineNote />}
 				{sweep.error && <UI_Alert title={T.sweep.failed} message={sweep.error} action={T.common.tryAgain} onAction={() => { sweep.setError( null ); quote.refetch(); }} />}
 

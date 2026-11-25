@@ -125,7 +125,7 @@ function UI_NewsToast( props: { news: news_t; walletName: ( id: string ) => stri
 	const key = Com_NewsKey( n );
 	switch ( n.kind ) {
 	case "payment":	return <UI_PaymentToast payment={n.payment} newsKey={key} walletName={props.walletName( n.payment.walletId )} onOpen={() => props.onOpen( n.payment )} />;
-	case "price":	return <UI_PriceToast alert={n.alert} newsKey={key} />;
+	case "price":	return __LAUREL_PRICES__ ? <UI_PriceToast alert={n.alert} newsKey={key} /> : null;		// none told without prices (D-031)
 	}
 }
 

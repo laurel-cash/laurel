@@ -15,7 +15,7 @@ See the LICENSE file for details.
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { cleanup, fireEvent, render, screen } from "@testing-library/react";
 
-import { Com_HomeLayout, Com_MoveCard, Com_ShowCard, Com_ShownCards, HOME_DEFAULT, PREF_HOME } from "./ui_local";
+import { Com_HomeLayout, Com_InBuild, Com_MoveCard, Com_ShowCard, Com_ShownCards, HOME_DEFAULT, homeCard_t, PREF_HOME } from "./ui_local";
 import { T } from "./ui_text";
 
 vi.mock( "./bindings", async () => ( {
@@ -45,6 +45,18 @@ describe( "the dashboard's layout", () => {
 		expect( Com_ShownCards( hidden, [] ) ).not.toContain( "repeats" );
 		expect( Com_ShownCards( hidden, [ "repeats" ] ) ).toContain( "repeats" );
 		expect( Com_ShownCards( Com_ShowCard( hidden, "repeats", true ), [] ) ).toContain( "repeats" );
+	} );
+
+	// a build without repeat payments (D-031): their card neither shows nor takes a move, and keeps its place
+	it( "leaves out a card this build hasn't, and keeps its place in the layout", () => {
+		const without = ( c: string ) => Com_InBuild( c as homeCard_t, false );
+		expect( Com_ShownCards( HOME_DEFAULT, [ "repeats" ], without ) ).not.toContain( "repeats" );
+		const wallets = HOME_DEFAULT.order.indexOf( "wallets" );
+		expect( Com_MoveCard( HOME_DEFAULT, "wallets", -1, without ), "first of what's shown" ).toBe( HOME_DEFAULT );
+		const swapped = Com_MoveCard( { ...HOME_DEFAULT, order: [ "wallets", "repeats", "network", "pools", "privacy" ] }, "wallets", 1, without );
+		expect( swapped.order, "past the card, which stays where it was" ).toEqual( [ "network", "repeats", "wallets", "pools", "privacy" ] );
+		expect( wallets ).toBe( 1 );
+		expect( Com_InBuild( "repeats" ), "the tests' build has every module" ).toBe( true );
 	} );
 } );
 

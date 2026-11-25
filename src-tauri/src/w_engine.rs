@@ -54,6 +54,7 @@ use zip32::AccountId;
 
 use crate::w_local::*;
 use crate::w_net::engineResult_t;
+use crate::w_public::{ Com_HeldAt, W_PayAllFromPublic, W_PayFromPublic, W_PublicBalances, W_ShieldPublic };
 
 // how long a person's request may wait for the engine's current sync step
 #[cfg( not( test ) )]
@@ -300,21 +301,79 @@ pub async fn E_CreateAccount( c: &mut LightClient ) -> wresult_t< () > {
 
 /*
 ==================
+Com_Asked
+
+What a payment's amounts add up to, each checked as an amount first: none
+past the coin's whole supply, nor their sum
+==================
+*/
+fn Com_Asked( zats: &[ u64 ] ) -> wresult_t< u64 > {
+	let mut total = Zatoshis::ZERO;
+	for z in zats {
+		let amount = Zatoshis::from_u64( *z ).map_err( |_| werr_t::WERR_MORE_THAN_EXISTS )?;
+		total = ( total + amount ).ok_or( werr_t::WERR_MORE_THAN_EXISTS )?;		// Zatoshis's sum stops at the supply
+	}
+	Ok( total.into_u64() )
+}
+
+/*
+==================
 E_ProposeShield
 ==================
 */
-pub async fn E_ProposeShield( f: &mut fenced_t< '_ >, account: AccountId ) -> wresult_t< shieldQuote_t > {
-	let proposal = f.c.propose_shield( account ).await.engine()?;
+pub async fn E_ProposeShield( f: &mut fenced_t< '_ >, account: AccountId, from: Option< &str > ) -> wresult_t< shieldQuote_t > {
+	// which addresses a shield takes is Laurel's to say (w_public.rs): the one
+	// asked for, if this account holds money there now, or Laurel's pick. The
+	// engine stores what that builds
+	let one = match from {
+		Some( address )	=> Some( Com_HeldAt( &*f.c.wallet().read().await, account, address )? ),
+		None			=> None,
+	};
+	let proposal = f.c.propose_shield_built( account, |wallet| match one {
+		Some( address )	=> wallet.create_shield_proposal_from( account, &[ address ] ),
+		None			=> W_ShieldPublic( wallet, account ),
+	} ).await.engine()?;
 
 	// shielding is always one step; its change is what lands in the private pool
 	let step = proposal.steps().first();
 	let amount: u64 = step.balance().proposed_change().iter().map( |x| x.value().into_u64() ).sum();
 	let fee = step.balance().fee_required().into_u64();
+	// one address per shield (W_ShieldPublic), unless none pays its own
+	// fee: then together. The addresses not in it wait
+	let shielded = Com_PublicAddresses( step.transparent_inputs() );
+	let holding = W_PublicBalances( &*f.c.wallet().read().await, account ).engine()?;
 	Ok( shieldQuote_t {
+		from:		from.map( str::to_string ),
 		amount:		amount,
 		fee:		fee,
 		feeNote:	crate::w_send::Com_FeeNote( fee, amount, step.transparent_inputs().len() as u32 ),
+		more:		holding.iter().filter( |( a, _ )| !shielded.contains( a ) ).count() as u32,
+		links:		shielded.len() as u32,
 	} )
+}
+
+/*
+==================
+E_HoldsPublic
+
+Whether the account holds public money it could spend now
+(W_PublicBalances): what a payment that came up short is told about
+==================
+*/
+pub async fn E_HoldsPublic( f: &fenced_t< '_ >, account: AccountId ) -> wresult_t< bool > {
+	Ok( !W_PublicBalances( &*f.c.wallet().read().await, account ).engine()?.is_empty() )
+}
+
+/*
+==================
+Com_PublicAddresses
+
+The public addresses a step's coins come from: more than one is a public
+link between them
+==================
+*/
+fn Com_PublicAddresses( coins: &[ zcash_client_backend::wallet::WalletTransparentOutput< () > ] ) -> std::collections::BTreeSet< zcash_transparent::address::TransparentAddress > {
+	coins.iter().map( |c| *c.recipient_address() ).collect()
 }
 
 /*
@@ -341,16 +400,23 @@ pub async fn E_ProposeSend(
 	let mut asked = None;
 	let proposal = match what {
 		sendWhat_t::PAY( pays ) => {
-			asked = Some( pays.iter().map( |( _, z, _ )| *z ).sum::< u64 >() );
+			asked = Some( Com_Asked( &pays.iter().map( |( _, z, _ )| *z ).collect::< Vec< _ > >() )? );
 			let mut payments = vec![];
 			for ( to, z, memo ) in pays {
-				let amount = Zatoshis::from_u64( z ).map_err( |_| werr_t::WERR_NO_AMOUNT )?;
+				let amount = Zatoshis::from_u64( z ).map_err( |_| werr_t::WERR_MORE_THAN_EXISTS )?;
 				payments.push( Payment::new( to, Some( amount ), memo, None, None, vec![] ).map_err( |_| werr_t::WERR_MEMO_PUBLIC )? );
 			}
 			let request = TransactionRequest::new( payments ).engine()?;
-			f.c.propose_send_from( request, account, from ).await
+			match from {
+				// from public money: which addresses pay is Laurel's to say (w_public.rs)
+				Some( PoolType::Transparent )	=> f.c.propose_send_built( account, |wallet| W_PayFromPublic( wallet, request, account ) ).await,
+				_								=> f.c.propose_send_from( request, account, from ).await,
+			}
 		}
-		sendWhat_t::ALL( to, memo ) => f.c.propose_send_all_from( to, memo, account, from ).await,
+		sendWhat_t::ALL( to, memo ) => match from {
+			Some( PoolType::Transparent )	=> f.c.propose_send_built( account, |wallet| W_PayAllFromPublic( wallet, to, memo, account ) ).await,
+			_								=> f.c.propose_send_all_from( to, memo, account, from ).await,
+		},
 	}.engine()?;		// "not enough" in whatever shape: Com_Classify
 
 	let mut pools = std::collections::BTreeSet::new();
@@ -379,12 +445,17 @@ pub async fn E_ProposeSend(
 		return Err( werr_t::WERR_ENGINE( "the engine proposed a payment without an amount".to_string() ) );
 	}
 
+	// the first step spends the wallet's own coins (a second, to an
+	// exchange-only address, spends the one-off address the first made)
+	let publicAddresses = Com_PublicAddresses( proposal.steps().first().transparent_inputs() ).len() as u32;
+
 	Ok( proposed_t {
 		amount:	amount,
 		fee:	fee,
 		pools:	pools.into_iter().collect(),
 		steps:	proposal.steps().len() as u32,
 		coins:	coins,
+		publicAddresses:	publicAddresses,
 	} )
 }
 
@@ -395,6 +466,7 @@ pub struct proposed_t {
 	pub pools:	Vec< PoolType >,
 	pub steps:	u32,
 	pub coins:	u32,		// notes and coins it spends: each one costs the fee a little
+	pub publicAddresses:	u32,	// the wallet's public addresses its coins come from
 }
 
 /*
@@ -446,8 +518,9 @@ E_Quote / E_SendIfSeen
 
 Quote, then confirm, for any payment (w_shield.rs says why). E_Quote
 builds and always clears: nothing is kept while the person reads.
-E_SendIfSeen builds again and sends only if the result is what the
-person saw; otherwise it clears and returns the new numbers. Once sent,
+E_SendIfSeen builds again and sends only if the result is what was
+quoted under the intent, and what the ui says the person saw
+(Com_StillSeen); otherwise it clears and returns the new numbers. Once sent,
 the wallet is written while the sender still holds the engine
 (W_SaveAfterSend): a payment known only in memory could be built again
 after a crash.
@@ -459,7 +532,7 @@ pub async fn E_Quote< Q >( f: &mut fenced_t< '_ >, build: impl AsyncFnOnce( &mut
 	quote
 }
 
-pub async fn E_SendIfSeen< Q: PartialEq >( f: &mut fenced_t< '_ >, slot: &slotRef_t, seen: &Q, build: impl AsyncFnOnce( &mut fenced_t< '_ > ) -> wresult_t< Q > ) -> wresult_t< confirmed_t< Q > > {
+pub async fn E_SendIfSeen< Q: serde::Serialize >( f: &mut fenced_t< '_ >, slot: &slotRef_t, quoted: &str, seen: &Q, build: impl AsyncFnOnce( &mut fenced_t< '_ > ) -> wresult_t< Q > ) -> wresult_t< confirmed_t< Q > > {
 	let now = match build( f ).await {
 		Ok( q ) => q,
 		Err( e ) => {
@@ -467,12 +540,12 @@ pub async fn E_SendIfSeen< Q: PartialEq >( f: &mut fenced_t< '_ >, slot: &slotRe
 			return Err( e );
 		}
 	};
-	if ( now != *seen ) {
+	if ( !Com_StillSeen( quoted, &now, seen ) ) {
 		E_ClearProposal( f ).await;
 		return Ok( confirmed_t::CHANGED( now ) );
 	}
 	let txid = E_SendProposal( f, slot ).await?;
-	crate::w_main::W_SaveAfterSend( slot ).await;
+	crate::w_persist::W_SaveAfterSend( slot ).await;
 	Ok( confirmed_t::SENT( txid ) )
 }
 
@@ -490,9 +563,15 @@ out stays as it is, Calculated, and goes out again once the wallet has
 caught up (Sync_SendUnsent): the same bytes, so never a second payment
 ==================
 */
+// the transaction a receipt names: the one that pays the recipient, the last (an
+// exchange-only address is paid in two, the first moving public money to pay from)
+fn Com_PaysTxid( txids: &nonempty::NonEmpty< zcash_protocol::TxId > ) -> String {
+	txids.last().to_string()
+}
+
 pub async fn E_SendProposal( f: &mut fenced_t< '_ >, slot: &slotRef_t ) -> wresult_t< String > {
 	let txids = f.c.calculate_stored_proposal().await.engine()?;
-	if let Err( e ) = crate::w_main::W_SaveSlot( slot ).await {
+	if let Err( e ) = crate::w_persist::W_SaveSlot( slot ).await {
 		// not sent, and not failed either: on Android and unix a write can land
 		// and still report failing (the folder's flush), and the file would then
 		// hold it Calculated. It waits, and goes out once a save works
@@ -500,16 +579,16 @@ pub async fn E_SendProposal( f: &mut fenced_t< '_ >, slot: &slotRef_t ) -> wresu
 		// error: one to try again would pay a second time from other coins
 		log::warn!( "E_SendProposal: signed, kept to send once the wallet can be written: {}", e.LogText() );
 		E_ResendSoon( slot ).await;
-		return Err( werr_t::WERR_SEND_QUEUED( txids.first().to_string() ) );
+		return Err( werr_t::WERR_SEND_QUEUED( Com_PaysTxid( &txids ) ) );
 	}
-	let first = txids.first().to_string();
+	let paid = Com_PaysTxid( &txids );
 	if let Err( e ) = E_TransmitUnsent( f, txids ).await {
 		if ( matches!( e, werr_t::WERR_SENT_UNSURE( _ ) ) ) {
 			E_ResendSoon( slot ).await;
 		}
 		return Err( e );
 	}
-	Ok( first )
+	Ok( paid )
 }
 
 // the next catch-up sends what isn't known to be sent, this session too
@@ -637,9 +716,41 @@ struct intent_t {
 	wallet:		String,
 	account:	u32,
 	made:		Instant,
+	quoted:		String,		// the quote handed out under it (Com_QuotePrint): what a payment must still be
+}
+
+/*
+==================
+Com_QuotePrint / Com_StillSeen
+
+A quote as one print, and whether a payment rebuilt now is still the one
+quoted under its intent (W2-11): this side's quote decides, and the ui's
+numbers must be it too, or the person saw something else. A quote's print
+is its JSON's, so no quote holds a HashMap (its order isn't stable) or a
+float; one that can't be printed matches nothing
+==================
+*/
+pub fn Com_QuotePrint< Q: serde::Serialize >( quote: &Q ) -> String {
+	match serde_json::to_vec( quote ) {
+		Ok( data ) => crate::w_vault::Com_Hash( b"laurel-quote-prt", 16, &data ).iter().map( |b| format!( "{b:02x}" ) ).collect(),
+		// fails closed: a print no other ever matches, so nothing is sent under it
+		Err( e ) => {
+			log::warn!( "Com_QuotePrint: a quote that can't be printed: {}", e.to_string() );
+			format!( "unprintable-{}", crate::w_vault::Com_RandomHex( 16 ) )
+		}
+	}
+}
+
+pub fn Com_StillSeen< Q: serde::Serialize >( quoted: &str, now: &Q, seen: &Q ) -> bool {
+	Com_QuotePrint( now ) == quoted && Com_QuotePrint( seen ) == quoted
 }
 
 static e_intents: LazyLock< std::sync::Mutex< HashMap< String, intent_t > > > = LazyLock::new( Default::default );
+
+// intents a payment was attempted under, the latest: handed back again, they say "sent",
+// where one never ours, forgotten or too old says the review is out of date (W2-08)
+const TAKEN_KEPT: usize = 256;
+static e_taken: LazyLock< std::sync::Mutex< std::collections::VecDeque< String > > > = LazyLock::new( Default::default );
 
 /*
 ==================
@@ -648,7 +759,7 @@ E_Intend
 Hands a quote out under a new intent
 ==================
 */
-pub fn E_Intend< Q >( wallet: &str, account: u32, quote: Q ) -> quoted_t< Q > {
+pub fn E_Intend< Q: serde::Serialize >( wallet: &str, account: u32, quote: Q ) -> quoted_t< Q > {
 	let intent = crate::w_vault::Com_RandomHex( 16 );
 
 	let mut all = e_intents.lock().unwrap();
@@ -660,7 +771,7 @@ pub fn E_Intend< Q >( wallet: &str, account: u32, quote: Q ) -> quoted_t< Q > {
 			None => break,
 		}
 	}
-	all.insert( intent.clone(), intent_t { wallet: wallet.to_string(), account: account, made: Instant::now() } );
+	all.insert( intent.clone(), intent_t { wallet: wallet.to_string(), account: account, made: Instant::now(), quoted: Com_QuotePrint( &quote ) } );
 	quoted_t { intent: intent, quote: quote }
 }
 
@@ -668,17 +779,27 @@ pub fn E_Intend< Q >( wallet: &str, account: u32, quote: Q ) -> quoted_t< Q > {
 ==================
 E_TakeIntent
 
-Takes an intent out of the table, once. Refused when it isn't there (sent
-already, forgotten, or never ours), when it was quoted for another wallet
-or account, or when it is too old. A mismatch takes it out too: nothing
-may be tried under it afterwards.
+Takes an intent out of the table, once. Refused when it isn't there,
+when it was quoted for another wallet or account, or when it is too old.
+A mismatch takes it out too: nothing may be tried under it afterwards.
+One already taken says so (WERR_PAYMENT_DONE); any other refusal is a
+review out of date (WERR_REVIEW_EXPIRED): forgotten, too old or never
+ours, nothing was sent under it.
 ==================
 */
-pub fn E_TakeIntent( intent: &str, wallet: &str, account: u32 ) -> wresult_t< () > {
+pub fn E_TakeIntent( intent: &str, wallet: &str, account: u32 ) -> wresult_t< String > {
 	let taken = e_intents.lock().unwrap().remove( intent );
 	match taken {
-		Some( i ) if i.wallet == wallet && i.account == account && i.made.elapsed() < INTENT_MAX_AGE => Ok( () ),
-		_ => Err( werr_t::WERR_PAYMENT_DONE ),
+		Some( i ) if i.wallet == wallet && i.account == account && i.made.elapsed() < INTENT_MAX_AGE => {
+			let mut done = e_taken.lock().unwrap();
+			if ( done.len() >= TAKEN_KEPT ) {
+				done.pop_front();
+			}
+			done.push_back( intent.to_string() );
+			Ok( i.quoted )
+		}
+		None if e_taken.lock().unwrap().iter().any( |t| t == intent ) => Err( werr_t::WERR_PAYMENT_DONE ),
+		_ => Err( werr_t::WERR_REVIEW_EXPIRED ),
 	}
 }
 
@@ -706,8 +827,34 @@ pub async fn E_StartSync( c: &mut LightClient ) -> Result< (), zingolib::lightcl
 	c.sync().await
 }
 
-pub async fn E_Rescan( f: &mut fenced_t< '_ > ) -> wresult_t< () > {
-	f.c.rescan().await.engine()
+// how many unused public addresses in a row a Look Further rescan searches,
+// in every scope; a sync otherwise searches 20 (W_RestoreSettings) or 10
+pub const LOOK_FURTHER_GAP: u8 = 100;
+
+/*
+==================
+Com_LookFurther
+
+The wallet's sync settings with the search for public addresses widened:
+LOOK_FURTHER_GAP unused in a row, in every scope (receiving, change,
+one-time), for a phrase from a wallet that left gaps. For one rescan:
+E_Rescan hands it to the engine and the wallet's own settings stay.
+==================
+*/
+fn Com_LookFurther( mut settings: pepper_sync::config::SyncConfig ) -> pepper_sync::config::SyncConfig {
+	settings.transparent_address_discovery = pepper_sync::config::TransparentAddressDiscovery {
+		gap_limit: LOOK_FURTHER_GAP,
+		..pepper_sync::config::TransparentAddressDiscovery::recovery()
+	};
+	settings
+}
+
+pub async fn E_Rescan( f: &mut fenced_t< '_ >, further: bool ) -> wresult_t< () > {
+	if ( !further ) {
+		return f.c.rescan().await.engine();
+	}
+	let settings = Com_LookFurther( f.c.wallet().read().await.wallet_settings.sync_config.clone() );
+	f.c.rescan_with_config( settings ).await.engine()
 }
 
 /*
@@ -773,6 +920,7 @@ unsaved changes, so it is marked so first; the saver writes it again,
 harmlessly.
 ==================
 */
+#[cfg_attr( not( feature = "offline-signing" ), allow( dead_code ) )]		// offline signing's alone (D-031)
 pub async fn E_SnapshotFenced( f: &mut fenced_t< '_ > ) -> wresult_t< zeroize::Zeroizing< Vec< u8 > > > {
 	let mut w = f.c.wallet().write().await;
 	w.mark_dirty();
@@ -797,6 +945,7 @@ pub fn E_ViewKeyOf( w: &LightWallet, account: AccountId ) -> Option< zcash_keys:
 	}
 }
 
+#[cfg_attr( not( feature = "offline-signing" ), allow( dead_code ) )]
 pub fn E_SpendKeyOf( w: &LightWallet, account: AccountId ) -> Option< zcash_keys::keys::UnifiedSpendingKey > {
 	use zingolib::wallet::keys::unified::UnifiedKeyStore;
 
@@ -816,6 +965,7 @@ account's spending key put beside the state it belongs to, in memory
 only. Nothing about it is ever saved: it is dropped when signing ends.
 ==================
 */
+#[cfg_attr( not( feature = "offline-signing" ), allow( dead_code ) )]
 pub async fn E_Signer( snapshot: &[ u8 ], config: zingolib::config::ClientConfig, account: AccountId, usk: zcash_keys::keys::UnifiedSpendingKey ) -> wresult_t< LightClient > {
 	use zingolib::wallet::keys::unified::UnifiedKeyStore;
 
@@ -833,6 +983,7 @@ transactions stay in the (in-memory) wallet as Calculated, and their
 bytes come back, in order
 ==================
 */
+#[cfg_attr( not( feature = "offline-signing" ), allow( dead_code ) )]
 pub async fn E_Calculate( f: &mut fenced_t< '_ > ) -> wresult_t< Vec< ( String, Vec< u8 > ) > > {
 	let txids = f.c.calculate_stored_proposal().await.engine()?;
 	let w = f.c.wallet().read().await;
@@ -857,6 +1008,7 @@ a live run built one. A Sapling or transparent input this wallet doesn't
 hold is never padding, and is an error.
 ==================
 */
+#[cfg_attr( not( feature = "offline-signing" ), allow( dead_code ) )]
 pub fn E_SpentOfOurs( w: &LightWallet, tx: &zcash_primitives::transaction::Transaction ) -> wresult_t< u64 > {
 	use pepper_sync::wallet::OutputInterface;
 
@@ -904,6 +1056,63 @@ pub fn E_SpentOfOurs( w: &LightWallet, tx: &zcash_primitives::transaction::Trans
 #[cfg( test )]
 mod tests {
 	use super::*;
+
+	// W2-11: what is sent is what this side quoted, not what the ui says it showed: the
+	// rebuilt payment and the ui's numbers must both be the quote the intent was made for
+	#[test]
+	fn a_payment_is_the_one_quoted_under_its_intent() {
+		let quoted = Com_QuotePrint( &( 100u64, "to" ) );
+		assert!( Com_StillSeen( &quoted, &( 100u64, "to" ), &( 100u64, "to" ) ) );
+		assert!( !Com_StillSeen( &quoted, &( 90u64, "to" ), &( 100u64, "to" ) ), "the chain moved on" );
+		assert!( !Com_StillSeen( &quoted, &( 90u64, "to" ), &( 90u64, "to" ) ), "the ui's numbers agree with the new build, not with the quote" );
+		assert!( !Com_StillSeen( &quoted, &( 100u64, "to" ), &( 90u64, "to" ) ), "the ui showed other numbers" );
+		assert_ne!( Com_QuotePrint( &1u64 ), Com_QuotePrint( &2u64 ) );
+	}
+
+	// a quote that can't be printed is no quote: every print of it differs, so nothing is
+	// sent under it, where one print for all of them would wave every payment through
+	#[test]
+	fn an_unprintable_quote_is_never_still_seen() {
+		struct Unprintable;
+		impl serde::Serialize for Unprintable {
+			fn serialize< S: serde::Serializer >( &self, _: S ) -> Result< S::Ok, S::Error > {
+				Err( serde::ser::Error::custom( "no" ) )
+			}
+		}
+		let quoted = Com_QuotePrint( &Unprintable );
+		assert!( !Com_StillSeen( &quoted, &Unprintable, &Unprintable ) );
+		assert_ne!( Com_QuotePrint( &Unprintable ), Com_QuotePrint( &Unprintable ) );
+	}
+
+	// W2-09: amounts are checked before they are added, so no sum wraps or panics
+	#[test]
+	fn amounts_are_checked_before_they_are_added() {
+		let max = zcash_protocol::value::MAX_MONEY;
+		assert_eq!( Com_Asked( &[ 1, 2 ] ).unwrap(), 3 );
+		assert_eq!( Com_Asked( &[ max ] ).unwrap(), max );
+		assert!( Com_Asked( &[ max + 1 ] ).is_err(), "one amount past the supply" );
+		assert!( Com_Asked( &[ max, 1 ] ).is_err(), "a sum past the supply" );
+		assert!( Com_Asked( &[ u64::MAX, 1 ] ).is_err(), "a sum past u64" );
+	}
+
+	// W2-10: past the supply is said as that, not as no amount at all
+	#[test]
+	fn more_than_exists_is_said_so() {
+		let max = zcash_protocol::value::MAX_MONEY;
+		for zats in [ vec![ max + 1 ], vec![ max, 1 ], vec![ u64::MAX ] ] {
+			assert!( matches!( Com_Asked( &zats ), Err( werr_t::WERR_MORE_THAN_EXISTS ) ), "{zats:?}" );
+		}
+	}
+
+	// W2-06: an exchange-only (TEX) payment takes two transactions, public money first, then
+	// the payment from it: the receipt names the second, the one the recipient sees
+	#[test]
+	fn a_receipt_names_the_transaction_that_pays() {
+		let one = zcash_protocol::TxId::from_bytes( [ 1; 32 ] );
+		let two = zcash_protocol::TxId::from_bytes( [ 2; 32 ] );
+		assert_eq!( Com_PaysTxid( &nonempty::NonEmpty::new( one ) ), one.to_string() );
+		assert_eq!( Com_PaysTxid( &nonempty::NonEmpty::from( ( one, vec![ two ] ) ) ), two.to_string() );
+	}
 
 	/*
 	==================
@@ -957,6 +1166,21 @@ mod tests {
 		assert_eq!( E_UnsentOf( &wallet ), vec![ txid( 14 ) ] );
 	}
 
+	// Look Further widens the search for public addresses and nothing else,
+	// on a copy: the settings it was given stay as they were
+	#[test]
+	fn looking_further_widens_only_the_search_for_public_addresses() {
+		let stored = pepper_sync::config::SyncConfig::default();
+		let wider = Com_LookFurther( stored.clone() );
+		let search = wider.transparent_address_discovery.clone();
+		assert_eq!( search.gap_limit, LOOK_FURTHER_GAP );
+		assert!( search.scopes.external && search.scopes.internal && search.scopes.refund, "every scope" );
+		assert!( LOOK_FURTHER_GAP > crate::w_main::W_RestoreSettings().sync_config.transparent_address_discovery.gap_limit, "further than a restore looks" );
+		let mut rest = wider.clone();
+		rest.transparent_address_discovery = stored.transparent_address_discovery.clone();
+		assert_eq!( rest, stored, "nothing else changed" );
+	}
+
 	#[test]
 	fn a_payment_can_be_mined_up_to_its_expiry() {
 		assert!( Com_BeforeExpiry( Some( 320 ), 316 ), "the next block, 317, is 3 before it: still taken" );
@@ -987,21 +1211,23 @@ mod tests {
 	#[test]
 	fn an_intent_is_bound_to_its_wallet_and_account() {
 		let q = E_Intend( "w1", 1, () );
-		assert!( matches!( E_TakeIntent( &q.intent, "w2", 1 ), Err( werr_t::WERR_PAYMENT_DONE ) ), "another wallet" );
-		assert!( matches!( E_TakeIntent( &q.intent, "w1", 1 ), Err( werr_t::WERR_PAYMENT_DONE ) ), "a mismatch voids it" );
+		assert!( matches!( E_TakeIntent( &q.intent, "w2", 1 ), Err( werr_t::WERR_REVIEW_EXPIRED ) ), "another wallet" );
+		assert!( matches!( E_TakeIntent( &q.intent, "w1", 1 ), Err( werr_t::WERR_REVIEW_EXPIRED ) ), "a mismatch voids it" );
 
 		let q = E_Intend( "w1", 1, () );
-		assert!( matches!( E_TakeIntent( &q.intent, "w1", 0 ), Err( werr_t::WERR_PAYMENT_DONE ) ), "another account" );
+		assert!( matches!( E_TakeIntent( &q.intent, "w1", 0 ), Err( werr_t::WERR_REVIEW_EXPIRED ) ), "another account" );
 	}
 
+	// W2-08: refused as out of date, not as sent: nothing was, and the review is to be looked
+	// at again (a forgotten one: its wallet closed, or pushed out by newer quotes)
 	#[test]
 	fn an_unknown_or_forgotten_intent_is_refused() {
-		assert!( matches!( E_TakeIntent( "", "w1", 0 ), Err( werr_t::WERR_PAYMENT_DONE ) ) );
-		assert!( matches!( E_TakeIntent( "not one of ours", "w1", 0 ), Err( werr_t::WERR_PAYMENT_DONE ) ) );
+		assert!( matches!( E_TakeIntent( "", "w1", 0 ), Err( werr_t::WERR_REVIEW_EXPIRED ) ) );
+		assert!( matches!( E_TakeIntent( "not one of ours", "w1", 0 ), Err( werr_t::WERR_REVIEW_EXPIRED ) ) );
 
 		let q = E_Intend( "closing", 0, () );
 		E_ForgetIntents( "closing" );
-		assert!( matches!( E_TakeIntent( &q.intent, "closing", 0 ), Err( werr_t::WERR_PAYMENT_DONE ) ) );
+		assert!( matches!( E_TakeIntent( &q.intent, "closing", 0 ), Err( werr_t::WERR_REVIEW_EXPIRED ) ) );
 	}
 
 	#[test]

@@ -165,6 +165,13 @@ input, textarea {
 	user-select: text;
 }
 
+/* WebView2 (Edge) adds its own eye to a password field and an X to a text one: a second
+   eye beside Laurel's own show/hide (ui_security.tsx), on Windows alone. Laurel's is the one */
+input::-ms-reveal,
+input::-ms-clear {
+	display: none;
+}
+
 /*
 scrollbars: thin and themed
 */
@@ -342,13 +349,70 @@ select {
 	font-variant-numeric: tabular-nums;
 }
 
-.pay-list-text {
-	font-family: ui-monospace, monospace;
-	font-size: 12.5px;
+/* Pay Several People (UI_PayListPanel): in Send's place, in the same sheet */
+.pay-panel {
+	display: flex;
+	flex-direction: column;
 }
 
+.pay-panel .nav-back {
+	align-self: flex-start;
+	margin-bottom: 10px;
+}
+
+.pay-panel-title {
+	display: flex;
+	align-items: center;
+	gap: 8px;
+	margin: 0;
+	font-size: 17px;
+	font-weight: 700;
+}
+
+.pay-panel-title svg {
+	width: 18px;
+	height: 18px;
+	color: var( --accent );
+}
+
+.pay-panel-lede {
+	margin: 4px 0 16px;
+	color: var( --text-2 );
+	line-height: 1.5;
+}
+
+/* the three parts of a line, as headings over the box */
+.pay-format {
+	display: grid;
+	grid-template-columns: 2fr 1fr 1.3fr;
+	gap: 8px;
+	margin-bottom: 6px;
+	padding: 0 12px;
+}
+
+.pay-format-col {
+	color: var( --text );
+	font-size: 12px;
+	font-weight: 600;
+}
+
+.pay-format-col.quiet {
+	color: var( --text-2 );
+	font-weight: 500;
+}
+
+.pay-list-text {
+	font-family: var( --font-mono );
+	font-size: 12.5px;
+	line-height: 1.7;
+}
+
+/* each line, checked: its number, who, how much; or what's wrong with it */
 .pay-check {
-	margin: 10px 0 0;
+	display: flex;
+	flex-direction: column;
+	gap: 6px;
+	margin: 12px 0 0;
 	padding: 0;
 	list-style: none;
 	font-size: 12.5px;
@@ -358,18 +422,49 @@ select {
 	display: flex;
 	align-items: center;
 	gap: 10px;
-	padding: 5px 0;
-	border-top: 1px solid var( --line );
+	padding: 8px 12px;
+	border-radius: var( --radius-sm );
+	background: var( --fill );
 }
 
 .pay-check li.bad {
+	background: var( --danger-soft );
 	color: var( --danger );
 }
 
 .pay-check-n {
+	display: grid;
 	flex-shrink: 0;
-	color: var( --text-2 );
+	place-items: center;
+	width: 20px;
+	height: 20px;
+	border-radius: 50%;
+	background: var( --accent-soft );
+	color: var( --accent );
+	font-size: 11px;
+	font-weight: 700;
 	font-variant-numeric: tabular-nums;
+}
+
+.pay-check li.bad .pay-check-n {
+	background: transparent;
+	color: var( --danger );
+}
+
+.pay-check-to {
+	flex: 1;
+	min-width: 0;
+}
+
+.pay-check-amount {
+	flex-shrink: 0;
+	font-weight: 600;
+	font-variant-numeric: tabular-nums;
+}
+
+.pay-check-problem {
+	flex: 1;
+	min-width: 0;
 }
 
 .repeat-list {
@@ -900,6 +995,36 @@ ONBOARDING
 	font-size: 13px;
 }
 
+/* T-049: v1's terms, read before anything else; left-aligned, as a page of them is */
+.onboard-card.terms {
+	text-align: left;
+	align-items: stretch;
+}
+
+.onboard-card.terms > .app-icon,
+.onboard-card.terms > .onboard-title {
+	align-self: center;
+}
+
+.terms-lede {
+	margin-top: 16px;
+	line-height: 1.5;
+}
+
+.terms-points {
+	margin: 12px 0 0;
+	padding-left: 20px;
+	line-height: 1.5;
+}
+
+.terms-points li + li {
+	margin-top: 6px;
+}
+
+.terms-check {
+	margin-top: 20px;
+}
+
 .onboard-actions {
 	display: flex;
 	flex-direction: column;
@@ -1135,6 +1260,7 @@ APP FRAME
 }
 
 .sync-dot.syncing,
+.sync-dot.preparing,
 .sync-dot.connecting {
 	background: #64d18a;
 	animation: breathe 1.6s ease-in-out infinite;
@@ -1382,6 +1508,13 @@ on a bank card, texture rather than a picture behind the numbers
 	line-height: 1.05;
 }
 
+.usd.total-usd {		/* the balance in dollars (UI_Usd), under it, in the card's own quiet colour (over .usd's, written later) */
+	display: block;
+	margin-top: 4px;
+	color: var( --card-text-2 );
+	font-size: 15px;
+}
+
 .icon-btn.eye {
 	width: 32px;
 	height: 32px;
@@ -1397,18 +1530,20 @@ on a bank card, texture rather than a picture behind the numbers
 
 /* as many equal columns as there are figures: pending joins only while something is */
 .split {
+	--split-col-pad: 16px;		/* useStacked reads these two to know a column's room */
+	--split-rule: 1px;
 	display: grid;
 	grid-auto-columns: minmax( 0, 1fr );
 	grid-auto-flow: column;
 	max-width: 520px;
 	margin-top: 22px;
 	padding-top: 16px;
-	border-top: 1px solid color-mix( in srgb, var( --card-text ) 12%, transparent );
+	border-top: var( --split-rule ) solid color-mix( in srgb, var( --card-text ) 12%, transparent );
 }
 
 .split-col {
 	min-width: 0;
-	padding: 0 16px;
+	padding: 0 var( --split-col-pad );
 }
 
 .split-col:first-child {
@@ -1416,7 +1551,7 @@ on a bank card, texture rather than a picture behind the numbers
 }
 
 .split-col + .split-col {
-	border-left: 1px solid color-mix( in srgb, var( --card-text ) 12%, transparent );
+	border-left: var( --split-rule ) solid color-mix( in srgb, var( --card-text ) 12%, transparent );
 }
 
 .split-col.arriving {
@@ -1443,7 +1578,7 @@ on a bank card, texture rather than a picture behind the numbers
 	font-size: 16px;
 	font-weight: 600;
 	font-variant-numeric: tabular-nums;
-	white-space: nowrap;		/* never cut: a narrow card stacks the columns instead (below) */
+	white-space: nowrap;		/* never cut: the split stacks instead when they don't fit (useStacked, below) */
 }
 
 .split-amount .unit {
@@ -1463,33 +1598,32 @@ on a bank card, texture rather than a picture behind the numbers
 	font-variant-numeric: tabular-nums;
 }
 
-/* a narrow card (a small window, a large text size): one row per part, so
-   every digit of every amount shows; "12.80" once read "12..." at 175% */
-@container ( max-width: 360px ) {
-	.split {
-		grid-template-columns: 1fr;
-		grid-auto-flow: row;		/* the wide card's columns flow sideways: one column alone still made two, 159px each */
-		gap: 8px;
-	}
+/* one row per part when the amounts don't fit side by side (useStacked, the
+   only rule): every digit of every amount shows. "12.80" once read "12..." at
+   175%, and three columns in a wide card ran "0.00043243 ZEC" pending into Public */
+.split.stacked {
+	grid-template-columns: 1fr;
+	grid-auto-flow: row;		/* the wide card's columns flow sideways: one column alone still made two, 159px each */
+	gap: 8px;
+}
 
-	.split-col,
-	.split-col:first-child {
-		display: grid;
-		grid-template-columns: 1fr auto 4em;
-		align-items: baseline;
-		gap: 10px;
-		padding: 0;
-	}
+.split.stacked .split-col,
+.split.stacked .split-col:first-child {
+	display: grid;
+	grid-template-columns: 1fr auto 4em;
+	align-items: baseline;
+	gap: 10px;
+	padding: 0;
+}
 
-	.split-col + .split-col {
-		border-left: none;
-	}
+.split.stacked .split-col + .split-col {
+	border-left: none;
+}
 
-	.split-amount,
-	.split-share {
-		margin-top: 0;
-		text-align: right;
-	}
+.split.stacked .split-amount,
+.split.stacked .split-share {
+	margin-top: 0;
+	text-align: right;
 }
 
 /* sync status: a capsule in the card's corner */
@@ -1765,15 +1899,17 @@ on a bank card, texture rather than a picture behind the numbers
 	display: flex;
 	flex: 1;
 	flex-direction: column;
-	min-width: 0;
+	min-width: min-content;		/* the name, whole: "Transpar / ent" once broke beside a pending line */
 }
 
 .pool-name {
 	font-size: 13.5px;
 	font-weight: 600;
+	white-space: nowrap;
 }
 
 .pool-sub {
+	contain: inline-size;		/* sized by the row, never sizing it: the name sets the column */
 	overflow: hidden;
 	color: var( --text-2 );
 	font-size: 12px;
@@ -1889,6 +2025,312 @@ on a bank card, texture rather than a picture behind the numbers
 	flex: none;
 	width: 16px;
 	height: 16px;
+}
+
+/* an address's own colour (UI_AddressMark): a glance tells two apart */
+.address-mark {
+	display: inline-block;
+	flex: none;
+	width: 28px;
+	height: 28px;
+	border-radius: 50%;
+	background:
+		radial-gradient( circle at 30% 28%, rgba( 255, 255, 255, 0.45 ), transparent 42% ),
+		conic-gradient( from calc( var( --hue ) * 1deg ), hsl( var( --hue ) 62% 52% ), hsl( calc( var( --hue ) + 70 ) 58% 44% ), hsl( calc( var( --hue ) + 150 ) 55% 50% ), hsl( var( --hue ) 62% 52% ) );
+	box-shadow: 0 0 0 2px var( --surface ), 0 2px 6px rgba( 0, 0, 0, 0.25 );
+}
+
+.address-marks {
+	display: inline-flex;
+	flex: none;
+}
+
+.address-marks .address-mark {
+	width: 22px;
+	height: 22px;
+}
+
+.address-marks .address-mark + .address-mark {
+	margin-left: -8px;
+}
+
+/* how many public addresses hold the money, and the way to the list (UI_PublicSpread) */
+.public-spread {
+	display: flex;
+	align-items: center;
+	gap: 12px;
+	width: 100%;
+	margin-top: 12px;
+	padding: 12px 14px;
+	border: 1px solid var( --line );
+	border-radius: 14px;
+	background: var( --surface-2 );
+	color: var( --text );
+	font: inherit;
+	text-align: left;
+	cursor: pointer;
+	transition: background 0.12s, border-color 0.12s;
+}
+
+.public-spread:hover {
+	border-color: color-mix( in srgb, var( --accent ) 40%, transparent );
+	background: var( --accent-soft );
+}
+
+.public-spread-text {
+	flex: 1;
+	min-width: 0;
+	font-size: 13.5px;
+}
+
+.public-spread-see {
+	display: inline-flex;
+	align-items: center;
+	gap: 2px;
+	color: var( --accent );
+	font-size: 13px;
+	font-weight: 600;
+}
+
+.public-spread-see svg {
+	width: 15px;
+	height: 15px;
+}
+
+/* a pool's actions: the lit one wide, the rest one list (UI_PoolAction) */
+.pool-actions {
+	display: flex;
+	flex-direction: column;
+	gap: 10px;
+	margin-top: 18px;
+}
+
+.pool-main,
+.action-row {
+	display: flex;
+	align-items: center;
+	gap: 12px;
+	width: 100%;
+	border: none;
+	color: var( --text );
+	font: inherit;
+	text-align: left;
+}
+
+button.pool-main,
+button.action-row {
+	cursor: pointer;
+}
+
+.pool-main {
+	padding: 14px 16px;
+	border-radius: 14px;
+	background: var( --accent-fill );
+	color: var( --on-accent );
+	box-shadow: 0 4px 14px color-mix( in srgb, var( --card-good ) 22%, transparent ), inset 0 1px 0 rgba( 255, 255, 255, 0.3 );
+	transition: background 0.12s, transform 0.12s var( --ease );
+}
+
+button.pool-main:hover {
+	background: var( --accent-fill-hi );
+}
+
+button.pool-main:active {
+	transform: scale( 0.99 );
+}
+
+/* a grouped list: the pool's actions, the public addresses */
+.action-list,
+.public-list {
+	margin: 0;
+	padding: 0;
+	overflow: hidden;
+	border: 1px solid var( --line );
+	border-radius: 14px;
+	background: var( --surface-2 );
+	list-style: none;
+}
+
+.action-list li + li {
+	border-top: 1px solid var( --line );
+}
+
+.action-row {
+	padding: 11px 14px;
+	background: transparent;
+	transition: background 0.12s;
+}
+
+button.action-row:hover {
+	background: var( --accent-soft );
+}
+
+.action-row.muted,
+.pool-main.muted {
+	opacity: 0.6;
+}
+
+.action-icon {
+	display: grid;
+	flex: none;
+	place-items: center;
+	width: 32px;
+	height: 32px;
+	border-radius: 10px;
+	background: color-mix( in srgb, currentColor 12%, transparent );
+}
+
+.action-row .action-icon {
+	background: var( --accent-soft );
+	color: var( --accent );
+}
+
+.action-icon svg {
+	width: 16px;
+	height: 16px;
+	stroke-width: 2.1;
+}
+
+.action-text {
+	display: flex;
+	flex: 1;
+	flex-direction: column;
+	gap: 1px;
+	min-width: 0;
+}
+
+.action-title {
+	font-size: 14px;
+	font-weight: 600;
+}
+
+.action-sub {
+	font-size: 12.5px;
+	opacity: 0.75;
+}
+
+.action-go {
+	flex: none;
+	width: 16px;
+	height: 16px;
+	opacity: 0.6;
+}
+
+/* the list, in the pool's place or its own sheet (UI_PublicAddressesPanel) */
+.public-panel {
+	display: flex;
+	flex-direction: column;
+}
+
+.public-panel .nav-back {
+	align-self: flex-start;
+	margin-bottom: 12px;
+}
+
+.public-find {
+	margin-bottom: 10px;
+}
+
+.public-row + .public-row {
+	border-top: 1px solid var( --line );
+}
+
+.public-row.open {
+	background: color-mix( in srgb, var( --accent ) 5%, transparent );
+}
+
+.public-row-head {
+	display: flex;
+	align-items: center;
+	gap: 12px;
+	width: 100%;
+	padding: 12px 14px;
+	border: none;
+	background: transparent;
+	color: var( --text );
+	font: inherit;
+	text-align: left;
+	cursor: pointer;
+	transition: background 0.12s;
+}
+
+.public-row-head:hover {
+	background: var( --accent-soft );
+}
+
+.public-row-text {
+	display: flex;
+	flex: 1;
+	flex-direction: column;
+	gap: 2px;
+	min-width: 0;
+}
+
+.public-row-zats {
+	font-size: 15px;
+	font-weight: 700;
+	font-variant-numeric: tabular-nums;
+}
+
+.public-row-code {
+	overflow: hidden;
+	color: var( --text-2 );
+	font-family: var( --font-mono );
+	font-size: 12px;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+}
+
+.public-row-chevron {
+	flex: none;
+	width: 16px;
+	height: 16px;
+	color: var( --text-2 );
+	transition: transform 0.15s var( --ease );
+}
+
+.public-row.open .public-row-chevron {
+	transform: rotate( 180deg );
+}
+
+.public-row-body {
+	padding: 0 14px 14px 54px;
+}
+
+.public-row-full {
+	margin: 0 0 10px;
+	padding: 10px 12px;
+	border-radius: 10px;
+	background: var( --surface );
+	color: var( --text );
+	font-family: var( --font-mono );
+	font-size: 12px;
+	line-height: 1.55;
+	word-break: break-all;
+}
+
+.public-row-actions {
+	display: flex;
+	flex-wrap: wrap;
+	gap: 8px;
+}
+
+.public-all {
+	align-self: flex-start;
+	margin-top: 10px;
+}
+
+/* under From: how a payment from public money picks its addresses */
+.from-how {
+	margin: 8px 0 0;
+	line-height: 1.5;
+}
+
+/* Shield It and See Addresses, side by side on the public money's card */
+.privacy-actions {
+	display: flex;
+	flex-wrap: wrap;
+	gap: 8px;
 }
 
 /* things that can be done, as tiles (UI_ActionTile): two to a row, the
@@ -2160,9 +2602,11 @@ button.tile:active {
 	display: flex;
 	flex-direction: column;
 	align-items: flex-end;
+	min-width: 0;		/* where room is short, the pending line wraps, never the pool's name */
 }
 
 .pool-amount {
+	white-space: nowrap;
 	font-size: 15px;
 	font-weight: 600;
 	font-variant-numeric: tabular-nums;
@@ -2171,6 +2615,7 @@ button.tile:active {
 
 .pool-pending {
 	color: var( --warn );
+	text-align: right;
 	font-size: 11.5px;
 	font-weight: 500;
 }
@@ -2266,6 +2711,17 @@ button.tile:active {
 .meter-num {
 	min-width: 34px;
 	text-align: right;
+}
+
+/* the engine's setup before the first block: movement, no number */
+.meter.preparing .meter-fill {
+	width: 40%;
+	transition: none;
+	animation: waiting-sweep 1.6s var( --ease ) infinite;
+}
+
+@media ( prefers-reduced-motion: reduce ) {
+	.meter.preparing .meter-fill { animation: none; }
 }
 
 /* privacy card: a word about this account, leaf growing in from the side */
@@ -3211,13 +3667,25 @@ MENUS
 	stroke-width: 1.8;
 }
 
+/* the row under the pointer or the keys: a soft tint, so what's drawn in
+   it (an avatar, an address under a name, an icon) keeps its contrast; a
+   solid accent hid the avatar and greyed the address out */
 .menu-item[data-highlighted] {
-	background: var( --accent-fill );
-	color: var( --on-accent );
+	background: var( --accent-soft );
+	color: var( --text );
 }
 
-.menu-item[data-highlighted] .menu-amount {
-	color: var( --on-accent );
+.menu-item[data-highlighted] svg {
+	color: var( --accent );
+}
+
+.menu-item[data-highlighted] .menu-sub {
+	color: var( --text );
+}
+
+.menu-item.danger[data-highlighted],
+.menu-item.danger[data-highlighted] svg {
+	color: var( --danger );
 }
 
 .menu-check {
@@ -3795,7 +4263,9 @@ RECEIVE AND FUND
 	margin-top: 14px;
 }
 
-.warn-note {
+/* UI_Callout: a warning here; news that isn't a problem tints it otherwise (.info-note) */
+.warn-note,
+.info-note {
 	display: flex;
 	gap: 10px;
 	margin-top: 12px;
@@ -3807,7 +4277,8 @@ RECEIVE AND FUND
 	line-height: 1.5;
 }
 
-.warn-note svg {
+.warn-note > svg,
+.info-note > svg {
 	flex-shrink: 0;
 	width: 16px;
 	height: 16px;
@@ -4241,17 +4712,48 @@ SHIELD AND SCAN SHEETS
 .flow-end.private	{ --pool: var( --ironwood ); }
 .flow-end.key		{ --pool: var( --text-2 ); }
 
-/* where it moves from, on every review: mainnet in the colour that means care */
+/* where it moves from, on every review, as two chips: the network (mainnet
+   in the colour that means care, and said to be real money) and the account */
 .review-from {
-	margin: 0 0 12px;
+	display: flex;
+	flex-wrap: wrap;
+	justify-content: center;
+	gap: 6px;
+	margin: 0 0 16px;
+}
+
+.review-chip {
+	display: inline-flex;
+	align-items: center;
+	gap: 6px;
+	padding: 5px 11px;
+	border-radius: 999px;
+	background: var( --fill );
 	color: var( --text-2 );
 	font-size: 12px;
 	font-weight: 600;
-	text-align: center;
 }
 
-.review-from.mainnet {
+.review-chip svg {
+	width: 13px;
+	height: 13px;
+}
+
+.review-chip-dot {
+	width: 7px;
+	height: 7px;
+	border-radius: 50%;
+	background: var( --accent );
+}
+
+.review-from.mainnet .review-chip.net {
+	background: color-mix( in srgb, var( --warn ) 14%, transparent );
 	color: var( --warn );
+}
+
+.review-from.mainnet .review-chip-dot {
+	background: var( --warn );
+	box-shadow: 0 0 0 3px color-mix( in srgb, var( --warn ) 25%, transparent );
 }
 
 /* under a sheet's explanation, not pressed against it */
@@ -4306,10 +4808,11 @@ SHIELD AND SCAN SHEETS
 	place-items: center;
 	width: 56px;
 	height: 56px;
-	margin-bottom: 10px;
+	margin-bottom: 14px;
 	border-radius: 50%;
 	background: var( --accent-fill );
 	color: var( --on-accent );
+	box-shadow: 0 0 0 8px var( --accent-soft ), 0 10px 30px color-mix( in srgb, var( --accent ) 30%, transparent );
 	animation: done-pop 0.5s var( --ease );
 }
 
@@ -4338,12 +4841,226 @@ SHIELD AND SCAN SHEETS
 	line-height: 1.5;
 }
 
-/* an id in a facts row: shortened, selectable, the same size as the label */
+/* Receive on a wide window: two columns, the QR on the left and what it is
+   and what to do on the right, so nothing scrolls on a desktop */
+.receive-side {
+	display: flex;
+	flex-direction: column;
+}
+
+@media ( min-width: 780px ) {
+	.sheet.sheet-receive {
+		width: min( 760px, calc( 100vw - 48px ) );
+	}
+
+	.receive-layout {
+		display: grid;
+		grid-template-columns: auto minmax( 0, 1fr );
+		gap: 28px;
+		align-items: start;
+		margin-top: 8px;
+	}
+
+	.receive-qr-col .address-card {
+		margin-top: 0;
+		padding: 18px;
+		border: 1px solid var( --line );
+		border-radius: 18px;
+		background: var( --surface-2 );
+	}
+
+	.receive-side > .sheet-desc:first-child,
+	.receive-side > .receive-kind:first-child {
+		justify-content: flex-start;
+		margin-top: 0;
+		text-align: left;
+	}
+
+	/* the actions as a column of rows beside the QR, not three boxes under it */
+	.receive-side .tile-grid.three {
+		grid-template-columns: minmax( 0, 1fr );
+		margin-top: 14px;
+	}
+
+	.receive-side .tile-grid.three .tile {
+		display: grid;
+		grid-template-columns: 32px minmax( 0, 1fr );
+		column-gap: 12px;
+		align-items: center;
+		padding: 11px 14px;
+	}
+
+	.receive-side .tile-grid.three .tile-icon {
+		grid-row: span 2;
+		margin-bottom: 0;
+	}
+}
+
+/* an id in a facts row: shortened on one line, selectable, the same size as the label */
 .fact-id {
 	font-family: var( --font-mono );
 	font-size: 12px;
 	font-weight: 500;
+	white-space: nowrap;
 	user-select: text;
+}
+
+.fact-txid {
+	gap: 6px;
+}
+
+.fact-txid .fact-id {
+	margin-right: 4px;
+}
+
+/* a row's own round button: Copy, the explorer */
+.icon-btn.round {
+	width: 30px;
+	height: 30px;
+	border-radius: 50%;
+	background: var( --fill );
+	color: var( --text-2 );
+}
+
+.icon-btn.round:hover,
+.icon-btn.round.done {
+	background: var( --accent-soft );
+	color: var( --accent );
+}
+
+/* where a payment is: sent, confirming, confirmed (UI_TxProgress) */
+.tx-progress {
+	padding: 16px 16px 14px;
+	border: 1px solid var( --line );
+	border-radius: 14px;
+	background: var( --surface-2 );
+	text-align: center;
+}
+
+.tx-steps {
+	display: grid;
+	grid-template-columns: repeat( 3, minmax( 0, 1fr ) );
+	margin: 0 0 14px;
+	padding: 0;
+	list-style: none;
+}
+
+.tx-step {
+	position: relative;
+	display: flex;
+	flex-direction: column;
+	align-items: center;
+	gap: 6px;
+}
+
+/* the line from the step before, lit once that step is behind */
+.tx-step + .tx-step::before {
+	position: absolute;
+	top: 11px;
+	right: 50%;
+	width: 100%;
+	height: 2px;
+	background: var( --line );
+	content: "";
+}
+
+.tx-step.done + .tx-step::before {
+	background: var( --accent );
+}
+
+.tx-step-dot {
+	position: relative;
+	z-index: 1;
+	display: grid;
+	place-items: center;
+	width: 24px;
+	height: 24px;
+	border: 2px solid var( --line );
+	border-radius: 50%;
+	background: var( --surface-2 );
+}
+
+.tx-step-dot svg {
+	width: 13px;
+	height: 13px;
+	stroke-width: 3;
+}
+
+.tx-step.done .tx-step-dot {
+	border-color: transparent;
+	background: var( --accent-fill );
+	color: var( --on-accent );
+}
+
+.tx-step.now .tx-step-dot {
+	border-color: var( --accent );
+	animation: tx-pulse 1.6s ease-in-out infinite;
+}
+
+.tx-step.now .tx-step-dot::after {
+	width: 8px;
+	height: 8px;
+	border-radius: 50%;
+	background: var( --accent );
+	content: "";
+}
+
+.tx-step.bad .tx-step-dot {
+	border-color: transparent;
+	background: var( --danger );
+	color: var( --on-danger );
+}
+
+.tx-step-label {
+	color: var( --text-2 );
+	font-size: 12px;
+	font-weight: 600;
+}
+
+.tx-step.now .tx-step-label,
+.tx-step.done .tx-step-label {
+	color: var( --text );
+}
+
+.tx-progress-head {
+	margin: 0;
+	font-size: 15px;
+	font-weight: 700;
+}
+
+.tx-progress.confirmed .tx-progress-head {
+	color: var( --accent );
+}
+
+.tx-progress.failed .tx-progress-head {
+	color: var( --danger );
+}
+
+.tx-progress-sub {
+	margin: 2px 0 0;
+	color: var( --text-2 );
+	font-size: 12.5px;
+	line-height: 1.5;
+}
+
+.tx-progress-note {
+	margin: 12px 0 0;
+	padding-top: 10px;
+	border-top: 1px solid var( --line );
+	color: var( --text-2 );
+	font-size: 12px;
+	line-height: 1.5;
+}
+
+@keyframes tx-pulse {
+	0%, 100%	{ box-shadow: 0 0 0 0 color-mix( in srgb, var( --accent ) 45%, transparent ); }
+	50%			{ box-shadow: 0 0 0 7px color-mix( in srgb, var( --accent ) 0%, transparent ); }
+}
+
+@media ( prefers-reduced-motion: reduce ) {
+	.tx-step.now .tx-step-dot {
+		animation: none;
+	}
 }
 
 /* scan */
@@ -5017,6 +5734,19 @@ SYNC SHEET
 .sync-ring.retrying .ring-fill	{ stroke: var( --warn ); }
 .sync-ring.paused .ring-fill	{ stroke: var( --text-3 ); }
 
+/* the engine's setup before the first block: a short arc turns, no number */
+.sync-ring.preparing svg {
+	animation: ring-turn 1.4s linear infinite;
+}
+
+@keyframes ring-turn {
+	to { transform: rotate( 360deg ); }
+}
+
+@media ( prefers-reduced-motion: reduce ) {
+	.sync-ring.preparing svg { animation: none; }
+}
+
 .ring-center {
 	position: absolute;
 	inset: 0;
@@ -5363,6 +6093,8 @@ SEND
 }
 
 .send-to .field {
+	field-sizing: content;		/* as tall as the address: a unified one scrolled under Paste, Scan and Choose */
+	min-height: calc( 2lh + 50px );		/* two lines, as rows=2 drew it */
 	resize: none;
 	padding-bottom: 40px;
 	word-break: break-all;
@@ -5631,7 +6363,25 @@ SEND
 
 /* the number Max will send, as the engine worked it out */
 .send-max-amount {
+	display: inline-flex;
+	align-items: baseline;
+	gap: 8px;
 	font-variant-numeric: tabular-nums;
+}
+
+/* an amount in dollars beside its ZEC (UI_Usd): quieter than the ZEC */
+.usd {
+	color: var( --text-2 );
+	font-size: 13px;
+	font-weight: 500;
+}
+
+/* the ways on, under a callout's words */
+.callout-actions {
+	display: flex;
+	flex-wrap: wrap;
+	gap: 8px;
+	margin-top: 8px;
 }
 
 /* says the number wasn't typed: it is everything, and follows the pool */
@@ -5962,17 +6712,6 @@ HISTORY
 	color: var( --warn );
 }
 
-.tx-icon.big {
-	width: 52px;
-	height: 52px;
-	margin-bottom: 4px;
-}
-
-.tx-icon.big svg {
-	width: 24px;
-	height: 24px;
-}
-
 .tx-text {
 	display: flex;
 	flex: 1;
@@ -6015,25 +6754,610 @@ HISTORY
 	font-weight: 600;
 }
 
-.tx-detail {
+/* one transaction, whole (ui_txsheet.tsx): who, how much and where it stands; then
+   where it went, what was said, the facts, the note, and a row of what to do */
+.sheet.sheet-tx {
 	display: flex;
 	flex-direction: column;
-	align-items: stretch;
-	gap: 12px;
+	gap: 14px;		/* its width is a sheet's (a phone's is set there), wider only on a wide window, below */
 }
 
-.tx-detail .tx-icon.big {
+/* a sheet taller than its window scrolls; nothing in it squeezes (the round avatar went oval) */
+.sheet.sheet-tx > * {
+	flex-shrink: 0;
+}
+
+/* a wide window: the same one column, room for the facts in one row and the actions beside Close */
+@media ( min-width: 780px ) {
+	.sheet.sheet-tx {
+		width: min( 640px, calc( 100vw - 48px ) );
+	}
+}
+
+.sheet-tx .sheet-title {
+	margin-top: -6px;
+	text-align: center;
+}
+
+.sheet-tx .tx-note {
+	margin-top: 0;
+}
+
+/* who, as a picture: a contact's initials or an address's own colour, the kind badged on */
+.tx-avatar {
+	position: relative;
+	display: grid;
+	place-items: center;
 	align-self: center;
+	flex: none;
+	width: 68px;
+	height: 68px;
+	margin-top: 4px;
+	border-radius: 50%;
+	background:
+		radial-gradient( circle at 30% 25%, color-mix( in srgb, var( --accent ) 30%, transparent ), transparent 62% ),
+		var( --accent-soft );
+	color: var( --accent );
+	box-shadow: 0 0 0 7px color-mix( in srgb, var( --accent ) 8%, transparent ), var( --shadow );
+	animation: pop 0.35s var( --ease );
+}
+
+.tx-avatar.sent {
+	background:
+		radial-gradient( circle at 30% 25%, color-mix( in srgb, var( --text ) 14%, transparent ), transparent 62% ),
+		var( --fill );
+	color: var( --text );
+	box-shadow: 0 0 0 7px var( --fill ), var( --shadow );
+}
+
+.tx-avatar.shield,
+.tx-avatar.move {
+	background:
+		radial-gradient( circle at 30% 25%, color-mix( in srgb, var( --transparent ) 30%, transparent ), transparent 62% ),
+		color-mix( in srgb, var( --transparent ) 14%, transparent );
+	color: var( --transparent );
+	box-shadow: 0 0 0 7px color-mix( in srgb, var( --transparent ) 8%, transparent ), var( --shadow );
+}
+
+.tx-avatar.addressed {
+	background:
+		radial-gradient( circle at 30% 25%, color-mix( in srgb, var( --on-accent ) 38%, transparent ), transparent 46% ),
+		linear-gradient( 140deg, hsl( var( --hue ) 62% 52% ), hsl( calc( var( --hue ) + 70 ) 58% 40% ) );
+	color: var( --on-tile );
+	text-shadow: 0 1px 2px color-mix( in srgb, var( --ink ) 45%, transparent );
+	box-shadow: 0 0 0 7px hsl( var( --hue ) 60% 50% / 0.14 ), var( --shadow );
+}
+
+.tx-avatar-face {
+	display: grid;
+	place-items: center;
+	font-size: 21px;
+	font-weight: 700;
+	letter-spacing: 0.02em;
+}
+
+.tx-avatar-face svg {
+	width: 28px;
+	height: 28px;
+	stroke-width: 2.1;
+}
+
+.tx-avatar-badge {
+	position: absolute;
+	right: -3px;
+	bottom: -3px;
+	display: grid;
+	place-items: center;
+	width: 24px;
+	height: 24px;
+	border-radius: 50%;
+	background: var( --surface );
+	color: var( --text-2 );
+	box-shadow: 0 0 0 2px var( --surface ), var( --shadow );
+}
+
+.tx-avatar-badge svg {
+	width: 13px;
+	height: 13px;
+	stroke-width: 2.4;
+}
+
+/* how much, then, and where it stands */
+.tx-head {
+	display: flex;
+	flex-direction: column;
+	align-items: center;
+	gap: 6px;
+	margin-top: -8px;
+}
+
+.tx-head-amount {
+	font-size: 32px;
+	font-weight: 700;
+	letter-spacing: -0.025em;
+	font-variant-numeric: tabular-nums;
+}
+
+.tx-head-amount.received {
+	color: var( --accent );
+}
+
+.tx-head-amount.failed {
+	color: var( --text-3 );
+	text-decoration: line-through;
+}
+
+.usd-then {
+	margin-top: -4px;
+}
+
+.tx-chip {
+	display: inline-flex;
+	align-items: center;
+	gap: 6px;
+	padding: 4px 11px 4px 9px;
+	border-radius: 999px;
+	font-size: 12.5px;
+	font-weight: 600;
+	white-space: nowrap;
+}
+
+.tx-chip svg {
+	width: 14px;
+	height: 14px;
+	stroke-width: 2.6;
+}
+
+.tx-chip.confirmed {
+	background: var( --accent-soft );
+	color: var( --accent );
+}
+
+.tx-chip.pending {
+	background: var( --warn-soft );
+	color: var( --warn );
+}
+
+.tx-chip.failed {
+	background: var( --danger-soft );
+	color: var( --danger );
+}
+
+.tx-chip-dot {
+	flex: none;
+	width: 7px;
+	height: 7px;
+	border-radius: 50%;
+	background: currentColor;
+	animation: chip-breathe 1.6s ease-in-out infinite;
+}
+
+@keyframes chip-breathe {
+	0%, 100%	{ box-shadow: 0 0 0 0 color-mix( in srgb, currentColor 50%, transparent ); }
+	50%			{ box-shadow: 0 0 0 5px color-mix( in srgb, currentColor 0%, transparent ); }
+}
+
+/* each new confirmation lands with a small lift */
+.tx-count {
+	display: inline-block;
+	animation: rise 0.45s var( --ease );
+}
+
+/* where it went, end to end, the money flowing along the line between */
+.tx-route {
+	display: grid;
+	grid-template-columns: minmax( 0, 1fr ) auto minmax( 0, 1fr );
+	align-items: center;
+	gap: 8px;
+	padding: 16px 12px 14px;
+	border: 1px solid var( --line );
+	border-radius: var( --radius );
+	background: linear-gradient( 180deg, var( --surface-2 ), var( --surface ) );
+}
+
+.tx-route-end {
+	display: flex;
+	flex-direction: column;
+	align-items: center;
+	gap: 3px;
+	min-width: 0;
+	text-align: center;
+}
+
+.tx-route-label {
+	color: var( --text-3 );
+	font-size: var( --text-min );
+	font-weight: 600;
+	letter-spacing: 0.08em;
+	text-transform: uppercase;
+}
+
+.tx-route-mark {
+	display: grid;
+	place-items: center;
+	height: 42px;
+}
+
+.tx-route-mark .address-mark {
+	width: 36px;
+	height: 36px;
+}
+
+.tx-route-mark .address-marks {
+	align-items: center;
+}
+
+.tx-route-mark .address-marks .address-mark + .address-mark {
+	margin-left: -12px;
+}
+
+.address-more {
+	margin-left: 5px;
+	color: var( --text-2 );
+	font-size: 11.5px;
+	font-weight: 700;
+}
+
+.tx-route-icon {
+	display: grid;
+	place-items: center;
+	width: 36px;
+	height: 36px;
+	border-radius: 50%;
+	background: var( --accent-soft );
+	color: var( --accent );
+}
+
+.tx-route-icon svg {
+	width: 18px;
+	height: 18px;
+}
+
+.tx-route.received .tx-route-end:first-child .tx-route-icon {
+	background: var( --fill );
+	color: var( --text-2 );
+}
+
+.tx-route-name,
+.tx-route-sub {
+	max-width: 100%;
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+}
+
+.tx-route-name {
+	font-size: 14px;
+	font-weight: 600;
+}
+
+.tx-route-name.address {
+	font-family: var( --font-mono );
+	font-size: 12px;
+	white-space: normal;
+}
+
+.tx-route-sub {
+	color: var( --text-2 );
+	font-size: 12px;
+}
+
+.tx-route-link {
+	position: relative;
+	display: grid;
+	place-items: center;
+	width: 56px;
+	height: 30px;
+}
+
+.tx-route-line {
+	position: absolute;
+	top: 50%;
+	right: 0;
+	left: 0;
+	height: 2px;
+	margin-top: -1px;
+	border-radius: 2px;
+	background: repeating-linear-gradient( 90deg, var( --accent ) 0 6px, transparent 6px 11px );
+	background-size: 22px 2px;
+	opacity: 0.55;
+	animation: route-flow 1.1s linear infinite;
+}
+
+@keyframes route-flow {
+	to { background-position: 22px 0; }
+}
+
+.tx-route-arrow {
+	position: relative;
+	display: grid;
+	place-items: center;
+	width: 30px;
+	height: 30px;
+	border: 1px solid var( --line );
+	border-radius: 50%;
+	background: var( --surface );
+	color: var( --accent );
+	box-shadow: var( --shadow );
+}
+
+.tx-route-arrow svg {
+	width: 15px;
+	height: 15px;
+	stroke-width: 2.4;
+}
+
+/* the message, as said: theirs from the left, this wallet's own from the right */
+.tx-memo {
+	display: flex;
+	flex-direction: column;
+	align-items: flex-start;
+	gap: 6px;
+	margin: 0;
+}
+
+.tx-memo.out {
+	align-items: flex-end;
+}
+
+.tx-memo-label {
+	display: inline-flex;
+	align-items: center;
+	gap: 5px;
+	color: var( --text-3 );
+	font-size: var( --text-min );
+	font-weight: 600;
+	letter-spacing: 0.08em;
+	text-transform: uppercase;
+}
+
+.tx-memo-label svg {
+	width: 12px;
+	height: 12px;
+}
+
+.tx-bubble {
+	max-width: 86%;
+	margin: 0;
+	padding: 10px 14px;
+	border-radius: 18px 18px 18px 6px;
+	background: var( --surface-2 );
+	color: var( --text );
+	font-size: 14px;
+	line-height: 1.45;
+	white-space: pre-wrap;
+	box-shadow: 0 1px 0 var( --line );
+}
+
+.tx-memo.out .tx-bubble {
+	border-radius: 18px 18px 6px 18px;
+	background: var( --accent-fill );
+	color: var( --on-accent );
+}
+
+/* the facts: as many to a row as fit, each row filled, hairlines between (the gap shows the line under) */
+.facts.tx-facts {
+	flex-direction: row;
+	flex-wrap: wrap;
+	gap: 1px;
+	overflow: hidden;
+	border: 1px solid var( --line );
+	border-radius: var( --radius-sm );
+	background: var( --line );
+}
+
+.tx-facts .fact {
+	flex: 1 1 120px;
+	flex-direction: column;
+	align-items: flex-start;
+	justify-content: center;
+	gap: 2px;
+	min-height: 54px;
+	background: var( --surface-2 );
+	box-shadow: none;
+}
+
+/* the date is the longest: its own room first, so it stays on one line */
+.tx-facts .fact:first-child {
+	flex: 1.6 1 170px;
+}
+
+.tx-add-note {
+	display: inline-flex;
+	align-items: center;
+	gap: 6px;
+	align-self: flex-start;
+}
+
+.tx-add-note svg {
+	width: 15px;
+	height: 15px;
+}
+
+/* the footer: what to do with it (UI_RoundAction), then Close */
+.tx-foot {
+	display: flex;
+	flex-direction: column;
+	gap: 12px;
+	padding-top: 14px;
+	border-top: 1px solid var( --line );
+}
+
+.tx-foot .sheet-buttons {
+	margin-top: 0;
+}
+
+.tx-actions {
+	display: grid;
+	grid-template-columns: repeat( auto-fit, minmax( 72px, 1fr ) );
+	gap: 6px;
+}
+
+.tx-actions-error {
+	grid-column: 1 / -1;
+	flex-basis: 100%;
+	margin: 0;
+}
+
+@media ( min-width: 780px ) {
+	.tx-foot {
+		flex-direction: row;
+		align-items: center;
+		justify-content: space-between;
+	}
+
+	.tx-foot .tx-actions {
+		display: flex;
+		flex-wrap: wrap;
+		gap: 8px;
+	}
+
+	.tx-foot .round-action {
+		flex-direction: row;
+		gap: 8px;
+		padding: 4px 14px 4px 4px;
+		border-radius: 999px;
+		background: var( --fill );
+		transition: background 0.15s var( --ease );
+	}
+
+	.tx-foot .round-action:hover {
+		background: var( --fill-2 );
+	}
+
+	.tx-foot .round-action-icon,
+	.tx-foot .round-action:hover .round-action-icon {
+		width: 28px;
+		height: 28px;
+		background: var( --surface );
+		transform: none;
+	}
+
+	.tx-foot .round-action-icon svg {
+		width: 15px;
+		height: 15px;
+	}
+
+	.tx-foot .round-action-label {
+		color: var( --text );
+		font-size: 13px;
+	}
+
+	.tx-foot .round-action.main {
+		background: var( --accent-fill );
+	}
+
+	.tx-foot .round-action.main:hover {
+		background: var( --accent-fill-hi );
+	}
+
+	.tx-foot .round-action.main .round-action-icon {
+		background: color-mix( in srgb, var( --on-accent ) 14%, transparent );
+		color: var( --on-accent );
+		box-shadow: none;
+	}
+
+	.tx-foot .round-action.main .round-action-label {
+		color: var( --on-accent );
+	}
+}
+
+.round-action {
+	display: flex;
+	flex-direction: column;
+	align-items: center;
+	gap: 6px;
+	padding: 4px 2px;
+	border: 0;
+	border-radius: var( --radius-sm );
+	background: none;
+	color: var( --text );
+	font: inherit;
+	cursor: pointer;
+}
+
+.round-action:focus-visible {
+	outline: 2px solid var( --accent );
+	outline-offset: 2px;
+}
+
+.round-action-icon {
+	display: grid;
+	place-items: center;
+	width: 44px;
+	height: 44px;
+	border-radius: 50%;
+	background: var( --fill );
+	color: var( --text );
+	transition: transform 0.15s var( --ease ), background 0.15s var( --ease );
+}
+
+.round-action:hover .round-action-icon {
+	background: var( --fill-2 );
+	transform: translateY( -1px );
+}
+
+.round-action-icon svg {
+	width: 19px;
+	height: 19px;
+}
+
+.round-action.main .round-action-icon {
+	background: var( --accent-fill );
+	color: var( --on-accent );
+	box-shadow: 0 4px 14px color-mix( in srgb, var( --accent ) 35%, transparent );
+}
+
+.round-action.main:hover .round-action-icon {
+	background: var( --accent-fill-hi );
+}
+
+.round-action.done .round-action-icon {
+	background: var( --accent-soft );
+	color: var( --accent );
+}
+
+.round-action-label {
+	color: var( --text-2 );
+	font-size: 12px;
+	font-weight: 600;
+	text-align: center;
+}
+
+/* on the card while payments wait: how many, and History one press away (UI_PendingChip) */
+.pending-chip {
+	display: inline-flex;
+	align-items: center;
+	gap: 7px;
+	margin-top: 12px;
+	padding: 5px 12px;
+	border: 1px solid color-mix( in srgb, var( --card-warn ) 45%, transparent );
+	border-radius: 999px;
+	background: color-mix( in srgb, var( --card-warn ) 16%, transparent );
+	color: var( --card-warn-text );
+	font: inherit;
+	font-size: 12.5px;
+	font-weight: 600;
+	cursor: pointer;
+}
+
+.pending-chip:hover {
+	background: color-mix( in srgb, var( --card-warn ) 26%, transparent );
+}
+
+@media ( prefers-reduced-motion: reduce ) {
+	.tx-avatar,
+	.tx-chip-dot,
+	.tx-count,
+	.tx-route-line {
+		animation: none;
+	}
 }
 
 .tx-status {
 	margin: -6px 0 0;
 	color: var( --text-2 );
 	text-align: center;
-}
-
-.tx-status.pending {
-	color: var( --warn );
 }
 
 /* a payment that didn't go through: kept in its day, quieter, its amount struck (nothing moved) */
@@ -6478,22 +7802,17 @@ WORKING AND NOTES
 
 /* news that isn't a problem: the numbers changed, have another look */
 .info-note {
-	display: flex;
-	gap: 10px;
-	margin-top: 12px;
-	padding: 10px 12px;
-	border-radius: var( --radius-sm );
 	background: var( --fill );
-	color: var( --text );
-	font-size: 12px;
-	line-height: 1.5;
 }
 
-.info-note svg {
-	flex-shrink: 0;
-	width: 16px;
-	height: 16px;
+.info-note > svg {
 	stroke: var( --accent );
+}
+
+.warn-note > span,
+.info-note > span {
+	flex: 1;
+	min-width: 0;
 }
 
 /* the arrow carries the money across while it's being built */
@@ -7795,6 +9114,22 @@ ZEC PRICE
 	}
 	.tile-wrap .tile {
 		padding-right: 52px;
+	}
+	/* a pool's actions the same way: the words take the icon's and the arrow's room */
+	.action-row .action-icon, .pool-main .action-icon, .action-go {
+		display: none;
+	}
+	.action-row, .pool-main {
+		padding-right: 10px;
+		padding-left: 10px;
+	}
+	/* a transaction's status wraps: "Confirmed · 4,403,000 confirmations" ran off the sheet at 175% */
+	.tx-chip {
+		flex-wrap: wrap;
+		justify-content: center;
+		max-width: 100%;
+		white-space: normal;
+		text-align: center;
 	}
 	.tile-info {
 		right: 26px;

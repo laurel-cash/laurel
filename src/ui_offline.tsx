@@ -17,14 +17,14 @@ See the LICENSE file for details.
 
 import { useState } from "react";
 import { useQuery } from "@tanstack/react-query";
-import { FileCheck2, FileClock, FileOutput, FileSignature, FolderOpen, Inbox, Info, Send, TriangleAlert } from "lucide-react";
+import { FileCheck2, FileClock, FileOutput, FileSignature, FolderOpen, Inbox, Send } from "lucide-react";
 
 import { commands, Com_Abbrev, Com_ErrorOf, Com_FormatDate, folder_t, offlinePending_t, offlineReview_t, sendQuote_t } from "./ui_local";
 import { T } from "./ui_text";
 import { KEYS, QUERY } from "./ui_query";
 import { useAction } from "./ui_hooks";
 import { useStore } from "./ui_store";
-import { sheetProps_t, UI_Alert, UI_Amount, UI_ConfirmSheet, UI_Info, UI_Sheet, UI_SheetButtons, UI_SheetClose, UI_Spinner, UI_Waiting } from "./ui_widgets";
+import { sheetProps_t, UI_Alert, UI_Amount, UI_Callout, UI_ConfirmSheet, UI_Info, UI_Sheet, UI_SheetButtons, UI_SheetClose, UI_Spinner, UI_Waiting } from "./ui_widgets";
 import { UI_FeeFact, UI_FirstPay, UI_TxidFact } from "./ui_payment";
 import { UI_PayList } from "./ui_pays";
 
@@ -73,11 +73,11 @@ export function UI_SavedFile( props: { path: string; signed: boolean } ) {
 			<p className="lede">{props.signed ? T.offline.signed : T.offline.saved}</p>
 			<p className="hint folder-path">{props.path}</p>
 			{props.signed ? (
-				<div className="warn-note"><TriangleAlert aria-hidden="true" /><span>{T.offline.liveFile}</span></div>
+				<UI_Callout kind="warn">{T.offline.liveFile}</UI_Callout>
 			) : (
 				<>
-					<div className="warn-note"><TriangleAlert aria-hidden="true" /><span>{T.offline.savedHold}</span></div>
-					<div className="info-note"><Info aria-hidden="true" /><span>{T.offline.savedHistory}</span></div>
+					<UI_Callout kind="warn">{T.offline.savedHold}</UI_Callout>
+					<UI_Callout kind="info">{T.offline.savedHistory}</UI_Callout>
 				</>
 			)}
 		</>
@@ -124,18 +124,15 @@ export function UI_SignSheet( props: sheetProps_t & { review: offlineReview_t | 
 	return (
 		<UI_Sheet open={props.open} onOpenChange={Close} title={T.offline.signTitle} description={r ? T.offline.signFrom( r.accountName, r.walletName ) : undefined} busy={sign.busy}>
 			{r && <UI_OfflinePayment quote={r.quote} />}
-			{r?.changed && <div className="warn-note"><TriangleAlert aria-hidden="true" /><span>{T.offline.changed}</span></div>}
+			{r?.changed && <UI_Callout kind="warn">{T.offline.changed}</UI_Callout>}
 			{r?.keyFolder && (
-				<div className="warn-note">
-					<TriangleAlert aria-hidden="true" />
-					<span>
-						{T.offline.keyMissing( r.keyFolder )}{" "}
-						<button className="link quiet" onClick={() => { void reveal.run( "data" ); }}><FolderOpen aria-hidden="true" />{T.offline.showFolder}</button>
-					</span>
-				</div>
+				<UI_Callout kind="warn">
+					{T.offline.keyMissing( r.keyFolder )}{" "}
+					<button className="link quiet" onClick={() => { void reveal.run( "data" ); }}><FolderOpen aria-hidden="true" />{T.offline.showFolder}</button>
+				</UI_Callout>
 			)}
 			{reveal.error && <UI_Alert title={T.developer.cantShow} message={reveal.error} />}
-			<div className="info-note"><span>{T.offline.stayOffline}</span></div>
+			<UI_Callout kind="info" icon={null}>{T.offline.stayOffline}</UI_Callout>
 			{sign.busy && <UI_Waiting text={T.offline.signing} block />}
 			{sign.error && <UI_Alert title={T.offline.cantSign} message={sign.error} />}
 			<UI_SheetButtons busy={sign.busy} onCancel={() => Close( false )} action={r ? { label: T.offline.sign, onRun: () => void sign.run( r ), icon: <FileSignature aria-hidden="true" /> } : null} />

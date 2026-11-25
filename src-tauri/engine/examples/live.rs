@@ -115,7 +115,7 @@ async fn open(name: &str) -> LightClient {
     LightClient::new(config, true).await.unwrap()
 }
 
-/// Saved the way Laurel saves (w_main.rs, W_WriteWallet): the engine hands
+/// Saved the way Laurel saves (w_persist.rs, W_WriteWallet): the engine hands
 /// over the wallet's bytes and the caller writes them. The engine's own
 /// savers don't exist in Laurel's build (zingolib's `no-plaintext-save`);
 /// Laurel seals the bytes, this writes them plain: public test seeds only.

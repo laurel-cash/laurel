@@ -21,10 +21,10 @@ use zcash_address::ZcashAddress;
 use zcash_protocol::memo::MemoBytes;
 use zcash_protocol::{ PoolType, ShieldedPool };
 
-use crate::w_engine::{ confirmed_t, fence_t, fenced_t, sendWhat_t, E_Client, E_Fenced, E_Intend, E_ProposeSend, E_Quote, E_SendIfSeen };
+use crate::w_engine::{ confirmed_t, fence_t, fenced_t, sendWhat_t, E_Client, E_Fenced, E_HoldsPublic, E_Intend, E_ProposeSend, E_Quote, E_SendIfSeen };
 use crate::w_local::*;
 use crate::w_spendkey::{ Sk_Ensure, Sk_Needed };
-use crate::w_main::{ W_Engine, W_Paying };
+use crate::w_registry::{ W_Engine, W_Paying };
 use crate::w_scan::W_ParseScan;
 
 pub const MEMO_MAX_BYTES: usize = 512;
@@ -33,12 +33,20 @@ pub const MEMO_MAX_BYTES: usize = 512;
 // transaction grows with each; the network has a size limit)
 pub const MAX_PAYMENTS: usize = 20;
 
+// dust: an output of at most ZIP 317's marginal fee costs as much to spend as
+// it holds, so the engine leaves it out of a balance (zingolib's balance.rs).
+// A payment this small arrives as nothing the recipient can use.
+pub const DUST_ZATS: u64 = 5_000;
+
 
 /*
 ==================
 Com_PoolOf / Com_PoolFrom
 
-Laurel's pool names and the protocol's, both ways
+Laurel's pool names and the protocol's, both ways. Public money is sent as
+it is only when the person turned on Send From Public Money (Settings >
+Advanced); otherwise it's shielded first. The setting is read here, by the
+engine, not only by the screen.
 ==================
 */
 pub fn Com_PoolOf( p: PoolType ) -> pool_t {
@@ -50,8 +58,9 @@ pub fn Com_PoolOf( p: PoolType ) -> pool_t {
 	}
 }
 
-fn Com_PoolFrom( p: pool_t ) -> wresult_t< PoolType > {
+fn Com_PoolFrom( p: pool_t, publicOk: bool ) -> wresult_t< PoolType > {
 	match p {
+		pool_t::POOL_TRANSPARENT if publicOk	=> Ok( PoolType::Transparent ),
 		pool_t::POOL_TRANSPARENT	=> Err( werr_t::WERR_FROM_PUBLIC ),
 		pool_t::POOL_SAPLING		=> Ok( PoolType::Shielded( ShieldedPool::Sapling ) ),
 		pool_t::POOL_ORCHARD		=> Ok( PoolType::Shielded( ShieldedPool::Orchard ) ),
@@ -118,6 +127,25 @@ fn Com_CheckPays( req: &sendRequest_t ) -> wresult_t< () > {
 
 /*
 ==================
+Com_ShortOfPrivate
+
+Why Automatic (private first) came up short: there isn't the money, or
+there is and it's public, which Automatic never spends. Said as "not
+enough", that read as money gone. Public money is shielded first, or,
+with Send From Public Money on, paid by choosing Transparent
+==================
+*/
+async fn Com_ShortOfPrivate( f: &mut fenced_t< '_ >, account: zip32::AccountId, publicOk: bool ) -> werr_t {
+	match ( E_HoldsPublic( f, account ).await, publicOk ) {
+		( Err( e ), _ )			=> e,
+		( Ok( false ), _ )		=> werr_t::WERR_NOT_ENOUGH,
+		( Ok( true ), true )	=> werr_t::WERR_ONLY_PUBLIC,
+		( Ok( true ), false )	=> werr_t::WERR_FROM_PUBLIC,
+	}
+}
+
+/*
+==================
 W_Propose
 
 Checks the request and has the engine build it; the proposal is left in
@@ -130,7 +158,8 @@ pub async fn W_Propose( f: &mut fenced_t< '_ >, account: zip32::AccountId, req: 
 	let net = w_registry.read().await.network;
 	Com_CheckPays( req )?;
 	let ( target, to, memo ) = W_Payee( net, &req.to, &req.memo )?;
-	let from = req.from.map( Com_PoolFrom ).transpose()?;
+	let publicOk = crate::w_settings::S_Get().sendFromPublic;
+	let from = req.from.map( |p| Com_PoolFrom( p, publicOk ) ).transpose()?;
 
 	let mut also = vec![];
 	let mut pays = vec![];
@@ -144,11 +173,12 @@ pub async fn W_Propose( f: &mut fenced_t< '_ >, account: zip32::AccountId, req: 
 		None => sendWhat_t::ALL( to, memo ),
 	};
 
-	let p = E_ProposeSend( f, account, what, from ).await
-		.map_err( |e| match ( e, req.from ) {
-			( werr_t::WERR_NOT_ENOUGH, Some( _ ) ) => werr_t::WERR_NOT_ENOUGH_POOL,
-			( e, _ ) => e,
-		} )?;
+	let p = match E_ProposeSend( f, account, what, from ).await {
+		Ok( p ) => p,
+		Err( werr_t::WERR_NOT_ENOUGH ) if req.from.is_some() => return Err( werr_t::WERR_NOT_ENOUGH_POOL ),
+		Err( werr_t::WERR_NOT_ENOUGH ) => return Err( Com_ShortOfPrivate( f, account, publicOk ).await ),
+		Err( e ) => return Err( e ),
+	};
 
 	Ok( sendQuote_t {
 		to:		target.address,
@@ -160,6 +190,7 @@ pub async fn W_Propose( f: &mut fenced_t< '_ >, account: zip32::AccountId, req: 
 		memo:	req.memo.clone().filter( |m| !m.trim().is_empty() ),
 		feeNote:	Com_FeeNote( p.fee, p.amount, p.coins ),
 		also:	also,
+		publicAddresses:	p.publicAddresses,
 	} )
 }
 
@@ -202,9 +233,22 @@ dropped at once, so sync keeps running while the person reads.
 ==================
 */
 pub async fn W_QuoteSend( id: &str, account: u32, req: sendRequest_t ) -> wresult_t< quoted_t< sendQuote_t > > {
-	let ( accountId, client, _ ) = W_Engine( id, account ).await?;
-	let quote = E_Fenced( &mut *E_Client( &client ).await?, fence_t::FENCE_SCANNED, async |f| E_Quote( f, async |f| W_Propose( f, accountId, &req ).await ).await ).await?;
+	let quote = W_PreviewSend( id, account, req ).await?;
 	Ok( E_Intend( id, account, quote ) )
+}
+
+/*
+==================
+W_PreviewSend
+
+The same numbers with no intent: what Send shows before a review (Max's
+amount), which nothing is sent under. Previews never push a review's
+intent out of the table (W2-08)
+==================
+*/
+pub async fn W_PreviewSend( id: &str, account: u32, req: sendRequest_t ) -> wresult_t< sendQuote_t > {
+	let ( accountId, client, _ ) = W_Engine( id, account ).await?;
+	E_Fenced( &mut *E_Client( &client ).await?, fence_t::FENCE_SCANNED, async |f| E_Quote( f, async |f| W_Propose( f, accountId, &req ).await ).await ).await
 }
 
 /*
@@ -220,12 +264,12 @@ the review as it was, to send again.
 */
 pub async fn W_SendNow( id: &str, account: u32, req: sendRequest_t, intent: String, seen: sendQuote_t, repeatId: Option< &str > ) -> wresult_t< sendResult_t > {
 	if ( Sk_Needed( &seen.from ) ) {
-		crate::w_main::W_Allowed( id, walletAct_t::WA_SPEND ).await?;		// a wallet that can't sign fetches nothing
+		crate::w_registry::W_Allowed( id, walletAct_t::WA_SPEND ).await?;		// a wallet that can't sign fetches nothing
 		Sk_Ensure().await?;
 	}
-	let ( slot, accountId, client ) = W_Paying( id, account, &intent ).await?;
+	let ( slot, accountId, client, quoted ) = W_Paying( id, account, &intent ).await?;
 
-	let done = E_Fenced( &mut *E_Client( &client ).await?, fence_t::FENCE_SCANNED, async |f| E_SendIfSeen( f, &slot, &seen, async |f| W_Propose( f, accountId, &req ).await ).await ).await;
+	let done = E_Fenced( &mut *E_Client( &client ).await?, fence_t::FENCE_SCANNED, async |f| E_SendIfSeen( f, &slot, &quoted, &seen, async |f| W_Propose( f, accountId, &req ).await ).await ).await;
 	// a reminder this pays moves to its next date once the payment is out, or
 	// may be: one still due after an unsure send invites paying it twice
 	if let Some( r ) = repeatId.filter( |_| Com_PaysReminder( &done ) ) {
@@ -300,10 +344,17 @@ mod tests {
 
 	#[test]
 	fn public_money_is_shielded_first() {
-		assert!( matches!( Com_PoolFrom( pool_t::POOL_TRANSPARENT ), Err( werr_t::WERR_FROM_PUBLIC ) ) );
+		assert!( matches!( Com_PoolFrom( pool_t::POOL_TRANSPARENT, false ), Err( werr_t::WERR_FROM_PUBLIC ) ) );
 		for p in [ pool_t::POOL_IRONWOOD, pool_t::POOL_ORCHARD, pool_t::POOL_SAPLING ] {
-			assert_eq!( Com_PoolOf( Com_PoolFrom( p ).unwrap() ), p );
+			assert_eq!( Com_PoolOf( Com_PoolFrom( p, false ).unwrap() ), p );
 		}
+	}
+
+	// Settings > Advanced > Send From Public Money: public money is sent as it is
+	#[test]
+	fn public_money_is_sent_as_it_is_only_when_turned_on() {
+		assert_eq!( Com_PoolFrom( pool_t::POOL_TRANSPARENT, true ).unwrap(), PoolType::Transparent );
+		assert!( !crate::w_settings::appSettings_t::default().sendFromPublic, "off until the person turns it on" );
 	}
 
 	/*
@@ -321,5 +372,11 @@ mod tests {
 		assert_eq!( Com_FeeNote( 10_000, 50_000, 1 ), Some( feeNote_t::LARGE_SHARE ), "a fifth of a small payment" );
 		assert_eq!( Com_FeeNote( 50_000, 100_000_000, 2 ), Some( feeNote_t::HIGH ) );
 		assert_eq!( Com_FeeNote( 10_000, 100_000, 1 ), None, "exactly a tenth is not more than a tenth" );
+	}
+
+	// dust is the engine's own line, not a number of ours that could drift from it
+	#[test]
+	fn dust_is_zip317s_marginal_fee() {
+		assert_eq!( DUST_ZATS, zcash_primitives::transaction::fees::zip317::MARGINAL_FEE.into_u64() );
 	}
 }

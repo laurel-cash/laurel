@@ -19,14 +19,14 @@ See the LICENSE file for details.
 
 import { ReactNode, useEffect, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
-import { ArrowRightLeft, Eye, Info, ShieldCheck } from "lucide-react";
+import { ArrowRightLeft, Eye, ShieldCheck } from "lucide-react";
 
-import { Com_ErrorOf, Com_FormatZec, commands, quoted_t, shieldQuote_t, shieldResult_t } from "./ui_local";
+import { Com_Abbrev, Com_ErrorOf, Com_FormatZec, commands, moveQuote_t, quoted_t, shieldQuote_t } from "./ui_local";
 import { T } from "./ui_text";
 import { KEYS, QUERY } from "./ui_query";
-import { useConfirm } from "./ui_hooks";
+import { confirmed_t, useConfirm } from "./ui_hooks";
 import { useStore } from "./ui_store";
-import { sheetProps_t, UI_Alert, UI_Sheet, UI_SheetButtons, UI_SheetClose, UI_SheetWait } from "./ui_widgets";
+import { sheetProps_t, UI_Alert, UI_Callout, UI_Sheet, UI_SheetButtons, UI_SheetClose, UI_SheetWait } from "./ui_widgets";
 import { UI_FeeFact, UI_FeeNote, UI_OfflineNote, UI_Flow, UI_Proving, UI_Receipt, UI_ReviewFrom, UI_SpendKeyNote, flowEnd_t, useSpendKey } from "./ui_payment";
 import { UI_CatchingUp, usePayable } from "./ui_sync";
 
@@ -49,18 +49,20 @@ UI_IntoPrivateSheet
 
 The one sheet, and how each way says it: its words (the same keys, in
 T.shield and T.move), where the money comes from, the engine's quote
-and send, and the key its quote is kept under (the amount held is in
-it: new money there changes the quote)
+and send, the key its quote is kept under (the amount held is in it:
+new money there changes the quote), and what only its quote can say
+(notes)
 ==================
 */
-function UI_IntoPrivateSheet( props: intoPrivateProps_t & {
+function UI_IntoPrivateSheet< Q extends moveQuote_t >( props: intoPrivateProps_t & {
 	text:		intoPrivateText_t;
 	from:		flowEnd_t["kind"];
 	fromIcon:	ReactNode;
 	icon:		ReactNode;
 	queryKey:	readonly unknown[];
-	quote:		() => Promise< quoted_t< shieldQuote_t > >;
-	now:		( seen: quoted_t< shieldQuote_t > ) => Promise< shieldResult_t >;
+	quote:		() => Promise< quoted_t< Q > >;
+	now:		( seen: quoted_t< Q > ) => Promise< confirmed_t< Q, { txid: string } > >;
+	notes?:		( q: Q ) => ReactNode;
 	spendsSapling:	boolean;		// its notes are Sapling's: the first time, the key is fetched (useSpendKey)
 } ) {
 	const hidden = useStore( ( s ) => s.hideAmounts );
@@ -140,8 +142,9 @@ function UI_IntoPrivateSheet( props: intoPrivateProps_t & {
 					</dl>
 				)}
 				{!bring.busy && <UI_FeeNote note={q.feeNote} />}
+				{!bring.busy && props.notes?.( q )}
 				{!bring.busy && <UI_SpendKeyNote fetch={fetchKey} />}
-				{bring.changed && !bring.busy && <div className="info-note"><Info aria-hidden="true" /><span>{text.changed}</span></div>}
+				{bring.changed && !bring.busy && <UI_Callout kind="info">{text.changed}</UI_Callout>}
 				{props.offline && !bring.busy && <UI_OfflineNote />}
 				{bring.error && <UI_Alert title={text.failed} message={bring.error} action={T.common.tryAgain} onAction={() => { bring.setError( null ); quote.refetch(); }} />}
 
@@ -167,21 +170,31 @@ function UI_IntoPrivateSheet( props: intoPrivateProps_t & {
 ==================
 UI_ShieldSheet
 
-Public money into the private balance
+Public money into the private balance: Laurel's pick of address
+(W_ShieldPublic), or the one public address named, from its row in the
+pool's address list (UI_PublicAddressesPanel)
 ==================
 */
-export function UI_ShieldSheet( props: intoPrivateProps_t ) {
+export function UI_ShieldSheet( props: intoPrivateProps_t & { address?: string | null } ) {
+	const address = props.address ?? null;		// one public address, from its row; else Laurel's pick
 	return (
 		<UI_IntoPrivateSheet
 			{...props}
-			text={T.shield}
+			text={address ? { ...T.shield, lede: T.shield.ledeOne } : T.shield}
 			from="public"
 			spendsSapling={false}
 			fromIcon={<Eye aria-hidden="true" />}
 			icon={<ShieldCheck aria-hidden="true" />}
-			queryKey={KEYS.shieldQuote( props.walletId, props.account, props.heldZats )}
-			quote={() => commands.wQuoteShieldF( props.walletId, props.account )}
+			queryKey={KEYS.shieldQuote( props.walletId, props.account, props.heldZats, address )}
+			quote={() => commands.wQuoteShieldF( props.walletId, props.account, address )}
 			now={( seen ) => commands.wShieldNowF( props.walletId, props.account, seen.intent, seen.quote )}
+			notes={( q: shieldQuote_t ) => (
+				<>
+					{q.from && <UI_Callout kind="info" icon={Eye}>{T.shield.onlyThis( Com_Abbrev( q.from ) )}</UI_Callout>}
+					{q.more > 0 && <UI_Callout kind="info">{T.shield.more( q.more )}</UI_Callout>}
+					{q.links > 1 && <UI_Callout kind="warn">{T.shield.links( q.links )}</UI_Callout>}
+				</>
+			)}
 		/>
 	);
 }

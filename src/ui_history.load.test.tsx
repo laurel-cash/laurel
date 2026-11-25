@@ -18,7 +18,7 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 
 import { T } from "./ui_text";
 import type { historyItem_t } from "./bindings";
-import { Test_Item } from "./test_engine";
+import { Test_Item, Test_Progress } from "./test_engine";
 
 // each account's answer is held until the test releases it
 const engine = vi.hoisted( () => ( {
@@ -54,10 +54,10 @@ async function Open() {
 	const { UI_TipProvider } = await import( "./ui_widgets" );
 	const client = new QueryClient( { defaultOptions: { queries: { retry: false } } } );
 
-	return ( p: { account: number } ) => (
+	return ( p: { account: number; chainHeight?: number } ) => (
 		<QueryClientProvider client={client}>
 			<UI_TipProvider>
-				<UI_History walletId="w1" account={p.account} total={0} progress={undefined} onReceive={() => {}} onSendAgain={() => {}} />
+				<UI_History walletId="w1" account={p.account} total={0} progress={p.chainHeight ? Test_Progress( { walletHeight: p.chainHeight, chainHeight: p.chainHeight } ) : undefined} onReceive={() => {}} onSendAgain={() => {}} />
 			</UI_TipProvider>
 		</QueryClientProvider>
 	);
@@ -91,7 +91,72 @@ describe( "UI_History messages", () => {
 		expect( screen.queryByText( /scam\.example/ ) ).toBeNull();
 
 		fireEvent.click( row );
-		expect( await screen.findByText( "“Claim your prize at scam.example”" ) ).toBeTruthy();
+		const found = await screen.findAllByText( "Claim your prize at scam.example" );		// the test line's id is its memo too
+		expect( found.some( ( e ) => e.closest( ".tx-memo.in .tx-bubble" ) ) ).toBeTruthy();		// as a bubble, theirs
+	} );
+} );
+
+describe( "UI_History detail", () => {
+	// a payment to a public address, out of two of this wallet's: both ends named, its depth counted
+	it( "shows where a payment went, its confirmations, and what can be done", async () => {
+		const View = await Open();
+		render( <View account={0} chainHeight={113} /> );
+		await act( async () => engine.release[0]( [ Test_Item( { kind: "sent", amount: 5, counterparty: "tmtheirs", fromAddresses: [ "tmmine1", "tmmine2" ], from: [ "transparent" ], into: [] } ) ] ) );
+
+		fireEvent.click( await screen.findByText( "tmtheirs", { exact: false } ) );
+		expect( await screen.findByText( T.history.confirmations( 14 ) ) ).toBeTruthy();		// height 100, tip 113
+		expect( screen.getByText( T.history.publicAddresses( 2 ) ) ).toBeTruthy();
+		expect( screen.getByRole( "button", { name: T.history.sendAgainShort } ) ).toBeTruthy();
+		expect( screen.getByRole( "button", { name: T.history.saveContact } ) ).toBeTruthy();
+	} );
+
+	// money in at a public address isn't a private sender's; a payment whose recipient couldn't be read isn't to this wallet
+	it( "names each end as it is: a public sender not kept, a recipient not known", async () => {
+		const View = await Open();
+		render( <View account={0} /> );
+		await act( async () => engine.release[0]( [
+			Test_Item( { txid: "in", memo: "public in", into: [ "transparent" ] } ),
+			Test_Item( { txid: "out", kind: "sent", memo: "nobody", counterparty: null } ),
+		] ) );
+
+		fireEvent.click( await screen.findByText( T.history.withMessage, { exact: false } ) );
+		expect( await screen.findByText( T.history.publicSender ) ).toBeTruthy();
+		expect( screen.queryByText( T.history.hiddenSender ) ).toBeNull();
+		fireEvent.click( screen.getByRole( "button", { name: T.common.close } ) );
+
+		fireEvent.click( await screen.findByText( "nobody", { exact: false } ) );
+		const to = ( await screen.findByText( T.history.unknownRecipient ) ).closest( ".tx-route-end" );
+		expect( to?.textContent ).toContain( T.history.to );		// the To end, where it once said "Your wallet"
+	} );
+
+	// gate E: 0.00005 ZEC arrived, History listed it, and the balance didn't count it, unexplained
+	it( "says a payment of dust received is too small to spend, and only that one", async () => {
+		const { useStore } = await import( "./ui_store" );
+		const { Test_Constants } = await import( "./test_engine" );
+		useStore.setState( { constants: Test_Constants() } );
+		const View = await Open();
+		render( <View account={0} /> );
+		await act( async () => engine.release[0]( [ { ...Item( "dust", "received" ), amount: 5_000 }, { ...Item( "big", "received" ), amount: 100_000 } ] ) );
+
+		const rows = await screen.findAllByText( T.history.withMessage, { exact: false } );
+		fireEvent.click( rows[0] );
+		expect( await screen.findByText( T.history.dust ) ).toBeTruthy();
+		fireEvent.click( screen.getByRole( "button", { name: T.common.close } ) );
+
+		fireEvent.click( rows[1] );
+		await screen.findAllByText( "big" );
+		expect( screen.queryByText( T.history.dust ) ).toBeNull();
+	} );
+
+	// still waiting: sending it again would be a second payment
+	it( "offers no Send Again while a payment waits", async () => {
+		const View = await Open();
+		render( <View account={0} chainHeight={113} /> );
+		await act( async () => engine.release[0]( [ Test_Item( { kind: "sent", counterparty: "tmtheirs", state: { kind: "pending", expiresAt: null } } ) ] ) );
+
+		fireEvent.click( await screen.findByText( "tmtheirs", { exact: false } ) );
+		expect( await screen.findByRole( "button", { name: T.receipt.copy } ) ).toBeTruthy();
+		expect( screen.queryByRole( "button", { name: T.history.sendAgainShort } ) ).toBeNull();
 	} );
 } );
 
@@ -122,8 +187,10 @@ describe( "UI_History notes", () => {
 		await act( async () => engine.release[0]( [ Test_Item( { txid: TXID, kind: "sent", counterparty: "utest1someone" } ) ] ) );
 
 		fireEvent.click( await screen.findByText( "utest1someone", { exact: false } ) );
+		expect( screen.queryByPlaceholderText( T.history.notePlaceholder ) ).toBeNull();		// tucked away until wanted
+		fireEvent.click( await screen.findByRole( "button", { name: T.history.addNote } ) );
 		fireEvent.change( await screen.findByPlaceholderText( T.history.notePlaceholder ), { target: { value: "  Rent, October " } } );
-		fireEvent.change( screen.getByRole( "combobox", { name: T.history.category } ), { target: { value: "housing" } } );
+		fireEvent.click( within( screen.getByRole( "group", { name: T.history.category } ) ).getByRole( "button", { name: T.history.categories.housing } ) );
 		fireEvent.click( screen.getByRole( "button", { name: T.history.saveNote } ) );
 		await vi.waitFor( () => expect( engine.notes ).toEqual( [ [ TXID, "  Rent, October ", "housing" ] ] ) );
 

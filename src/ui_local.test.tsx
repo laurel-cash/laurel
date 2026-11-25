@@ -14,13 +14,15 @@ See the LICENSE file for details.
 import { afterEach, describe, expect, it } from "vitest";
 import { cleanup, fireEvent, render, screen } from "@testing-library/react";
 
-import { Com_Abbrev, Com_AllWallets, Com_DateTicks, Com_ErrorOf, Com_FormatZec, Com_LookAlike, Com_MemoAsksForSecrets, Com_ParseZec, Com_PrivacyNote, Com_Split, Com_SyncState } from "./ui_local";
+import { Com_Abbrev, Com_AllWallets, Com_CssPx, Com_ExplorerUrl, Com_DateTicks, Com_ErrorOf, Com_FormatZec, Com_LookAlike, Com_MemoAsksForSecrets, Com_ParseZec, Com_PrivacyNote, Com_Split, Com_SyncState } from "./ui_local";
 import type { balance_t, syncProgress_t, walletSummary_t } from "./bindings";
 import { useStore } from "./ui_store";
 import { Test_Balance, Test_Summary } from "./test_engine";
 import { UI_Alert, UI_Amount, UI_TipProvider } from "./ui_widgets";
+import { Com_SyncLabel, Com_SyncWords } from "./ui_chrome";
+import { T } from "./ui_text";
 
-const PROGRESS: syncProgress_t = { running: true, complete: false, percent: 40, walletHeight: 10, chainHeight: 25, error: null, attempting: false, nextRetryAt: null, paused: false, etaSecs: null, birthdayTime: null, repairing: false };
+const PROGRESS: syncProgress_t = { running: true, complete: false, percent: 40, walletHeight: 10, chainHeight: 25, error: null, attempting: false, nextRetryAt: null, paused: false, etaSecs: null, birthdayTime: null, repairing: false, preparing: false };
 
 const ZATS = 100_000_000;		// one ZEC
 
@@ -58,6 +60,35 @@ describe( "Com_SyncState", () => {
 		expect( Com_SyncState( PROGRESS ) ).toBe( "syncing" );
 		expect( Com_SyncState( { ...PROGRESS, percent: 100 } ) ).toBe( "syncing" );
 		expect( Com_SyncState( { ...PROGRESS, complete: true } ) ).toBe( "synced" );
+	} );
+
+	// a restore spent minutes on setup before its first block, and said "Syncing 0%" all along
+	it( "says it's getting ready before the first block, never a 0% that sits", () => {
+		const setup = { ...PROGRESS, percent: 0, preparing: true };
+		expect( Com_SyncState( setup ) ).toBe( "preparing" );
+		expect( Com_SyncLabel( Com_SyncState( setup ), setup ) ).toBe( T.sync.preparing );
+		const scanning = { ...setup, preparing: false };
+		expect( Com_SyncState( scanning ) ).toBe( "syncing" );
+		expect( Com_SyncLabel( Com_SyncState( scanning ), scanning ) ).toBe( T.sync.syncing( 0 ) );
+	} );
+
+	it( "puts done, paused and offline before preparing, and a repair says so", () => {
+		const setup = { ...PROGRESS, percent: 0, preparing: true };
+		expect( Com_SyncState( { ...setup, complete: true } ) ).toBe( "synced" );
+		expect( Com_SyncState( { ...setup, paused: true } ) ).toBe( "paused" );
+		expect( Com_SyncState( { ...setup, error: { message: "unreachable", detail: null, retry: false } } ) ).toBe( "offline" );
+		expect( Com_SyncLabel( "preparing", { ...setup, repairing: true } ) ).toBe( T.sync.repairing );
+	} );
+
+	// the label and the sheet's words were two tables, each deciding a repair on its own
+	it( "words a repair the same way in the label and the sheet, while preparing and scanning", () => {
+		for ( const state of [ "preparing", "syncing" ] as const ) {
+			const words = Com_SyncWords( state, { ...PROGRESS, repairing: true } );
+			expect( words.label ).toBe( T.sync.repairing );
+			expect( words.text ).toBe( T.sync.repairingText( T.sync.fromBirthday ) );
+			expect( Com_SyncLabel( state, { ...PROGRESS, repairing: true } ) ).toBe( words.label );
+		}
+		expect( Com_SyncWords( "preparing", PROGRESS ).text ).toBe( T.sync.preparingText );
 	} );
 } );
 
@@ -247,5 +278,35 @@ describe( "Com_AllWallets", () => {
 		expect( all.own ).toBe( 4 * ZATS + ZATS / 2 );
 		expect( all.watched ).toBe( 10 * ZATS );
 		expect( all.rows.map( ( r ) => [ r.name, r.zats, r.viewOnly ] ) ).toEqual( [ [ "S", 4 * ZATS, false ], [ "V", 10 * ZATS, true ], [ "K", ZATS / 2, false ] ] );
+	} );
+} );
+
+// the explorer link opens the transaction itself, on its own network's explorer
+describe( "Com_ExplorerUrl", () => {
+	const TXID = "97c908a32654201b60ba4782ce6422f35c9febf1012d146185059997057550cd";
+	it( "opens mainnet's transactions on mainnet's explorer", () => {
+		expect( Com_ExplorerUrl( "mainnet", TXID ) ).toBe( `https://mainnet.zcashexplorer.app/transactions/${TXID}` );
+	} );
+	it( "and testnet's on testnet's", () => {
+		expect( Com_ExplorerUrl( "testnet", TXID ) ).toBe( `https://testnet.zcashexplorer.app/transactions/${TXID}` );
+	} );
+	it( "never lets an id steer the address elsewhere", () => {
+		expect( Com_ExplorerUrl( "mainnet", "../../evil?x=1#y" ) ).toBe( "https://mainnet.zcashexplorer.app/transactions/..%2F..%2Fevil%3Fx%3D1%23y" );
+	} );
+} );
+
+describe( "Com_CssPx", () => {
+	// the split's padding is read from the CSS that draws it (useStacked), never copied into code
+	it( "reads a pixel length the style sets, and nothing else", () => {
+		const el = document.createElement( "div" );
+		document.body.append( el );
+		el.style.setProperty( "--pad", "16px" );
+		el.style.setProperty( "--rule", " 1.5px " );
+		el.style.setProperty( "--em", "2em" );
+		expect( Com_CssPx( el, "--pad" ) ).toBe( 16 );
+		expect( Com_CssPx( el, "--rule" ) ).toBe( 1.5 );
+		expect( Com_CssPx( el, "--em" ) ).toBe( 0 );
+		expect( Com_CssPx( el, "--unset" ) ).toBe( 0 );
+		el.remove();
 	} );
 } );

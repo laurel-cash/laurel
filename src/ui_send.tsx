@@ -17,25 +17,27 @@ See the LICENSE file for details.
 
 import { useEffect, useMemo, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
-import { ArrowUpRight, BookUser, CalendarClock, ClipboardPaste, Eye, FileOutput, Info, ScanLine, ShieldCheck, TriangleAlert, UserRound, X } from "lucide-react";
+import { ArrowUpRight, BookUser, CalendarClock, ClipboardPaste, Eye, FileOutput, ScanLine, ShieldCheck, UserRound, X } from "lucide-react";
 
 import {
-	balance_t, commands, payTo_t, Com_Abbrev, Com_ErrorString, Com_FormatZec, Com_LookAlike, sendRequest_t, Com_ParseZec, Com_Split, pool_t, POOLS, quoted_t, sendQuote_t,
+	balance_t, commands, payTo_t, Com_Abbrev, Com_ErrorString, Com_FormatZec, Com_IsPublicKind, Com_LookAlike, sendRequest_t, Com_ParseZec, Com_Split, pool_t, POOLS, quoted_t, scanned_t, sendQuote_t,
 } from "./ui_local";
 import { Com_PoolName, T } from "./ui_text";
 import { Com_List } from "./ui_locale";
 import { KEYS, QUERY } from "./ui_query";
-import { useAction, useAddressCheck, useConfirm } from "./ui_hooks";
+import { useAction, useAddressCheck, useAppSettings, useConfirm } from "./ui_hooks";
 import { useStore } from "./ui_store";
-import { sheetProps_t, UI_Alert, UI_Amount, UI_Info, UI_Sheet, UI_SheetButtons, UI_Slots, UI_Spinner, UI_Tip, UI_Waiting } from "./ui_widgets";
-import { Com_AmountProblem, UI_AmountHint, UI_FeeFact, UI_FeeNote, UI_FirstPay, UI_MemoField, UI_OfflineNote, UI_Proving, UI_ReviewFrom, UI_Receipt, UI_SpendKeyNote, useSpendKey } from "./ui_payment";
+import { sheetProps_t, UI_Alert, UI_Amount, UI_Callout, UI_Info, UI_Sheet, UI_SheetButtons, UI_Slots, UI_Spinner, UI_Tip, UI_Waiting } from "./ui_widgets";
+import { Com_AmountProblem, Com_TxStage, UI_AmountHint, UI_FeeFact, UI_FeeNote, UI_FirstPay, UI_MemoField, UI_OfflineNote, UI_Proving, UI_ReviewFrom, UI_Receipt, UI_SpendKeyNote, useSpendKey } from "./ui_payment";
 import { UI_CatchingUp, usePayable } from "./ui_sync";
 import { UI_AddressLine } from "./ui_receive";
-import { UI_PayList, UI_PayListSheet, useRoom } from "./ui_pays";
+import { UI_PayList, UI_PayListPanel, useRoom } from "./ui_pays";
 import { UI_RepeatSheet } from "./ui_repeat";
-import { UI_ContactSheet, UI_PayeeMenu, useContacts } from "./ui_contacts";
-import { Com_TxStateView, useTransactions } from "./ui_history";
+import { UI_ContactSheet, UI_KindChip, UI_PayeeMenu, useContacts } from "./ui_contacts";
+import { useTransactions } from "./ui_history";
+import { Com_Waiting } from "./ui_txview";
 import { UI_SavedFile } from "./ui_offline";
+import { UI_Usd } from "./ui_price";
 
 type phase_t = "compose" | "waiting" | "review" | "done" | "saved";		// waiting: Review pressed before the wallet caught up; saved: a view-only wallet's signing request (ui_offline.tsx)
 
@@ -60,7 +62,20 @@ export function Com_DraftFrom( from: pool_t ): sendDraft_t {
 	return { ...EMPTY_DRAFT, from: from };
 }
 
-const PUBLIC_KINDS	= [ "transparent", "tex" ];
+/*
+==================
+Com_DraftFromScan
+
+A scanned request in the draft: the request's memo travels with the payment;
+its message is for the payer to read, not to send back. A scan for another
+address starts afresh (W2-05): the draft's amount, Max, memo, name and the
+repeat it paid were someone else's. Its pool stays: that was the person's choice
+==================
+*/
+export function Com_DraftFromScan( draft: sendDraft_t, r: scanned_t ): sendDraft_t {
+	const base = r.address === draft.to ? draft : { ...EMPTY_DRAFT, from: draft.from };
+	return { ...base, to: r.address, amount: r.amount != null ? Com_FormatZec( r.amount ) : base.amount, memo: r.memo ?? base.memo, also: r.also, max: r.also.length ? false : base.max };
+}
 
 
 /*
@@ -80,9 +95,9 @@ function Com_MaxHint( q: sendQuote_t | undefined, error: unknown, hasAddress: bo
 	}
 	if ( q ) {
 		const pools = Com_List( q.from.map( Com_PoolName ) );
-		return T.send.maxAfterFee( pools, Com_FormatZec( q.fee ) );
+		return hasAddress ? T.send.maxAfterFee( pools, Com_FormatZec( q.fee ) ) : T.send.maxAbout( pools, Com_FormatZec( q.fee ) );
 	}
-	return hasAddress ? T.send.maxWorking : T.send.maxNeedsAddress;
+	return T.send.maxWorking;
 }
 
 
@@ -91,22 +106,29 @@ function Com_MaxHint( q: sendQuote_t | undefined, error: unknown, hasAddress: bo
 UI_FromPicker
 
 Automatic, or one pool that holds money. Public money is shown too, as
-what it is: a tap offers to shield it, since it can't be sent privately.
+what it is: a tap offers to shield it, since it can't be sent privately;
+with Send From Public Money on (Settings > Advanced) it's a choice like the
+others, said to be public. Automatic never picks it.
 ==================
 */
 function UI_FromPicker( props: { balance: balance_t; value: pool_t | null; onChange: ( p: pool_t | null ) => void; onShield: () => void } ) {
-	const held = POOLS.filter( ( p ) => props.balance[p.pool].confirmed > 0 );
+	const held		= POOLS.filter( ( p ) => props.balance[p.pool].confirmed > 0 );
+	const publicOk	= useAppSettings().settings?.sendFromPublic === true;
+	// Automatic spends private money only: with all of it public, said here,
+	// before an amount, with the two ways on (W_Propose says it too)
+	const onlyPublic = props.value === null && held.length > 0 && held.every( ( p ) => !p.shielded );
 
 	return (
+		<>
 		<div className="from-picker" role="radiogroup" aria-label={T.send.from}>
 			<button role="radio" aria-checked={props.value === null} className={"choice" + ( props.value === null ? " on" : "" )} onClick={() => props.onChange( null )}>
 				<span className="choice-name">{T.send.auto}</span>
 				<span className="choice-sub">{T.send.autoHint}</span>
 			</button>
-			{held.map( ( p ) => p.shielded ? (
+			{held.map( ( p ) => p.shielded || publicOk ? (
 				<button key={p.pool} role="radio" aria-checked={props.value === p.pool} className={"choice pool-" + p.pool + ( props.value === p.pool ? " on" : "" )} onClick={() => props.onChange( p.pool )}>
-					<span className="choice-name"><span className="from-dot" />{Com_PoolName( p.pool )}</span>
-					<span className="choice-sub"><UI_Amount zats={props.balance[p.pool].confirmed} unit /></span>
+					<span className="choice-name">{p.shielded ? <span className="from-dot" /> : <Eye aria-hidden="true" />}{Com_PoolName( p.pool )}</span>
+					<span className="choice-sub"><UI_Amount zats={props.balance[p.pool].confirmed} unit />{!p.shielded && <> · {T.send.publicSend}</>}</span>
 				</button>
 			) : (
 				<button key={p.pool} className="choice public pool-transparent" onClick={props.onShield}>
@@ -115,6 +137,17 @@ function UI_FromPicker( props: { balance: balance_t; value: pool_t | null; onCha
 				</button>
 			) )}
 		</div>
+		{onlyPublic && (
+			<UI_Callout kind="info" icon={Eye}>
+				{T.send.onlyPublic}
+				<span className="callout-actions">
+					<button className="btn small primary" onClick={props.onShield}><ShieldCheck aria-hidden="true" />{T.send.shieldFirst}</button>
+					{publicOk && <button className="btn small" onClick={() => props.onChange( "transparent" )}>{T.send.useTransparent}</button>}
+				</span>
+			</UI_Callout>
+		)}
+		{props.value === "transparent" && <p className="hint from-how">{T.send.publicHow}</p>}
+		</>
 	);
 }
 
@@ -158,7 +191,7 @@ export function UI_SendSheet( props: sheetProps_t & {
 	const [ txid, setTxid ]			= useState< string | null >( null );
 	// a payment of this account still waiting on the network: sending again is a second payment
 	const txs = useTransactions( props.walletId, props.account );
-	const waiting = ( txs.data ?? [] ).some( ( t ) => t.kind === "sent" && Com_TxStateView( t.state, 0, [], 0 ).waiting );
+	const waiting = ( txs.data ?? [] ).some( ( t ) => t.kind === "sent" && Com_Waiting( t.state ) );
 
 	// who this account knows: its contacts, and whoever it has paid (never who paid it: a poisoner can only write that side)
 	const known = useMemo( () => [
@@ -183,7 +216,7 @@ export function UI_SendSheet( props: sheetProps_t & {
 		}
 	}, [ target ] );
 
-	const isPublic	= !!target && PUBLIC_KINDS.includes( target.kind );
+	const isPublic	= !!target && Com_IsPublicKind( target.kind );
 	const unspendable = Com_Split( props.balance ).checking;		// private money Send can't use yet (the engine's spendable)
 	const amount	= d.max ? null : Com_ParseZec( d.amount );
 	const zats		= amount?.kind === "ok" ? amount.zats : null;
@@ -240,6 +273,7 @@ export function UI_SendSheet( props: sheetProps_t & {
 			setPhase( "compose" );
 			setQuoted( null );
 			setTxid( null );
+			setListOpen( false );
 		}
 	}, [ props.open ] );
 
@@ -255,17 +289,26 @@ export function UI_SendSheet( props: sheetProps_t & {
 	const payable = usePayable( props.walletId );
 
 	// Max, as a number: what the engine would send to this address from this
-	// pool, after the fee (which depends on both). Asked again when either changes
+	// pool, after the fee (which depends on both). Asked again when either
+	// changes. With no address yet, priced to this account's own private
+	// address (what paying most people costs), and said to be close, not exact
+	const own = useQuery( {
+		queryKey:	KEYS.receive( props.walletId, props.account ),
+		queryFn:	() => commands.wReceiveF( props.walletId, props.account, null ),
+		enabled:	props.open && d.max && !target,
+	} );
+	const maxTo = target?.address ?? own.data?.shielded ?? "";
 	const max = useQuery( {
-		queryKey:	KEYS.maxSend( props.walletId, props.account, target?.address ?? "", d.from ),
-		queryFn:	() => commands.wQuoteSendF( props.walletId, props.account, { to: target?.address ?? "", zats: null, memo: null, from: d.from, also: [] } ),
-		enabled:	props.open && d.max && !!target && payable,
+		queryKey:	KEYS.maxSend( props.walletId, props.account, maxTo, d.from ),
+		queryFn:	() => commands.wPreviewSendF( props.walletId, props.account, { to: maxTo, zats: null, memo: null, from: d.from, also: [] } ),		// a preview: no intent (W2-08)
+		enabled:	props.open && d.max && !!maxTo && payable,
 		staleTime:	0,
 		gcTime:		0,
 	} );
 
 	// a wallet that only views can't sign: its review saves a request for the computer that can
 	const viewOnly = useStore( ( s ) => s.wallets[props.walletId]?.can.spend === false );
+	const dustZats = useStore( ( s ) => s.constants?.dustZats ?? 0 );
 	const fetchKey = useSpendKey( !viewOnly && ( quoted?.quote.from.includes( "sapling" ) ?? false ) );
 	const [ savedPath, setSavedPath ] = useState< string | null >( null );
 	const saveRequest = useAction( async ( q: quoted_t< sendQuote_t >, req: sendRequest_t ) => {
@@ -305,7 +348,9 @@ export function UI_SendSheet( props: sheetProps_t & {
 	let body;
 	switch ( phase ) {
 	case "compose":
-		body = (
+		body = listOpen ? (
+			<UI_PayListPanel open={props.open} room={room} onAdd={( pays ) => { AddPays( pays ); setListOpen( false ); }} onBack={() => setListOpen( false )} />
+		) : (
 			<div className="send">
 				<label className="label" htmlFor="send-to">{T.send.to}</label>
 				<div className="send-to">
@@ -333,10 +378,7 @@ export function UI_SendSheet( props: sheetProps_t & {
 					{checking && <UI_Waiting text={T.common.checking} size={11} />}
 					{d.toLabel && <span className="send-payee"><UserRound aria-hidden="true" />{d.toLabel}</span>}
 					{!checking && target && (
-						<span className={"send-kind" + ( isPublic ? " public" : "" )}>
-							{isPublic ? <Eye aria-hidden="true" /> : <ShieldCheck aria-hidden="true" />}
-							{T.scan.kinds[target.kind].title}
-						</span>
+						<UI_KindChip kind={target.kind} title={T.scan.kinds[target.kind].title} />
 					)}
 					{!checking && targetError && <span className="send-bad">{targetError}</span>}
 				</div>
@@ -349,7 +391,9 @@ export function UI_SendSheet( props: sheetProps_t & {
 					{d.max ? (
 						<span className="send-max-on">
 							<span className="send-max-amount">
-								{max.data ? <UI_Amount zats={max.data.quote.amount} /> : max.isFetching ? <UI_Spinner size={14} /> : T.send.allOf}
+								{max.data
+									? <><UI_Amount zats={max.data.amount} />{__LAUREL_PRICES__ && <UI_Usd zats={max.data.amount} />}</>
+									: max.error || own.error || !payable ? T.send.maxNone : <UI_Spinner size={14} />}
 							</span>
 							<span className="send-max-chip">{T.send.max}</span>
 							<button className="icon-btn" aria-label={T.send.maxOff} onClick={() => set( { max: false } )}><X aria-hidden="true" /></button>
@@ -377,13 +421,12 @@ export function UI_SendSheet( props: sheetProps_t & {
 						<UI_Info title={T.checking.infoTitle}>{T.checking.info}</UI_Info>
 					</p>
 				)}
-				{d.max && <p className={"hint" + ( max.error ? " bad" : "" )}>{Com_MaxHint( max.data?.quote, max.error, !!target, payable )}</p>}
+				{d.max && <p className={"hint" + ( max.error ? " bad" : "" )}>{Com_MaxHint( max.data, max.error, !!target, payable )}</p>}
 				<UI_PayList
 					pays={d.also.map( ( p ) => ( { to: p.to, amount: p.zats, memo: p.memo } ) )}
 					onRemove={( i ) => set( { also: d.also.filter( ( _, j ) => j !== i ) } )}
 				/>
 				<p className="hint"><button className="link" onClick={() => setListOpen( true )}>{T.pays.open}</button></p>
-				<UI_PayListSheet open={listOpen} onOpenChange={setListOpen} room={room} onAdd={AddPays} />
 
 				{isPublic ? (
 					<p className="hint">{T.send.memoPublic}</p>
@@ -417,8 +460,10 @@ export function UI_SendSheet( props: sheetProps_t & {
 		const q = quoted!.quote;
 		// every recipient checked alike: look-alikes and public addresses among the further payments too
 		const lookAlikes = [ q.to, ...q.also.map( ( p ) => p.to ) ].map( ( a ) => Com_LookAlike( a, known ) ).filter( ( l ): l is NonNullable< typeof l > => !!l );
-		const qPublic = [ q.kind, ...q.also.map( ( p ) => p.kind ) ].some( ( k ) => PUBLIC_KINDS.includes( k ) );
+		const qPublic = [ q.kind, ...q.also.map( ( p ) => p.kind ) ].some( Com_IsPublicKind );
 		const firstAmount = q.amount - q.also.reduce( ( s, p ) => s + p.amount, 0 );
+		// a payment of dust arrives as nothing its recipient can spend (Max on a small balance, too)
+		const dust = [ firstAmount, ...q.also.map( ( p ) => p.amount ) ].filter( ( z ) => z <= dustZats );
 		body = (
 			<div className="send-review">
 				<UI_ReviewFrom walletId={props.walletId} account={props.account} />
@@ -426,6 +471,7 @@ export function UI_SendSheet( props: sheetProps_t & {
 				<div className="review-to">
 					<span className="label">{T.send.payTo}</span>
 					<UI_AddressLine address={q.to} />
+					<UI_KindChip kind={q.kind} title={T.scan.kinds[q.kind].title} />
 					{q.also.length > 0 && <UI_FirstPay zats={firstAmount} />}
 				</div>
 				<UI_PayList pays={q.also} />
@@ -441,17 +487,25 @@ export function UI_SendSheet( props: sheetProps_t & {
 				</dl>
 				{q.memo && <p className="review-memo">“{q.memo}”</p>}
 				{q.steps > 1 && <p className="hint">{T.send.twoSteps}</p>}
-				{qPublic && <div className="warn-note"><TriangleAlert aria-hidden="true" /><span>{T.send.publicWarn}</span></div>}
+				{qPublic && <UI_Callout kind="warn">{T.send.publicWarn}</UI_Callout>}
+				{dust.length > 0 && <UI_Callout kind="warn">{T.send.dust( Com_FormatZec( Math.max( ...dust ) ) )}</UI_Callout>}
+				{q.from.includes( "transparent" ) && !d.max && <UI_Callout kind="info">{T.send.publicChange}</UI_Callout>}
+				{q.publicAddresses > 1 && <UI_Callout kind="warn">{T.send.linksAddresses( q.publicAddresses )}</UI_Callout>}
 				{props.offline && <UI_OfflineNote />}
-				{waiting && <div className="warn-note"><TriangleAlert aria-hidden="true" /><span>{T.send.stillPending}</span></div>}
+				{waiting && <UI_Callout kind="warn">{T.send.stillPending}</UI_Callout>}
 				{!viewOnly && !send.busy && <UI_SpendKeyNote fetch={fetchKey} />}
 				<UI_FeeNote note={q.feeNote} />
-				{lookAlikes.map( ( l ) => <div key={l.address} className="warn-note"><TriangleAlert aria-hidden="true" /><span>{T.send.lookAlike( l.label, Com_Abbrev( l.address ) )}</span></div> )}
-				{send.changed && !send.busy && <div className="info-note"><Info aria-hidden="true" /><span>{T.send.changed}</span></div>}
+				{lookAlikes.map( ( l ) => <UI_Callout key={l.address} kind="warn">{T.send.lookAlike( l.label, Com_Abbrev( l.address ) )}</UI_Callout> )}
+				{send.changed && !send.busy && <UI_Callout kind="info">{T.send.changed}</UI_Callout>}
 				{send.error && <UI_Alert title={T.send.failed} message={send.error} />}
-				{viewOnly ? (
+				{viewOnly && !__LAUREL_OFFLINE_SIGNING__ ? (		// nothing to save a request with (D-031)
 					<>
-						<div className="info-note"><Info aria-hidden="true" /><span>{T.offline.viewOnlyNote}</span></div>
+						<UI_Callout kind="info">{T.send.viewOnlyCant}</UI_Callout>
+						<UI_SheetButtons busy={false} onCancel={Back} cancel={T.send.back} action={null} />
+					</>
+				) : viewOnly ? (
+					<>
+						<UI_Callout kind="info">{T.offline.viewOnlyNote}</UI_Callout>
 						{saveRequest.error && <UI_Alert title={T.offline.cantSave} message={saveRequest.error} />}
 						<UI_SheetButtons busy={saveRequest.busy} onCancel={Back} cancel={T.send.back} action={{
 							label:		T.offline.saveRequest,
@@ -471,8 +525,8 @@ export function UI_SendSheet( props: sheetProps_t & {
 		break;
 	}
 
-	case "saved":
-		body = (
+	case "saved":		// a view-only wallet's request, saved: only with offline signing (D-031)
+		body = __LAUREL_OFFLINE_SIGNING__ && (
 			<div className="send-review">
 				<UI_SavedFile path={savedPath ?? ""} signed={false} />
 				<UI_SheetButtons busy={false} action={{ label: T.receipt.done, onRun: Close }} />
@@ -482,11 +536,11 @@ export function UI_SendSheet( props: sheetProps_t & {
 
 	case "done":
 		body = txid && quoted ? (
-			<UI_Receipt title={T.send.doneTitle} zats={quoted.quote.amount} text={T.send.done} txid={txid} onDone={() => props.onOpenChange( false )}>
+			<UI_Receipt title={T.send.doneTitle} zats={quoted.quote.amount} text={T.send.done} txid={txid} stage={Com_TxStage( txs.data?.find( ( t ) => t.txid === txid )?.state )} onDone={() => props.onOpenChange( false )}>
 				{!request?.to.startsWith( "zcash:" ) && !contacts.data?.some( ( c ) => c.address === quoted.quote.to ) && !sentLabel && (
 					<button className="link receipt-save" onClick={() => setContactOpen( true )}><BookUser aria-hidden="true" />{T.contacts.saveAddress}</button>
 				)}
-				{quoted.quote.also.length === 0 && (
+				{__LAUREL_REPEAT_PAYMENTS__ && quoted.quote.also.length === 0 && (
 					<button className="link receipt-save" onClick={() => setRepeatOpen( true )}><CalendarClock aria-hidden="true" />{T.repeat.open}</button>
 				)}
 			</UI_Receipt>
@@ -502,7 +556,7 @@ export function UI_SendSheet( props: sheetProps_t & {
 			busy={busy}
 		>
 			{body}
-			{quoted && (
+			{__LAUREL_REPEAT_PAYMENTS__ && quoted && (		// a build without repeat payments has no sheet for one (D-031)
 				<UI_RepeatSheet
 					open={repeatOpen}
 					onOpenChange={setRepeatOpen}

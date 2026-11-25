@@ -25,7 +25,8 @@ See the LICENSE file for details.
 
 use crate::w_engine::{ fence_t, E_Client, E_Fenced, E_Intend, E_MigrateNow, E_MigrationStatus, E_PlanMigration };
 use crate::w_local::*;
-use crate::w_main::{ W_Engine, W_Paying, W_SaveAfterSend, W_Slot };
+use crate::w_persist::W_SaveAfterSend;
+use crate::w_registry::{ W_Engine, W_Paying, W_Slot };
 
 
 /*
@@ -57,7 +58,7 @@ signed or sent
 */
 pub async fn W_PlanMigration( id: &str, account: u32 ) -> wresult_t< quoted_t< migratePlan_t > > {
 	W_MigrateOffered()?;
-	crate::w_main::W_Allowed( id, walletAct_t::WA_MOVE_WITHIN ).await?;
+	crate::w_registry::W_Allowed( id, walletAct_t::WA_MOVE_WITHIN ).await?;
 	let ( accountId, client, _ ) = W_Engine( id, account ).await?;
 	let plan = E_Fenced( &mut *E_Client( &client ).await?, fence_t::FENCE_SCANNED, async |f| E_PlanMigration( f, accountId ).await ).await?;
 	Ok( E_Intend( id, account, plan ) )
@@ -75,12 +76,12 @@ The wallet is written before the hold ends (W_SaveAfterSend).
 */
 pub async fn W_MigrateNow( id: &str, account: u32, intent: String, seen: migratePlan_t ) -> wresult_t< migrateResult_t > {
 	W_MigrateOffered()?;
-	let ( slot, accountId, client ) = W_Paying( id, account, &intent ).await?;
-	crate::w_main::W_Allowed( id, walletAct_t::WA_MOVE_WITHIN ).await?;
+	let ( slot, accountId, client, quoted ) = W_Paying( id, account, &intent ).await?;
+	crate::w_registry::W_Allowed( id, walletAct_t::WA_MOVE_WITHIN ).await?;
 
 	E_Fenced( &mut *E_Client( &client ).await?, fence_t::FENCE_SCANNED, async |f| {
 		let now = E_PlanMigration( f, accountId ).await?;
-		if ( now != seen ) {
+		if ( !crate::w_engine::Com_StillSeen( &quoted, &now, &seen ) ) {
 			return Ok( migrateResult_t::CHANGED { quoted: E_Intend( id, account, now ) } );
 		}
 		let txids = E_MigrateNow( f, accountId ).await?;

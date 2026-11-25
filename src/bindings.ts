@@ -26,46 +26,40 @@ export const commands = {
 	wRecoveryF: (id: string, password: string | null) => __TAURI_INVOKE<recovery_t>("W_Recovery_f", { id, password }),
 	wMarkBackedUpF: (id: string, words: backupWord_t[], passphrase: string | null) => __TAURI_INVOKE<null>("W_MarkBackedUp_f", { id, words, passphrase }),
 	wAddAccountF: (id: string, name: string, usedBefore: boolean) => __TAURI_INVOKE<number>("W_AddAccount_f", { id, name, usedBefore }),
-	wRenameAccountF: (id: string, index: number, name: string) => __TAURI_INVOKE<null>("W_RenameAccount_f", { id, index, name }),
-	wReceiveF: (id: string, account: number, fresh: "private" | "sapling" | null) => __TAURI_INVOKE<receive_t>("W_Receive_f", { id, account, fresh }),
+	wReceiveF: (id: string, account: number, fresh: "private" | "sapling" | "public" | null) => __TAURI_INVOKE<receive_t>("W_Receive_f", { id, account, fresh }),
 	syncRetryF: (id: string) => __TAURI_INVOKE<void>("Sync_Retry_f", { id }),
 	syncPauseF: (id: string) => __TAURI_INVOKE<null>("Sync_Pause_f", { id }),
 	syncResumeF: (id: string) => __TAURI_INVOKE<null>("Sync_Resume_f", { id }),
-	wBalanceHistoryF: (id: string, account: number) => __TAURI_INVOKE<balancePoint_t[]>("W_BalanceHistory_f", { id, account }),
 	wTransactionsF: (id: string, account: number) => __TAURI_INVOKE<historyItem_t[]>("W_Transactions_f", { id, account }),
-	wQuoteShieldF: (id: string, account: number) => __TAURI_INVOKE<quoted_t<shieldQuote_t>>("W_QuoteShield_f", { id, account }),
+	wBalanceHistoryF: (id: string, account: number) => __TAURI_INVOKE<balancePoint_t[]>("W_BalanceHistory_f", { id, account }),
+	wPublicAddressesF: (id: string, account: number) => __TAURI_INVOKE<publicHeld_t[]>("W_PublicAddresses_f", { id, account }),
+	wQuoteShieldF: (id: string, account: number, from: string | null) => __TAURI_INVOKE<quoted_t<shieldQuote_t>>("W_QuoteShield_f", { id, account, from }),
 	wShieldNowF: (id: string, account: number, intent: string, seen: shieldQuote_t) => __TAURI_INVOKE<shieldResult_t>("W_ShieldNow_f", { id, account, intent, seen }),
-	wQuoteMoveF: (id: string, account: number) => __TAURI_INVOKE<quoted_t<shieldQuote_t>>("W_QuoteMove_f", { id, account }),
-	wMoveNowF: (id: string, account: number, intent: string, seen: shieldQuote_t) => __TAURI_INVOKE<shieldResult_t>("W_MoveNow_f", { id, account, intent, seen }),
-	wCheckKeyF: (key: string) => __TAURI_INVOKE<keyCheck_t>("W_CheckKey_f", { key }),
+	wQuoteMoveF: (id: string, account: number) => __TAURI_INVOKE<quoted_t<moveQuote_t>>("W_QuoteMove_f", { id, account }),
+	wMoveNowF: (id: string, account: number, intent: string, seen: moveQuote_t) => __TAURI_INVOKE<moveResult_t>("W_MoveNow_f", { id, account, intent, seen }),
 	wCheckZcashdKeysF: (text: string) => __TAURI_INVOKE<zcashdCheck_t>("W_CheckZcashdKeys_f", { text }),
 	wImportZcashdKeysF: (net: network_t, name: string, text: string, birthday: number) => __TAURI_INVOKE<string>("W_ImportZcashdKeys_f", { net, name, text, birthday }),
+	wCheckKeyF: (key: string) => __TAURI_INVOKE<keyCheck_t>("W_CheckKey_f", { key }),
 	wQuoteSweepF: (id: string, account: number, key: string) => __TAURI_INVOKE<quoted_t<sweepQuote_t>>("W_QuoteSweep_f", { id, account, key }),
 	wSweepNowF: (id: string, account: number, key: string, intent: string, seen: sweepQuote_t) => __TAURI_INVOKE<sweepResult_t>("W_SweepNow_f", { id, account, key, intent, seen }),
 	wQuoteSendF: (id: string, account: number, request: sendRequest_t) => __TAURI_INVOKE<quoted_t<sendQuote_t>>("W_QuoteSend_f", { id, account, request }),
+	wPreviewSendF: (id: string, account: number, request: sendRequest_t) => __TAURI_INVOKE<sendQuote_t>("W_PreviewSend_f", { id, account, request }),
 	wSendNowF: (id: string, account: number, request: sendRequest_t, intent: string, seen: sendQuote_t, repeatId: string | null) => __TAURI_INVOKE<sendResult_t>("W_SendNow_f", { id, account, request, intent, seen, repeatId }),
-	wLockF: () => __TAURI_INVOKE<vaultStatus_t>("W_Lock_f"),
-	wRemoveWalletF: (id: string, password: string | null) => __TAURI_INVOKE<null>("W_RemoveWallet_f", { id, password }),
-	wStartOverF: () => __TAURI_INVOKE<null>("W_StartOver_f"),
-	wPlanMigrationF: (id: string, account: number) => __TAURI_INVOKE<quoted_t<migratePlan_t>>("W_PlanMigration_f", { id, account }),
-	wMigrateNowF: (id: string, account: number, intent: string, seen: migratePlan_t) => __TAURI_INVOKE<migrateResult_t>("W_MigrateNow_f", { id, account, intent, seen }),
-	wMigrationStatusF: (id: string) => __TAURI_INVOKE<migrationStatus_t>("W_MigrationStatus_f", { id }),
-	wParseScanF: (text: string) => __TAURI_INVOKE<scanned_t>("W_ParseScan_f", { text }),
-	wRequestF: (id: string, account: number, to: addressKind_t, zats: number, memo: string | null) => __TAURI_INVOKE<string>("W_Request_f", { id, account, to, zats, memo }),
-	wExportCsvF: (id: string, account: number, memos: boolean) => __TAURI_INVOKE<string>("W_ExportCsv_f", { id, account, memos }),
-	ntSaveF: (txid: string, note: string, category: "income" | "housing" | "food" | "transport" | "shopping" | "bills" | "business" | "gifts" | "savings" | "taxes" | "other" | null) => __TAURI_INVOKE<null>("Nt_Save_f", { txid, note, category }),
 	stoMeasureF: () => __TAURI_INVOKE<storage_t>("Sto_Measure_f"),
-	wServerStatusF: () => __TAURI_INVOKE<serverStatus_t>("W_ServerStatus_f"),
 	sGetF: () => __TAURI_INVOKE<appSettings_t>("S_Get_f"),
+	sSetF: (settings: appSettings_t) => __TAURI_INVOKE<appSettings_t>("S_Set_f", { settings }),
+	sSetAutoLockF: (minutes: number | null, password: string | null) => __TAURI_INVOKE<autoLockResult_t>("S_SetAutoLock_f", { minutes, password }),
+	sSetLockAwayF: (secs: number, password: string | null) => __TAURI_INVOKE<autoLockResult_t>("S_SetLockAway_f", { secs, password }),
+	sBetaWalletsDueF: () => __TAURI_INVOKE<boolean>("S_BetaWalletsDue_f"),
+	sBetaWalletsSeenF: () => __TAURI_INVOKE<appSettings_t>("S_BetaWalletsSeen_f"),
+	sTermsDueF: () => __TAURI_INVOKE<boolean>("S_TermsDue_f"),
+	sAcceptTermsF: () => __TAURI_INVOKE<appSettings_t>("S_AcceptTerms_f"),
+	mShownF: () => __TAURI_INVOKE<null>("M_Shown_f"),
 	wSetNetworkF: (net: network_t) => __TAURI_INVOKE<null>("W_SetNetwork_f", { net }),
-	pSeriesF: (range: priceRange_t) => __TAURI_INVOKE<priceSeries_t>("P_Series_f", { range }),
-	skHereF: () => __TAURI_INVOKE<boolean>("Sk_Here_f"),
-	wSetWordsF: (words: uiWords_t) => __TAURI_INVOKE<void>("W_SetWords_f", { words }),
-	wValueHistoryF: (id: string, account: number, range: priceRange_t) => __TAURI_INVOKE<accountValue_t>("W_ValueHistory_f", { id, account, range }),
-	rpListF: () => __TAURI_INVOKE<repeat_t[]>("Rp_List_f"),
-	rpSaveF: (input: repeatInput_t) => __TAURI_INVOKE<repeat_t>("Rp_Save_f", { input }),
-	rpRemoveF: (id: string) => __TAURI_INVOKE<null>("Rp_Remove_f", { id }),
-	rpDoneF: (id: string) => __TAURI_INVOKE<null>("Rp_Done_f", { id }),
+	dInfoF: () => __TAURI_INVOKE<devInfo_t>("D_Info_f"),
+	dRevealF: (folder: folder_t) => __TAURI_INVOKE<null>("D_Reveal_f", { folder }),
+	dReportF: () => __TAURI_INVOKE<string>("D_Report_f"),
+	syncRescanF: (id: string, further: boolean) => __TAURI_INVOKE<null>("Sync_Rescan_f", { id, further }),
 	alListF: () => __TAURI_INVOKE<priceAlert_t[]>("Al_List_f"),
 	alAddF: (above: boolean, usd: number | null) => __TAURI_INVOKE<priceAlert_t>("Al_Add_f", { above, usd }),
 	alRemoveF: (id: string) => __TAURI_INVOKE<null>("Al_Remove_f", { id }),
@@ -96,19 +90,31 @@ export const commands = {
 } | null>("O_Open_f"),
 	oSignF: (requestId: string, seen: sendQuote_t) => __TAURI_INVOKE<string | null>("O_Sign_f", { requestId, seen }),
 	oCloseF: () => __TAURI_INVOKE<null>("O_Close_f"),
-	dInfoF: () => __TAURI_INVOKE<devInfo_t>("D_Info_f"),
-	dRevealF: (folder: folder_t) => __TAURI_INVOKE<null>("D_Reveal_f", { folder }),
-	dReportF: () => __TAURI_INVOKE<string>("D_Report_f"),
-	syncRescanF: (id: string) => __TAURI_INVOKE<null>("Sync_Rescan_f", { id }),
-	sSetF: (settings: appSettings_t) => __TAURI_INVOKE<appSettings_t>("S_Set_f", { settings }),
-	sSetAutoLockF: (minutes: number | null, password: string | null) => __TAURI_INVOKE<autoLockResult_t>("S_SetAutoLock_f", { minutes, password }),
-	sSetLockAwayF: (secs: number, password: string | null) => __TAURI_INVOKE<autoLockResult_t>("S_SetLockAway_f", { secs, password }),
-	mShownF: () => __TAURI_INVOKE<null>("M_Shown_f"),
+	rpListF: () => __TAURI_INVOKE<repeat_t[]>("Rp_List_f"),
+	rpSaveF: (input: repeatInput_t) => __TAURI_INVOKE<repeat_t>("Rp_Save_f", { input }),
+	rpRemoveF: (id: string) => __TAURI_INVOKE<null>("Rp_Remove_f", { id }),
+	rpDoneF: (id: string) => __TAURI_INVOKE<null>("Rp_Done_f", { id }),
+	wValueHistoryF: (id: string, account: number, range: priceRange_t) => __TAURI_INVOKE<accountValue_t>("W_ValueHistory_f", { id, account, range }),
+	wSetWordsF: (words: uiWords_t) => __TAURI_INVOKE<void>("W_SetWords_f", { words }),
+	skHereF: () => __TAURI_INVOKE<boolean>("Sk_Here_f"),
+	pSeriesF: (range: priceRange_t) => __TAURI_INVOKE<priceSeries_t>("P_Series_f", { range }),
 	sTestNoticeF: () => __TAURI_INVOKE<null>("S_TestNotice_f"),
 	ctListF: () => __TAURI_INVOKE<contact_t[]>("Ct_List_f"),
 	ctSaveF: (contact: contactInput_t) => __TAURI_INVOKE<contact_t>("Ct_Save_f", { contact }),
 	ctRemoveF: (id: string) => __TAURI_INVOKE<null>("Ct_Remove_f", { id }),
+	wServerStatusF: () => __TAURI_INVOKE<serverStatus_t>("W_ServerStatus_f"),
 	wSetServerF: (own: string | null) => __TAURI_INVOKE<serverStatus_t>("W_SetServer_f", { own }),
+	wPlanMigrationF: (id: string, account: number) => __TAURI_INVOKE<quoted_t<migratePlan_t>>("W_PlanMigration_f", { id, account }),
+	wMigrateNowF: (id: string, account: number, intent: string, seen: migratePlan_t) => __TAURI_INVOKE<migrateResult_t>("W_MigrateNow_f", { id, account, intent, seen }),
+	wMigrationStatusF: (id: string) => __TAURI_INVOKE<migrationStatus_t>("W_MigrationStatus_f", { id }),
+	wLockF: () => __TAURI_INVOKE<vaultStatus_t>("W_Lock_f"),
+	wRemoveWalletF: (id: string, password: string | null) => __TAURI_INVOKE<null>("W_RemoveWallet_f", { id, password }),
+	wStartOverF: () => __TAURI_INVOKE<null>("W_StartOver_f"),
+	wParseScanF: (text: string) => __TAURI_INVOKE<scanned_t>("W_ParseScan_f", { text }),
+	ntSaveF: (txid: string, note: string, category: "income" | "housing" | "food" | "transport" | "shopping" | "bills" | "business" | "gifts" | "savings" | "taxes" | "other" | null) => __TAURI_INVOKE<null>("Nt_Save_f", { txid, note, category }),
+	wExportCsvF: (id: string, account: number, memos: boolean) => __TAURI_INVOKE<string>("W_ExportCsv_f", { id, account, memos }),
+	wRequestF: (id: string, account: number, to: addressKind_t, zats: number, memo: string | null) => __TAURI_INVOKE<string>("W_Request_f", { id, account, to, zats, memo }),
+	wRenameAccountF: (id: string, index: number, name: string) => __TAURI_INVOKE<null>("W_RenameAccount_f", { id, index, name }),
 	wCheckPhraseF: (phrase: string) => __TAURI_INVOKE<phraseCheck_t>("W_CheckPhrase_f", { phrase }),
 	wWordlistF: () => __TAURI_INVOKE<string[]>("W_Wordlist_f"),
 	wHeightForDateF: (net: network_t, unixTime: number) => __TAURI_INVOKE<number>("W_HeightForDate_f", { net, unixTime }),
@@ -147,6 +153,10 @@ export type appSettings_t = {
 	network: network_t,
 	showPrice: boolean,
 	textScale: number,
+	betaWalletsSeen: boolean,
+	termsAccepted: termsAccepted_t | null,
+	sendFromPublic: boolean,
+	priceYesRealMoney: boolean,
 };
 
 export type autoLockResult_t = { kind: "saved"; settings: appSettings_t } | { kind: "askPassword" };
@@ -193,6 +203,7 @@ export type constants_t = {
 	categories: txCategory_t[],
 	textScales: number[],
 	maxPayments: number,
+	dustZats: number,
 	noteMaxChars: number,
 	networks: network_t[],
 };
@@ -252,7 +263,7 @@ export type folderSyncedEvent_t = Record<string, never>;
 
 export type folder_t = "data" | "logs";
 
-export type freshAddress_t = "private" | "sapling";
+export type freshAddress_t = "private" | "sapling" | "public";
 
 export type historyItem_t = {
 	txid: string,
@@ -262,6 +273,7 @@ export type historyItem_t = {
 	fee: number | null,
 	state: txState_t,
 	from: pool_t[],
+	fromAddresses: string[],
 	into: pool_t[],
 	counterparty: string | null,
 	memo: string | null,
@@ -287,6 +299,14 @@ export type migrationStatus_t = {
 	valueTotal: number,
 	valueMigrated: number,
 };
+
+export type moveQuote_t = {
+	amount: number,
+	fee: number,
+	feeNote: feeNote_t | null,
+};
+
+export type moveResult_t = { kind: "sent"; txid: string } | { kind: "changed"; quoted: quoted_t<moveQuote_t> };
 
 export type network_t = "mainnet" | "testnet";
 
@@ -395,6 +415,11 @@ export type priceSeries_t = {
 
 export type protection_t = "os" | "password";
 
+export type publicHeld_t = {
+	address: string,
+	zats: number,
+};
+
 export type quotedPay_t = {
 	to: string,
 	kind: addrKind_t,
@@ -472,6 +497,7 @@ export type sendQuote_t = {
 	memo: string | null,
 	feeNote: feeNote_t | null,
 	also: quotedPay_t[],
+	publicAddresses: number,
 };
 
 export type sendRequest_t = {
@@ -491,9 +517,12 @@ export type serverStatus_t = {
 };
 
 export type shieldQuote_t = {
+	from: string | null,
 	amount: number,
 	fee: number,
 	feeNote: feeNote_t | null,
+	more: number,
+	links: number,
 };
 
 export type shieldResult_t = { kind: "sent"; txid: string } | { kind: "changed"; quoted: quoted_t<shieldQuote_t> };
@@ -516,6 +545,7 @@ export type sweepQuote_t = {
 	total: number,
 	fee: number,
 	amount: number,
+	coinsPrint: string,
 };
 
 export type sweepResult_t = { kind: "sent"; txid: string } | { kind: "changed"; quoted: quoted_t<sweepQuote_t> };
@@ -547,6 +577,7 @@ export type syncProgress_t = {
 	etaSecs: number | null,
 	birthdayTime: number | null,
 	repairing: boolean,
+	preparing: boolean,
 };
 
 export type syncStatus_t = {
@@ -556,6 +587,11 @@ export type syncStatus_t = {
 	computers: syncComputer_t[],
 	skipped: number,
 	problem: errorInfo_t | null,
+};
+
+export type termsAccepted_t = {
+	version: string,
+	at: number,
 };
 
 export type txCategory_t = "income" | "housing" | "food" | "transport" | "shopping" | "bills" | "business" | "gifts" | "savings" | "taxes" | "other";

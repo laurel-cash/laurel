@@ -14,14 +14,14 @@ See the LICENSE file for details.
 
 import { useState } from "react";
 import { useQuery } from "@tanstack/react-query";
-import { FolderOpen, RefreshCw, RotateCcw } from "lucide-react";
+import { Eye, FolderOpen, RefreshCw, RotateCcw } from "lucide-react";
 
 import { commands, Com_ErrorOf, folder_t, walletSummary_t } from "./ui_local";
 import { Com_NetworkName, T } from "./ui_text";
 import { KEYS } from "./ui_query";
 import { useAction } from "./ui_hooks";
 import { useStore } from "./ui_store";
-import { UI_Alert, UI_CopyButton, UI_Spinner } from "./ui_widgets";
+import { UI_Alert, UI_CopyButton, UI_SettingSwitch, UI_Spinner } from "./ui_widgets";
 
 /*
 ==================
@@ -34,8 +34,9 @@ place: it takes as long as a restore
 function UI_RecheckRow( props: { wallet: walletSummary_t } ) {
 	const [ sure, setSure ]		= useState( false );
 	const [ started, setStarted ]	= useState( false );
+	const [ further, setFurther ]	= useState( false );
 	const recheck = useAction( async () => {
-		await commands.syncRescanF( props.wallet.id );
+		await commands.syncRescanF( props.wallet.id, further );
 		setSure( false );
 		setStarted( true );
 	} );
@@ -45,12 +46,18 @@ function UI_RecheckRow( props: { wallet: walletSummary_t } ) {
 			<span className="set-text">
 				<span className="set-label">{props.wallet.name}</span>
 				<span className="set-sub">{started ? T.developer.recheckStarted : sure ? T.developer.recheckSure : T.developer.recheckHint}</span>
+				{sure && (
+					<label className="check-row">
+						<input type="checkbox" checked={further} disabled={recheck.busy} onChange={( e ) => setFurther( e.target.checked )} />
+						<span>{T.developer.lookFurther}</span>
+					</label>
+				)}
 				{recheck.error && <UI_Alert title={T.developer.cantRecheck} message={recheck.error} />}
 			</span>
 			<span className="set-actions">
 				{sure ? (
 					<>
-						<button className="btn" disabled={recheck.busy} onClick={() => setSure( false )}>{T.common.cancel}</button>
+						<button className="btn" disabled={recheck.busy} onClick={() => { setSure( false ); setFurther( false ); }}>{T.common.cancel}</button>
 						<button className="btn primary" disabled={recheck.busy} onClick={() => { recheck.run(); }}>
 							{recheck.busy ? <UI_Spinner size={13} /> : <RotateCcw aria-hidden="true" />}{T.developer.recheck}
 						</button>
@@ -61,6 +68,19 @@ function UI_RecheckRow( props: { wallet: walletSummary_t } ) {
 			</span>
 		</li>
 	);
+}
+
+/*
+==================
+UI_SendFromPublic
+
+Off by default: Send then offers public money only to shield it. On, Send
+spends it as it is (an exchange that wants a public sender). The engine
+reads the same setting (w_send.rs), so the switch is the only way in.
+==================
+*/
+function UI_SendFromPublic() {
+	return <UI_SettingSwitch field="sendFromPublic" icon={<Eye aria-hidden="true" />} label={T.developer.fromPublic} hint={T.developer.fromPublicHint} />;
 }
 
 /*
@@ -79,6 +99,7 @@ export function UI_DeveloperSection() {
 	const i = info.data;
 	return (
 		<>
+			<UI_SendFromPublic />
 			<section className="settings-section">
 				{info.error && <UI_Alert title={T.developer.cantRead} message={Com_ErrorOf( info.error )} />}
 				{i && (

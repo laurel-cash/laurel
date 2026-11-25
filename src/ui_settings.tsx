@@ -45,8 +45,8 @@ const PANES: paneEntry_t[][] = [
 	[
 		{ pane: "wallets",	label: T.settings.wallets,	icon: WalletCards },
 		{ pane: "contacts",	label: T.settings.contacts,	icon: BookUser },
-		{ pane: "folder",	label: T.settings.folder,	icon: FolderSync },
-		{ pane: "offline",	label: T.settings.offline,	icon: FileSignature },
+		...( __LAUREL_FOLDER_SYNC__ ? [ { pane: "folder", label: T.settings.folder, icon: FolderSync } as const ] : [] ),		// D-031
+		...( __LAUREL_OFFLINE_SIGNING__ ? [ { pane: "offline", label: T.settings.offline, icon: FileSignature } as const ] : [] ),		// D-031
 	],
 	[
 		{ pane: "network",	label: T.settings.network,	icon: Server },
@@ -68,13 +68,13 @@ Every pane, decided here; a new one must be added to this switch
 */
 function UI_Pane( props: { pane: settingsPane_t; actions: walletActions_t } ) {
 	switch ( props.pane ) {
-	case "general":		return <><UI_AppearanceSection /><UI_PriceSetting /></>;
+	case "general":		return <><UI_AppearanceSection />{__LAUREL_PRICES__ && <UI_PriceSetting />}</>;		// none to ask for without prices (D-031)
 	case "security":	return <UI_SecuritySection />;
 	case "notifications":	return <UI_NotificationsSection />;
 	case "wallets":		return <UI_WalletsSection actions={props.actions} />;
 	case "contacts":	return <UI_ContactsSection />;
-	case "folder":		return <UI_FolderSection />;
-	case "offline":		return <UI_OfflineSection />;
+	case "folder":		return __LAUREL_FOLDER_SYNC__ ? <UI_FolderSection /> : null;		// a pane kept from a build with it (D-031)
+	case "offline":		return __LAUREL_OFFLINE_SIGNING__ ? <UI_OfflineSection /> : null;		// a pane kept from a build with it (D-031)
 	case "network":		return <><UI_NetworkChoice /><UI_ServerSection /></>;
 	case "storage":		return <UI_StorageSection />;
 	case "developer":	return <UI_DeveloperSection />;

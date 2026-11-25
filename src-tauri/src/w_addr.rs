@@ -27,10 +27,14 @@ See the LICENSE file for details.
 // can't link it to the other. It can be made fresh too.
 //
 // The transparent address is public, like a bitcoin address, for the
-// exchanges that can't send to shielded ones. Each account has one, given
-// out every time and never replaced: Laurel leaves no gap of unused
-// addresses for a wallet restored elsewhere to stop at (W_RestoreSettings
-// is how far Laurel itself looks when a phrase comes from elsewhere).
+// exchanges that can't send to shielded ones. The newest is given out every
+// time. A new one is made only when asked (one per exchange, so their
+// payments don't share one public record) and only after the last one has
+// received money: Laurel leaves no gap of unused addresses for a wallet
+// restored elsewhere to stop at (W_RestoreSettings is how far Laurel itself
+// looks when a phrase comes from elsewhere). Shielding takes one address at
+// a time, so a shield doesn't tie them together (W_ShieldPublic,
+// w_public.rs).
 
 use std::collections::BTreeSet;
 
@@ -44,7 +48,7 @@ use zip32::AccountId;
 
 use crate::w_local::*;
 use crate::w_engine::{ E_ViewKeyOf, E_Write };
-use crate::w_main::{ W_AccountOf, W_Slot };
+use crate::w_registry::{ W_AccountOf, W_Slot };
 use crate::w_net::engineResult_t;
 
 const SAPLING_RECEIVERS: ReceiverSelection = ReceiverSelection { orchard: false, sapling: true };
@@ -62,7 +66,7 @@ pub async fn W_Receive( id: &str, account: u32, fresh: Option< freshAddress_t > 
 	let slot = W_Slot( id ).await?;
 	let ( accountId, wallet ) = {
 		let s = slot.read().await;
-		crate::w_main::W_Allow( s.meta.kind, walletAct_t::WA_RECEIVE )?;
+		crate::w_registry::W_Allow( s.meta.kind, walletAct_t::WA_RECEIVE )?;
 		let accountId = W_AccountOf( &s, account )?;
 		if ( fresh.is_none() ) {
 			if let Some( r ) = s.cache.lock().unwrap().receive.get( &account ) {
@@ -245,6 +249,14 @@ fn W_Addresses( wallet: &mut LightWallet, accountId: AccountId, fresh: Option< f
 	};
 	let sapling = sapling.and_then( |( _, ua )| W_SaplingText( wallet, &ua ) );
 
+	// a new public address, only once the newest has been paid (zingolib's no-gap guard)
+	if ( fresh == Some( freshAddress_t::FA_PUBLIC ) ) {
+		wallet.generate_transparent_address( accountId, true ).map_err( |e| match e {
+			zingolib::wallet::error::KeyError::GapError	=> werr_t::WERR_PUBLIC_UNUSED,
+			_											=> werr_t::WERR_NO_PUBLIC_ADDRESS,
+		} )?;
+	}
+
 	// the newest external transparent address, or the first one
 	let mut transparent = wallet.transparent_addresses().iter()
 		.filter( |( tid, _ )| tid.account_id() == accountId && tid.scope() == TransparentScope::External )
@@ -327,7 +339,17 @@ mod tests {
 		let private = W_Addresses( &mut wallet, Account0(), Some( freshAddress_t::FA_PRIVATE ) ).unwrap();
 		assert_ne!( private.shielded, first.shielded );
 		assert_eq!( private.sapling, sapling.sapling );
-		assert_eq!( private.transparent, first.transparent, "the public address is never replaced" );
+		assert_eq!( private.transparent, first.transparent, "a new private address leaves the public one" );
+	}
+
+	// a new public address only after the last one was paid: no gap for a restore to stop at
+	#[test]
+	fn a_new_public_address_waits_for_the_last_to_be_used() {
+		let mut wallet = Test_Wallet();
+		let first = W_Addresses( &mut wallet, Account0(), None ).unwrap();
+		assert!( first.transparent.is_some() );
+		assert!( matches!( W_Addresses( &mut wallet, Account0(), Some( freshAddress_t::FA_PUBLIC ) ), Err( werr_t::WERR_PUBLIC_UNUSED ) ) );
+		assert_eq!( W_Addresses( &mut wallet, Account0(), None ).unwrap().transparent, first.transparent, "still the one" );
 	}
 
 	// an older viewing key with Sapling alone: it can receive, and its one shielded

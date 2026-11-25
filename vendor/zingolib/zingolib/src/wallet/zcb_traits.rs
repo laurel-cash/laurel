@@ -1088,6 +1088,100 @@ impl InputSource for LightWallet {
             .collect())
     }
 
+    /// LAUREL PATCH (spending transparent coins): the account's spendable
+    /// transparent coins, oldest first, enough for `target_value` (or all of
+    /// them), at most `max_inputs`. Only a proposal whose spend policy asks
+    /// for transparent coins comes here; the backend's default is
+    /// `unimplemented!`. Coins on other accounts' addresses are never
+    /// offered, even when named in `address_allow_list`.
+    fn select_spendable_transparent_outputs(
+        &self,
+        account: Self::AccountId,
+        target_height: TargetHeight,
+        confirmations_policy: ConfirmationsPolicy,
+        output_filter: CoinbaseFilter,
+        address_allow_list: Option<&[TransparentAddress]>,
+        target_value: TargetValue,
+        max_inputs: usize,
+        _fee_rule: &zcash_client_backend::fees::StandardFeeRule,
+        _lock_filter: LockFilter<'_>,
+    ) -> Result<Vec<WalletTransparentOutput<Self::AccountId>>, Self::Error> {
+        let allowed: Option<Vec<String>> = address_allow_list.map(|list| {
+            list.iter()
+                .map(|address| transparent::encode_address(&self.chain_type, *address))
+                .collect()
+        });
+        let ours: Vec<&String> = self
+            .transparent_addresses
+            .iter()
+            .filter(|(address_id, _)| {
+                address_id.account_id() == account && address_id.scope() != TransparentScope::Refund
+            })
+            .map(|(_, address)| address)
+            .filter(|address| allowed.as_ref().is_none_or(|allowed| allowed.contains(*address)))
+            .collect();
+
+        let mut coins: Vec<_> = self
+            .spendable_transparent_coins(
+                target_height.into(),
+                confirmations_policy.allow_zero_conf_shielding(),
+                false,
+            )
+            .into_iter()
+            .filter(|coin| ours.iter().any(|address| address.as_str() == coin.address()))
+            .filter(|coin| {
+                let coinbase = self
+                    .output_transaction(*coin)
+                    .transaction()
+                    .transparent_bundle()
+                    .is_some_and(|bundle| bundle.is_coinbase());
+                match output_filter {
+                    CoinbaseFilter::AllTransparentOutputs => true,
+                    CoinbaseFilter::CoinbaseOnly => coinbase,
+                    CoinbaseFilter::NonCoinbaseOnly => !coinbase,
+                }
+            })
+            .map(|coin| {
+                let height = self
+                    .output_transaction(coin)
+                    .status()
+                    .get_confirmed_height()
+                    .expect("spendable coins are confirmed");
+                (height, coin)
+            })
+            .collect();
+        coins.sort_by_key(|(height, coin)| (*height, coin.output_id()));
+
+        let mut chosen = Vec::new();
+        let mut gathered = 0u64;
+        for (height, coin) in coins {
+            if chosen.len() >= max_inputs {
+                break;
+            }
+            if let TargetValue::AtLeast(target) = target_value
+                && gathered >= u64::from(target)
+            {
+                break;
+            }
+            let Some(output) = WalletTransparentOutput::from_parts(
+                coin.output_id().into(),
+                TxOut::new(
+                    coin.value().try_into().expect("value from checked type"),
+                    coin.script().clone(),
+                ),
+                Some(height),
+                None,
+                None,
+                None,
+            ) else {
+                continue;
+            };
+            gathered = gathered.saturating_add(coin.value()); // a lying server can't overflow it
+            chosen.push(output);
+        }
+        Ok(chosen)
+    }
+
     fn select_unspent_notes(
         &self,
         _account: Self::AccountId,

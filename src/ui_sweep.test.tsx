@@ -18,10 +18,11 @@ import { QueryClientProvider } from "@tanstack/react-query";
 
 import { T } from "./ui_text";
 import type { sweepQuote_t } from "./bindings";
+import { Com_Abbrev } from "./ui_local";
 
 const GOOD = "cVgoodTestKeyNeverInACacheKey";
 
-const QUOTE: sweepQuote_t = { from: "tmFromAddressOfTheKey00000000000", to: "tmToAddressOfTheAccount000000000", coins: 2, left: 0, total: 100_000, fee: 10_000, amount: 90_000 };
+const QUOTE: sweepQuote_t = { from: "tmFromAddressOfTheKey00000000000", to: "tmToAddressOfTheAccount000000000", coins: 2, left: 0, total: 100_000, fee: 10_000, amount: 90_000, coinsPrint: "c0ffee" };
 
 const engine = vi.hoisted( () => ( {
 	quotes:		0,
@@ -97,6 +98,18 @@ describe( "UI_SweepSheet", () => {
 		fireEvent.click( go );
 		await screen.findByText( T.sweep.doneTitle );
 		expect( engine.sent ).toEqual( [ { key: GOOD, intent: "i1", seen: QUOTE } ] );
+	} );
+
+	// W2-13: the review says where the money goes, and whose word the coins are
+	it( "shows where the money goes, and that the coins are the server's word", async () => {
+		await Open();
+		Type( GOOD );
+		await screen.findByText( /Controls/ );
+		fireEvent.click( screen.getByRole( "button", { name: T.sweep.find } ) );
+		await screen.findByRole( "button", { name: /^Sweep / } );
+		expect( screen.getByText( T.sweep.toAddress ) ).toBeTruthy();
+		expect( screen.getByText( Com_Abbrev( QUOTE.to ) ) ).toBeTruthy();
+		expect( screen.getByText( T.sweep.coinsSeen ) ).toBeTruthy();
 	} );
 
 	it( "shows new numbers before anything moves", async () => {

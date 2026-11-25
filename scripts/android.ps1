@@ -40,6 +40,12 @@ try {
 	# succeeded (Gradle leaves an up-to-date bundle as it was). Later commits that build
 	# nothing into it (scripts, docs) then need no new build: a fat-LTO release takes 10 minutes
 	$stamp = 'src-tauri\gen\android\app\build\outputs\bundle\built-from.txt'
+	# the ui leaves out the modules cargo does (D-031): one list, this build's --features,
+	# for vite.config.ts too (Tauri runs the ui's build with this environment)
+	$featuresIndex = [Array]::IndexOf($TauriArgs, '--features')
+	if ($featuresIndex -lt 0) { $featuresIndex = [Array]::IndexOf($TauriArgs, '-f') }
+	$features = if ($featuresIndex -ge 0 -and $featuresIndex + 1 -lt $TauriArgs.Length) { $TauriArgs[$featuresIndex + 1] } else { '' }
+	$env:LAUREL_FEATURES = $features
 	$playBundle = $Action -eq 'build' -and $TauriArgs -contains '--aab' -and $TauriArgs -notcontains '--debug'
 	if ($playBundle) {
 		Remove-Item -LiteralPath $stamp -ErrorAction SilentlyContinue
@@ -79,6 +85,9 @@ try {
 		$bundle = Get-ChildItem 'src-tauri\gen\android\app\build\outputs\bundle\universalRelease\*.aab', 'src-tauri\gen\android\app\build\outputs\bundle\arm64Release\*.aab' -ErrorAction SilentlyContinue |
 			Sort-Object LastWriteTime -Descending | Select-Object -First 1
 		$relative = (Resolve-Path -Relative $bundle.FullName) -replace '^\.\\', '' -replace '\\', '/'
-		Set-Content -LiteralPath $stamp -Value "$builtFrom $((Get-FileHash $bundle.FullName -Algorithm SHA256).Hash) $relative" -Encoding ascii
+		# and its --features, for play_bundle.mjs to hold the bundle to its line (D-031, D-033)
+		# (typed at a prompt, "testnet-only,full" comes as an array, joined with a space)
+		$featuresStamp = if ($features.Trim()) { $features.Trim() -replace '[\s,]+', ',' } else { '-' }
+		Set-Content -LiteralPath $stamp -Value "$builtFrom $((Get-FileHash $bundle.FullName -Algorithm SHA256).Hash) $relative $featuresStamp" -Encoding ascii
 	}
 } finally { Pop-Location }

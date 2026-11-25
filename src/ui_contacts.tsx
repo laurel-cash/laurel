@@ -15,17 +15,16 @@ See the LICENSE file for details.
 import { useEffect, useMemo, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import * as Menu from "@radix-ui/react-dropdown-menu";
-import { BookUser, ChevronDown, Eye, Plus, Search, ShieldCheck, Trash2, TriangleAlert, UserRound, WalletCards } from "lucide-react";
+import { BookUser, ChevronDown, Eye, Plus, Search, ShieldCheck, Trash2, UserRound, WalletCards } from "lucide-react";
 
-import { commands, Com_Abbrev, Com_Ago, Com_ErrorOf, contact_t, walletSummary_t } from "./ui_local";
+import { addrKind_t, commands, Com_Abbrev, Com_IsPublicKind, Com_Short, Com_Ago, Com_ErrorOf, contact_t, walletSummary_t } from "./ui_local";
 import { T } from "./ui_text";
 import { KEYS, QUERY } from "./ui_query";
 import { useAction, useAddressCheck } from "./ui_hooks";
 import { useStore } from "./ui_store";
-import { sheetProps_t, UI_Alert, UI_Sheet, UI_SheetButtons, UI_Spinner, UI_Waiting } from "./ui_widgets";
+import { sheetProps_t, UI_Alert, UI_Callout, UI_Sheet, UI_SheetButtons, UI_Spinner, UI_Waiting } from "./ui_widgets";
 import { UI_AddressLine } from "./ui_receive";
 
-const PUBLIC_KINDS = [ "transparent", "tex" ];
 
 /*
 ==================
@@ -38,7 +37,7 @@ export function useContacts() {
 	return useQuery( { queryKey: KEYS.contacts(), queryFn: () => commands.ctListF() } );
 }
 
-function Com_Initials( name: string ): string {
+export function Com_Initials( name: string ): string {
 	const words = name.trim().split( /\s+/ ).filter( Boolean );
 	return ( words.length > 1 ? words[0][0] + words[words.length - 1][0] : name.trim().slice( 0, 2 ) ).toUpperCase();
 }
@@ -47,15 +46,16 @@ function Com_Initials( name: string ): string {
 ==================
 UI_KindChip
 
-Private or public, the way Send says it
+Private or public, said the same way wherever an address is checked: a
+contact's in a word, Send's and its review's by the kind of address
 ==================
 */
-function UI_KindChip( props: { kind: string } ) {
-	const isPublic = PUBLIC_KINDS.includes( props.kind );
+export function UI_KindChip( props: { kind: addrKind_t; title?: string } ) {
+	const isPublic = Com_IsPublicKind( props.kind );
 	return (
 		<span className={"send-kind" + ( isPublic ? " public" : "" )}>
 			{isPublic ? <Eye aria-hidden="true" /> : <ShieldCheck aria-hidden="true" />}
-			{isPublic ? T.contacts.public : T.contacts.private}
+			{props.title ?? ( isPublic ? T.contacts.public : T.contacts.private )}
 		</span>
 	);
 }
@@ -109,7 +109,7 @@ export function UI_ContactSheet( props: sheetProps_t & { contact: contact_t | nu
 	if ( confirming && c ) {
 		return (
 			<UI_Sheet open={props.open} onOpenChange={props.onOpenChange} title={T.contacts.changeTitle( c.name )} busy={busy}>
-				<div className="warn-note"><TriangleAlert aria-hidden="true" /><span>{T.contacts.changeWarn( c.name )}</span></div>
+				<UI_Callout kind="warn">{T.contacts.changeWarn( c.name )}</UI_Callout>
 				<div className="review-to">
 					<span className="label">{T.contacts.before}</span>
 					<UI_AddressLine address={c.address} />
@@ -146,11 +146,9 @@ export function UI_ContactSheet( props: sheetProps_t & { contact: contact_t | nu
 			{remove.error && <UI_Alert title={T.contacts.cantDelete} message={remove.error} />}
 
 			{c && ( sure ? (
-				<div className="warn-note contact-delete">
-					<Trash2 aria-hidden="true" />
-					<span>{T.contacts.deleteSure( c.name )}</span>
-					<button className="btn danger small" disabled={busy} onClick={() => remove.run()}>{T.contacts.delete}</button>
-				</div>
+				<UI_Callout kind="warn" icon={Trash2} className="contact-delete" action={<button className="btn danger small" disabled={busy} onClick={() => remove.run()}>{T.contacts.delete}</button>}>
+					{T.contacts.deleteSure( c.name )}
+				</UI_Callout>
 			) : (
 				<button className="link quiet contact-delete-link" onClick={() => setSure( true )}><Trash2 aria-hidden="true" />{T.contacts.deleteContact}</button>
 			) )}
@@ -291,7 +289,7 @@ export function UI_PayeeMenu( props: { walletId: string; account: number; onPick
 					{( contacts.data ?? [] ).map( ( c ) => (
 						<Menu.Item key={c.id} className="menu-item" onSelect={() => props.onPick( c.address, c.name )}>
 							<span className="contact-avatar small" aria-hidden="true">{Com_Initials( c.name )}</span>
-							<span className="menu-text">{c.name}<span className="menu-sub mono">{Com_Abbrev( c.address, 6 )}</span></span>
+							<span className="menu-text">{c.name}<span className="menu-sub mono">{Com_Short( c.address )}</span></span>
 						</Menu.Item>
 					) )}
 					{contacts.data?.length === 0 && <div className="menu-empty">{T.contacts.menuEmpty}</div>}

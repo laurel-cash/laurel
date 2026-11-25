@@ -19,8 +19,9 @@ See the LICENSE file for details.
 import { create } from "zustand";
 
 import { KEYS, QUERY } from "./ui_query";
+import type { historyQuery_t } from "./ui_history";
 
-import { appearance_t, Com_ApplyTheme, Com_ErrorOf, Com_IsAppearance, Com_IsBool, Com_IsSelection, Com_ReadPref, Com_Unreachable, Com_WritePref, Com_HomeLayout, commands, constants_t, errorInfo_t, events, failedWallet_t, network_t, Com_NewsKey, news_t, PREF_APPEARANCE, PREF_HIDE_AMOUNTS, PREF_HOME, PREF_SELECTION, homeLayout_t, pool_t, selection_t, syncEvent_t, vaultStatus_t, walletList_t, walletSummary_t, HOME_DEFAULT } from "./ui_local";
+import { appearance_t, Com_ApplyTheme, Com_ErrorOf, Com_IsAppearance, Com_IsBool, Com_IsSelection, Com_ReadPref, Com_Unreachable, Com_WritePref, Com_HomeLayout, commands, constants_t, errorInfo_t, events, failedWallet_t, network_t, Com_NewsKey, news_t, PREF_APPEARANCE, PREF_HIDE_AMOUNTS, PREF_HOME, PREF_SELECTION, homeLayout_t, selection_t, syncEvent_t, vaultStatus_t, walletList_t, walletSummary_t, HOME_DEFAULT } from "./ui_local";
 
 // the app's pages, and the panes of Settings (ui_settings.tsx)
 export type page_t			= "home" | "history" | "settings";
@@ -46,7 +47,7 @@ type storeState_t = {
 	page:			page_t;
 	settingsPane:	settingsPane_t;
 	settingsShown:	"list" | "pane";				// a phone shows one: Settings alone is its list, sent to a pane the pane (Go)
-	historyPools:	pool_t[];						// the pools History opens filtered to (GoHistory); none from anywhere else
+	historyStart:	Partial< historyQuery_t >;		// the filter History opens with (GoHistory): a pool's lines, or what waits; none from anywhere else
 
 	Refresh:		() => Promise< void >;
 	Dismiss:		( key: string ) => void;			// Com_NewsKey
@@ -55,7 +56,7 @@ type storeState_t = {
 	SetHome:		( layout: homeLayout_t ) => void;
 	ToggleAmounts:	() => void;
 	Go:				( page: page_t, pane?: settingsPane_t ) => void;		// a page, and for Settings which pane
-	GoHistory:		( pools: pool_t[] ) => void;		// History, showing only these pools
+	GoHistory:		( start: Partial< historyQuery_t > ) => void;		// History, filtered from the start
 	SetVault:		( v: vaultStatus_t ) => void;
 	Lock:			() => Promise< void >;		// only with a password; the title bar, Lock Now, Ctrl+L and auto-lock all use this
 };
@@ -87,7 +88,7 @@ export const useStore = create< storeState_t >()( ( set ) => ( {
 	page:			"home",
 	settingsPane:	"general",
 	settingsShown:	"list",
-	historyPools:	[],
+	historyStart:	{},
 	hideAmounts:	Com_ReadPref( PREF_HIDE_AMOUNTS, false, Com_IsBool ),
 	home:			Com_HomeLayout( Com_ReadPref< unknown >( PREF_HOME, null, ( _v ): _v is unknown => true ) ),		// any shape: Com_HomeLayout reads it
 
@@ -125,8 +126,8 @@ export const useStore = create< storeState_t >()( ( set ) => ( {
 		set( ( s ) => ( { news: s.news.filter( ( n ) => Com_NewsKey( n ) !== key ) } ) );
 	},
 
-	Go: ( page: page_t, pane?: settingsPane_t ) => set( ( s ) => ( { page: page, settingsPane: pane ?? s.settingsPane, settingsShown: pane ? "pane" : "list", historyPools: [] } ) ),
-	GoHistory: ( pools: pool_t[] ) => set( { page: "history", historyPools: pools } ),
+	Go: ( page: page_t, pane?: settingsPane_t ) => set( ( s ) => ( { page: page, settingsPane: pane ?? s.settingsPane, settingsShown: pane ? "pane" : "list", historyStart: {} } ) ),
+	GoHistory: ( start: Partial< historyQuery_t > ) => set( { page: "history", historyStart: start } ),
 
 	/*
 	==================
@@ -287,17 +288,24 @@ export function St_Start(): Promise< void > {
 				void QUERY.invalidateQueries( { queryKey: KEYS.offline() } );
 			} );
 			await events.paymentEventT.listen( ( e ) => St_Tell( { kind: "payment", payment: e.payload } ) );
-			await events.priceAlertEventT.listen( ( e ) => {
-				St_Tell( { kind: "price", alert: e.payload } );
-				void QUERY.invalidateQueries( { queryKey: KEYS.alerts() } );
-			} );
-			await events.repeatDueEventT.listen( () => void QUERY.invalidateQueries( { queryKey: KEYS.repeats() } ) );
-			// another computer's changes arrived: what they touch is read again (docs/SYNC.md)
-			await events.folderSyncedEventT.listen( () => {
-				for ( const key of [ KEYS.folder(), KEYS.contacts(), KEYS.settings(), [ "transactions" ] ] ) {
-					void QUERY.invalidateQueries( { queryKey: key } );
-				}
-			} );
+			if ( __LAUREL_PRICES__ ) {		// no alert goes off in a build without prices (D-031)
+				await events.priceAlertEventT.listen( ( e ) => {
+					St_Tell( { kind: "price", alert: e.payload } );
+					void QUERY.invalidateQueries( { queryKey: KEYS.alerts() } );
+				} );
+			}
+			if ( __LAUREL_REPEAT_PAYMENTS__ ) {		// none comes in a build without them (D-031)
+				await events.repeatDueEventT.listen( () => void QUERY.invalidateQueries( { queryKey: KEYS.repeats() } ) );
+			}
+			// another computer's changes arrived: what they touch is read again (docs/SYNC.md);
+			// none arrive in a build without folder sync (D-031)
+			if ( __LAUREL_FOLDER_SYNC__ ) {
+				await events.folderSyncedEventT.listen( () => {
+					for ( const key of [ KEYS.folder(), KEYS.contacts(), KEYS.settings(), [ "transactions" ] ] ) {
+						void QUERY.invalidateQueries( { queryKey: key } );
+					}
+				} );
+			}
 			useStore.setState( { constants: await commands.wConstantsF(), network: ( await commands.sGetF() ).network } );
 			try {
 				useStore.getState().SetVault( await commands.vOpenF() );

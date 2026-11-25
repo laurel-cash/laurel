@@ -21,7 +21,7 @@ import { ReactNode, useEffect, useMemo, useState } from "react";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { encode as QR_Encode } from "uqr";
 import { Lock, Moon, Sun } from "lucide-react";
-import { Com_Unreachable, syncProgress_t, syncState_t } from "./ui_local";
+import { Com_FormatDate, Com_Unreachable, syncProgress_t, syncState_t } from "./ui_local";
 import { T } from "./ui_text";
 import { useStore } from "./ui_store";
 import { UI_Spinner, UI_Tip } from "./ui_widgets";
@@ -284,21 +284,37 @@ MARKS
 
 /*
 ==================
-Com_SyncLabel
+Com_SyncWords / Com_SyncLabel
 
-What each sync state says, in one place
+What each sync state says, in one place: the short label (the status
+capsule, the wallet menu, the network panel), and the sync sheet's title
+and sentence. They were two tables in two files, each deciding on its own
+that a repair says so. A repair is a first sync again, from the birthday,
+so it says so while preparing and while scanning alike.
 ==================
 */
-export function Com_SyncLabel( state: syncState_t, p: syncProgress_t | undefined ): string {
+export type syncWords_t = { label: string; title: string; text: string };
+
+export function Com_SyncWords( state: syncState_t, p: syncProgress_t | undefined ): syncWords_t {
+	const from = p?.birthdayTime ? Com_FormatDate( p.birthdayTime ) : T.sync.fromBirthday;
+
+	if ( ( state === "preparing" || state === "syncing" ) && p?.repairing ) {
+		return { label: T.sync.repairing, title: T.sync.titleSyncing, text: T.sync.repairingText( from ) };
+	}
 	switch ( state ) {
-	case "connecting":	return T.sync.connecting;
-	case "retrying":	return T.sync.retrying;
-	case "syncing":		return p?.repairing ? T.sync.repairing : T.sync.syncing( p?.percent ?? 0 );
-	case "synced":		return T.sync.synced;
-	case "offline":		return T.sync.offline;
-	case "paused":		return T.sync.paused;
+	case "connecting":	return { label: T.sync.connecting,					title: T.sync.titleConnecting,	text: T.sync.connectingText };
+	case "retrying":	return { label: T.sync.retrying,					title: T.sync.titleOffline,		text: T.sync.retrying };
+	case "preparing":	return { label: T.sync.preparing,					title: T.sync.titleSyncing,		text: T.sync.preparingText };
+	case "syncing":		return { label: T.sync.syncing( p?.percent ?? 0 ),	title: T.sync.titleSyncing,		text: T.sync.syncingText( from ) };
+	case "synced":		return { label: T.sync.synced,						title: T.sync.titleSynced,		text: T.sync.syncedText( from ) };
+	case "offline":		return { label: T.sync.offline,						title: T.sync.titleOffline,		text: p?.error?.message ?? T.sync.offlineText };
+	case "paused":		return { label: T.sync.paused,						title: T.sync.titlePaused,		text: T.sync.pausedText };
 	default:			return Com_Unreachable( state );
 	}
+}
+
+export function Com_SyncLabel( state: syncState_t, p: syncProgress_t | undefined ): string {
+	return Com_SyncWords( state, p ).label;
 }
 
 /*

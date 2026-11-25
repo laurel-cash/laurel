@@ -156,6 +156,58 @@ impl LightClient {
         result
     }
 
+    /// LAUREL PATCH (proposal hooks): stores the send proposal `build` makes
+    /// from the wallet, under the same pause as [`Self::propose_send`] and
+    /// settled the same way. An app with its own rule for which coins a
+    /// payment spends (which public addresses, tried in what order) builds
+    /// the proposal here, from
+    /// [`LightWallet::create_send_proposal_with`](crate::wallet::LightWallet::create_send_proposal_with):
+    /// the wallet is held for every attempt it makes.
+    pub async fn propose_send_built(
+        &mut self,
+        account_id: zip32::AccountId,
+        build: impl FnOnce(&mut crate::wallet::LightWallet) -> Result<ProportionalFeeProposal, ProposeSendError>,
+    ) -> Result<ProportionalFeeProposal, ProposeSendError> {
+        let minted = self.hold_proposal_pause();
+        let result = {
+            let mut wallet = self.wallet().write().await;
+            build(&mut wallet).inspect(|proposal| {
+                wallet.store_proposal(ZingoProposal::Send {
+                    proposal: proposal.clone(),
+                    sending_account: account_id,
+                });
+            })
+        };
+        if result.is_err() && minted {
+            self.release_proposal_pause(true);
+        }
+        result
+    }
+
+    /// LAUREL PATCH (proposal hooks): [`Self::propose_send_built`] for a
+    /// shield: the app names the addresses each shield takes
+    /// ([`LightWallet::create_shield_proposal_from`](crate::wallet::LightWallet::create_shield_proposal_from)).
+    pub async fn propose_shield_built(
+        &mut self,
+        account_id: zip32::AccountId,
+        build: impl FnOnce(&mut crate::wallet::LightWallet) -> Result<ProportionalFeeShieldProposal, ProposeShieldError>,
+    ) -> Result<ProportionalFeeShieldProposal, ProposeShieldError> {
+        let minted = self.hold_proposal_pause();
+        let result = {
+            let mut wallet = self.wallet().write().await;
+            build(&mut wallet).inspect(|proposal| {
+                wallet.store_proposal(ZingoProposal::Shield {
+                    proposal: proposal.clone(),
+                    shielding_account: account_id,
+                });
+            })
+        };
+        if result.is_err() && minted {
+            self.release_proposal_pause(true);
+        }
+        result
+    }
+
     /// Creates and stores a proposal to send `amount` to the transparent
     /// address `recipient` with `data` in an OP_RETURN (null-data) output.
     /// `recipient` is a P2PKH, P2SH, or TEX address. Holds the same

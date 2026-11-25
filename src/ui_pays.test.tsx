@@ -43,13 +43,13 @@ describe( "Com_ReadPayList", () => {
 } );
 
 async function Open() {
-	const { UI_PayListSheet } = await import( "./ui_pays" );
+	const { UI_PayListPanel } = await import( "./ui_pays" );
 	const onAdd = vi.fn();
-	render( <UI_PayListSheet open onOpenChange={() => {}} room={5} onAdd={onAdd} /> );
+	render( <UI_PayListPanel open room={5} onAdd={onAdd} onBack={() => {}} /> );
 	return onAdd;
 }
 
-describe( "UI_PayListSheet", () => {
+describe( "UI_PayListPanel", () => {
 	it( "says each problem by its line and adds nothing until they're fixed", async () => {
 		const onAdd = await Open();
 		fireEvent.change( screen.getByLabelText( T.pays.label ), { target: { value: "utest1aaa, 0.5\nnonsense, 1\ntmBBB, 1, hello" } } );

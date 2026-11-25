@@ -18,17 +18,19 @@ import { act, cleanup, fireEvent, render, screen } from "@testing-library/react"
 import { QueryClientProvider } from "@tanstack/react-query";
 
 import { T } from "./ui_text";
-import { Com_FormatZec } from "./ui_local";
-import type { quoted_t, shieldQuote_t, shieldResult_t } from "./bindings";
+import { Com_Abbrev, Com_FormatZec } from "./ui_local";
+import type { moveQuote_t, moveResult_t, quoted_t, shieldQuote_t } from "./bindings";
 
 const Z = 100_000_000;
-const quote = ( amount: number, intent = "i1" ): quoted_t< shieldQuote_t > => ( { intent: intent, quote: { amount: amount, fee: 10_000, feeNote: null } } );
+const quote = ( amount: number, intent = "i1" ): quoted_t< moveQuote_t > => ( { intent: intent, quote: { amount: amount, fee: 10_000, feeNote: null } } );
 
 const engine = vi.hoisted( () => ( {
 	quoted:		[] as string[],
 	sent:		[] as { intent: string; amount: number }[],
-	next:		null as unknown as quoted_t< shieldQuote_t > | Error,
-	answers:	[] as shieldResult_t[],
+	next:		null as unknown as quoted_t< moveQuote_t > | Error,
+	shieldMore:	0,							// other public addresses still holding money after this shield
+	shieldLinks: 1,							// the public addresses this shield spends from
+	answers:	[] as moveResult_t[],
 	keyHere:	true,
 	keyAsked:	0,
 } ) );
@@ -42,7 +44,7 @@ vi.mock( "./bindings", async () => ( {
 			}
 			return engine.next;
 		},
-		wMoveNowF: async ( _id: string, _account: number, intent: string, seen: shieldQuote_t ) => {
+		wMoveNowF: async ( _id: string, _account: number, intent: string, seen: moveQuote_t ) => {
 			engine.sent.push( { intent: intent, amount: seen.amount } );
 			return engine.answers.shift();
 		},
@@ -50,9 +52,11 @@ vi.mock( "./bindings", async () => ( {
 			engine.keyAsked++;
 			return engine.keyHere;
 		},
-		wQuoteShieldF: async () => {
-			engine.quoted.push( "shield" );
-			return quote( 5 * Z );
+		wQuoteShieldF: async ( _id: string, _account: number, from: string | null ) => {
+			engine.quoted.push( from ? `shield ${from}` : "shield" );
+			const q = quote( 5 * Z );
+			const shield: quoted_t< shieldQuote_t > = { ...q, quote: { ...q.quote, from: from, more: engine.shieldMore, links: engine.shieldLinks } };
+			return shield;
 		},
 	},
 	events: ( await import( "./test_engine" ) ).TEST_EVENTS,
@@ -62,6 +66,8 @@ beforeEach( () => {
 	engine.quoted = [];
 	engine.sent = [];
 	engine.next = quote( 2 * Z );
+	engine.shieldMore = 0;
+	engine.shieldLinks = 1;
 	engine.answers = [];
 	engine.keyHere = true;
 	engine.keyAsked = 0;
@@ -69,7 +75,7 @@ beforeEach( () => {
 
 afterEach( cleanup );
 
-async function Open( which: "move" | "shield", held: number, synced = true ) {
+async function Open( which: "move" | "shield", held: number, synced = true, address: string | null = null ) {
 	const { UI_MoveSheet, UI_ShieldSheet } = await import( "./ui_shield" );
 	const { UI_TipProvider } = await import( "./ui_widgets" );
 	const { QUERY } = await import( "./ui_query" );
@@ -78,8 +84,10 @@ async function Open( which: "move" | "shield", held: number, synced = true ) {
 	QUERY.clear();
 	const summary = Test_Summary( { id: "w" } );
 	useStore.setState( { wallets: { w: synced ? summary : { ...summary, progress: { ...summary.progress, complete: false, running: true, percent: 40 } } } } );
-	const Sheet = which === "move" ? UI_MoveSheet : UI_ShieldSheet;
-	render( <QueryClientProvider client={QUERY}><UI_TipProvider><Sheet open onOpenChange={() => {}} walletId="w" account={0} heldZats={held} offline={false} /></UI_TipProvider></QueryClientProvider> );
+	const sheet = which === "move"
+		? <UI_MoveSheet open onOpenChange={() => {}} walletId="w" account={0} heldZats={held} offline={false} />
+		: <UI_ShieldSheet open onOpenChange={() => {}} walletId="w" account={0} heldZats={held} offline={false} address={address} />;
+	render( <QueryClientProvider client={QUERY}><UI_TipProvider>{sheet}</UI_TipProvider></QueryClientProvider> );
 }
 
 describe( "moving Sapling into Ironwood", () => {
@@ -121,6 +129,32 @@ describe( "moving Sapling into Ironwood", () => {
 		await Open( "shield", 5 * Z );
 		expect( await screen.findByText( T.shield.from ) ).toBeTruthy();
 		expect( engine.quoted ).toEqual( [ "shield" ] );
+		expect( screen.queryByText( T.shield.more( 1 ) ) ).toBeNull();		// one address: nothing to say
+	} );
+
+	// one public address per shield (W_ShieldPublic, w_public.rs): the review says how many wait
+	it( "says how many public addresses are still to shield, one at a time", async () => {
+		engine.shieldMore = 2;
+		await Open( "shield", 5 * Z );
+		expect( await screen.findByText( T.shield.more( 2 ) ) ).toBeTruthy();
+		expect( screen.queryByText( T.shield.links( 1 ) ) ).toBeNull();
+	} );
+
+	// none pays its own fee: shielded together, and the review says it ties them
+	it( "warns when a shield ties public addresses together", async () => {
+		engine.shieldLinks = 2;
+		await Open( "shield", 5 * Z );
+		expect( await screen.findByText( T.shield.links( 2 ) ) ).toBeTruthy();
+	} );
+
+	// a public address's own Shield (its row in the pool): the engine is asked
+	// for that address alone, and the review names it
+	it( "shields the one address chosen, and says only that one moves", async () => {
+		const address = "t1aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
+		await Open( "shield", 5 * Z, true, address );
+		expect( await screen.findByText( T.shield.onlyThis( Com_Abbrev( address ) ) ) ).toBeTruthy();
+		expect( screen.getByText( T.shield.ledeOne ) ).toBeTruthy();
+		expect( engine.quoted ).toEqual( [ `shield ${address}` ] );
 	} );
 
 	// Sapling's spend key is fetched the first time (w_spendkey.rs): the review says so first
@@ -159,5 +193,15 @@ describe( "moving Sapling into Ironwood", () => {
 		expect( await screen.findByText( T.shield.from ) ).toBeTruthy();
 		expect( engine.keyAsked ).toBe( 0 );
 		expect( screen.queryByText( T.review.fetchKey ) ).toBeNull();
+	} );
+} );
+
+// W2-12: a move between pools shows its amount on the chain (the pools' value balance is
+// public); what stays hidden is who: the words promise only that
+describe( "what a move shows", () => {
+	it( "says the amount between the pools is seen, and the addresses aren't", () => {
+		expect( T.move.lede ).not.toMatch( /doesn't show the amount/ );
+		expect( T.move.lede ).toMatch( /amount/ );
+		expect( T.move.lede ).toMatch( /addresses/ );
 	} );
 } );

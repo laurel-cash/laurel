@@ -1,5 +1,5 @@
 # The fork: zingolib 81d799775f11e882896e8710e8af12d6d4d29a41 (https://github.com/zingolabs/zingolib) to vendor/zingolib.
-# Written by scripts/engine.mjs record; checked by the gate. 40 files; why each: docs/ENGINE.md.
+# Written by scripts/engine.mjs record; checked by the gate. 43 files; why each: docs/ENGINE.md.
 --- a/Cargo.lock
 +++ b/Cargo.lock
 @@ -11280,6 +11280,7 @@ dependencies = [
@@ -1146,6 +1146,65 @@
              wallet
                  .create_send_all_proposal(address, memo, account_id)
                  .inspect(|proposal| {
+@@ -131,6 +156,58 @@ impl LightClient {
+         result
+     }
+ 
++    /// LAUREL PATCH (proposal hooks): stores the send proposal `build` makes
++    /// from the wallet, under the same pause as [`Self::propose_send`] and
++    /// settled the same way. An app with its own rule for which coins a
++    /// payment spends (which public addresses, tried in what order) builds
++    /// the proposal here, from
++    /// [`LightWallet::create_send_proposal_with`](crate::wallet::LightWallet::create_send_proposal_with):
++    /// the wallet is held for every attempt it makes.
++    pub async fn propose_send_built(
++        &mut self,
++        account_id: zip32::AccountId,
++        build: impl FnOnce(&mut crate::wallet::LightWallet) -> Result<ProportionalFeeProposal, ProposeSendError>,
++    ) -> Result<ProportionalFeeProposal, ProposeSendError> {
++        let minted = self.hold_proposal_pause();
++        let result = {
++            let mut wallet = self.wallet().write().await;
++            build(&mut wallet).inspect(|proposal| {
++                wallet.store_proposal(ZingoProposal::Send {
++                    proposal: proposal.clone(),
++                    sending_account: account_id,
++                });
++            })
++        };
++        if result.is_err() && minted {
++            self.release_proposal_pause(true);
++        }
++        result
++    }
++
++    /// LAUREL PATCH (proposal hooks): [`Self::propose_send_built`] for a
++    /// shield: the app names the addresses each shield takes
++    /// ([`LightWallet::create_shield_proposal_from`](crate::wallet::LightWallet::create_shield_proposal_from)).
++    pub async fn propose_shield_built(
++        &mut self,
++        account_id: zip32::AccountId,
++        build: impl FnOnce(&mut crate::wallet::LightWallet) -> Result<ProportionalFeeShieldProposal, ProposeShieldError>,
++    ) -> Result<ProportionalFeeShieldProposal, ProposeShieldError> {
++        let minted = self.hold_proposal_pause();
++        let result = {
++            let mut wallet = self.wallet().write().await;
++            build(&mut wallet).inspect(|proposal| {
++                wallet.store_proposal(ZingoProposal::Shield {
++                    proposal: proposal.clone(),
++                    shielding_account: account_id,
++                });
++            })
++        };
++        if result.is_err() && minted {
++            self.release_proposal_pause(true);
++        }
++        result
++    }
++
+     /// Creates and stores a proposal to send `amount` to the transparent
+     /// address `recipient` with `data` in an OP_RETURN (null-data) output.
+     /// `recipient` is a P2PKH, P2SH, or TEX address. Holds the same
 --- a/zingolib/src/lightclient/save.rs
 +++ b/zingolib/src/lightclient/save.rs
 @@ -1,11 +1,15 @@
@@ -1536,7 +1595,219 @@
  
              reports.push(TransmitReport {
                  txid: *txid,
-@@ -1818,3 +2005,168 @@ mod op_return {
+@@ -1250,6 +1437,211 @@ mod built_transaction_shape {
+         );
+     }
+ 
++    /// LAUREL PATCH (proposal hooks): a send the caller builds to spend the
++    /// account's transparent coins and nothing shielded, stored as any
++    /// proposal is. Which addresses' coins is the caller's to say; here,
++    /// any of the account's.
++    async fn propose_from_transparent_coins(
++        client: &mut LightClient,
++        request: zcash_client_backend::zip321::TransactionRequest,
++    ) -> Result<crate::data::proposal::ProportionalFeeProposal, crate::wallet::error::ProposeSendError> {
++        use zcash_client_backend::data_api::wallet::input_selection::{SpendPolicy, TransparentSpendPolicy};
++
++        let coins_only =
++            SpendPolicy::shielded_pools([]).with_transparent(TransparentSpendPolicy::any_account_addr());
++        client
++            .propose_send_built(zip32::AccountId::ZERO, |wallet| {
++                wallet.create_send_proposal_with(request, zip32::AccountId::ZERO, &coins_only, false)
++            })
++            .await
++    }
++
++    /// LAUREL PATCH (proposal hooks): a payment built to come from
++    /// transparent coins spends the account's transparent coins and nothing
++    /// shielded (the backend left their gathering `unimplemented!`). The
++    /// exchange sees a transparent sender; the change goes private (the
++    /// payment pool). The wallet's Ironwood note stays unspent.
++    #[tokio::test]
++    async fn a_send_from_the_transparent_pool_spends_only_transparent_coins() {
++        use zcash_client_backend::zip321::{Payment, TransactionRequest};
++        use zcash_protocol::value::Zatoshis;
++
++        let wallet = SyntheticWalletBuilder::new(zingo_test_vectors::seeds::HOSPITAL_MUSEUM_SEED)
++            .transparent_coin(200_000)
++            .transparent_coin(300_000)
++            .ironwood_note(1_000_000)
++            .build();
++        let mut client = LightClient::new_for_test(wallet).await;
++
++        let request = TransactionRequest::new(vec![Payment::without_memo(
++            synthetic_wallet::external_zcash_address(PoolType::Transparent),
++            Zatoshis::const_from_u64(400_000),
++        )])
++        .unwrap();
++        let proposal = propose_from_transparent_coins(&mut client, request)
++            .await
++            .expect("transparent coins fund a transparent-sourced send");
++        let txids = client
++            .wallet()
++            .write()
++            .await
++            .calculate_transactions(proposal, zip32::AccountId::ZERO)
++            .await
++            .unwrap();
++        assert_eq!(txids.len(), 1);
++
++        let wallet = client.wallet();
++        let wallet = wallet.read().await;
++        let transaction = wallet.wallet_transactions.get(&txids[0]).unwrap().transaction();
++        let transparent = transaction.transparent_bundle().expect("transparent coins spent");
++        assert_eq!(transparent.vin.len(), 2, "both coins gathered for 400_000");
++        assert_eq!(transparent.vout.len(), 1, "one payment out, no transparent change");
++        assert_eq!(u64::from(transparent.vout[0].value()), 400_000);
++        assert!(transaction.sapling_bundle().is_none(), "no sapling spent");
++        assert!(transaction.orchard_bundle().is_none(), "no orchard spent");
++        // Value flows only INTO the shielded pool (the change), never out
++        // of it: the Ironwood note isn't spent.
++        let ironwood = transaction.ironwood_bundle().expect("the change goes private");
++        assert!(i64::from(ironwood.value_balance()) < 0);
++    }
++
++    /// LAUREL PATCH (proposal hooks): a send of transparent coins that's
++    /// built (and not yet mined) has spent its coins: a second one never
++    /// spends them again, it takes other coins or finds too little
++    #[tokio::test]
++    async fn a_built_public_send_leaves_its_coins_spent() {
++        use zcash_client_backend::zip321::{Payment, TransactionRequest};
++        use zcash_protocol::value::Zatoshis;
++
++        let wallet = SyntheticWalletBuilder::new(zingo_test_vectors::seeds::HOSPITAL_MUSEUM_SEED)
++            .transparent_coin(200_000)
++            .transparent_coin(300_000)
++            .build();
++        let mut client = LightClient::new_for_test(wallet).await;
++        let request = || {
++            TransactionRequest::new(vec![Payment::without_memo(
++                synthetic_wallet::external_zcash_address(PoolType::Transparent),
++                Zatoshis::const_from_u64(150_000),
++            )])
++            .unwrap()
++        };
++
++        let first = propose_from_transparent_coins(&mut client, request()).await.unwrap();
++        let spent: Vec<_> = first.steps().first().transparent_inputs().iter().map(|c| c.outpoint().clone()).collect();
++        client
++            .wallet()
++            .write()
++            .await
++            .calculate_transactions(first, zip32::AccountId::ZERO)
++            .await
++            .unwrap();
++
++        match propose_from_transparent_coins(&mut client, request()).await {
++            Ok(second) => {
++                for coin in second.steps().first().transparent_inputs() {
++                    assert!(!spent.contains(coin.outpoint()), "a coin spent twice");
++                }
++            }
++            Err(_) => {} // too little left: refused, nothing spent twice
++        }
++    }
++
++    /// LAUREL PATCH (proposal hooks): an exchange-only (TEX) address paid
++    /// from transparent coins: in one step or two, the exchange gets exactly
++    /// the payment from a transaction with transparent inputs only, and no
++    /// private money is spent on the way
++    #[tokio::test]
++    async fn a_public_send_pays_an_exchange_only_address() {
++        use zcash_client_backend::zip321::{Payment, TransactionRequest};
++        use zcash_protocol::value::Zatoshis;
++        use zcash_transparent::address::TransparentAddress;
++
++        let wallet = SyntheticWalletBuilder::new(zingo_test_vectors::seeds::HOSPITAL_MUSEUM_SEED)
++            .transparent_coin(300_000)
++            .ironwood_note(1_000_000)
++            .build();
++        let mut client = LightClient::new_for_test(wallet).await;
++        let exchange = TransparentAddress::PublicKeyHash(synthetic_wallet::external_transparent_pubkey_hash());
++
++        let request = TransactionRequest::new(vec![Payment::without_memo(
++            zcash_address::ZcashAddress::try_from_encoded(&synthetic_wallet::external_tex_address()).unwrap(),
++            Zatoshis::const_from_u64(100_000),
++        )])
++        .unwrap();
++        let proposal = propose_from_transparent_coins(&mut client, request)
++            .await
++            .expect("transparent coins pay an exchange-only address");
++        let txids = client
++            .wallet()
++            .write()
++            .await
++            .calculate_transactions(proposal, zip32::AccountId::ZERO)
++            .await
++            .unwrap();
++
++        let wallet = client.wallet();
++        let wallet = wallet.read().await;
++        let mut paid = 0;
++        for txid in &txids {
++            let tx = wallet.wallet_transactions.get(txid).unwrap().transaction();
++            assert!(tx.sapling_bundle().is_none() && tx.orchard_bundle().is_none(), "nothing private spent");
++            if let Some(ironwood) = tx.ironwood_bundle() {
++                assert!(i64::from(ironwood.value_balance()) <= 0, "ironwood only takes change in");
++            }
++            let Some(bundle) = tx.transparent_bundle() else { continue };
++            for out in &bundle.vout {
++                if out.recipient_address() == Some(exchange) {
++                    assert!(!bundle.vin.is_empty(), "the exchange is paid from transparent inputs");
++                    paid += u64::from(out.value());
++                }
++            }
++        }
++        assert_eq!(paid, 100_000, "the exchange gets exactly the payment");
++    }
++
++    /// LAUREL PATCH (proposal hooks): a shield the caller builds takes the
++    /// coins at the addresses it names, and is stored as any shield is;
++    /// with no address named there is nothing to shield
++    #[tokio::test]
++    async fn a_built_shield_takes_the_addresses_named() {
++        use zcash_protocol::consensus::Parameters as _;
++
++        let wallet = SyntheticWalletBuilder::new(zingo_test_vectors::seeds::HOSPITAL_MUSEUM_SEED)
++            .transparent_coin(200_000)
++            .build();
++        let named = crate::wallet::keys::transparent_address_from_encoded(
++            wallet.chain_type().network_type(),
++            wallet.transparent_addresses().values().next().unwrap(),
++        )
++        .unwrap();
++        let mut client = LightClient::new_for_test(wallet).await;
++
++        let none = client
++            .propose_shield_built(zip32::AccountId::ZERO, |wallet| {
++                wallet.create_shield_proposal_from(zip32::AccountId::ZERO, &[])
++            })
++            .await;
++        assert!(none.is_err(), "no address named, nothing shielded");
++
++        let proposal = client
++            .propose_shield_built(zip32::AccountId::ZERO, |wallet| {
++                wallet.create_shield_proposal_from(zip32::AccountId::ZERO, &[named])
++            })
++            .await
++            .expect("the named address's coin is shielded");
++        let inputs = proposal.steps().first().transparent_inputs();
++        assert_eq!(inputs.len(), 1);
++        assert_eq!(*inputs[0].recipient_address(), named);
++        let txids = client
++            .wallet()
++            .write()
++            .await
++            .calculate_transactions(proposal, zip32::AccountId::ZERO)
++            .await
++            .unwrap();
++        assert_eq!(txids.len(), 1, "what was stored builds");
++    }
++
+     /// Gap-1b cell of the remediation plan, mirroring the live
+     /// multi_input_sapling_send_with_orchard_change_no_panic offline: a
+     /// payment that no single sapling note covers builds (proves) a
+@@ -1818,3 +2210,168 @@ mod op_return {
          assert_eq!(reserved_refund_addresses(&client).await, 1);
      }
  }
@@ -1705,6 +1976,35 @@
 +        }
 +    }
 +}
+--- a/zingolib/src/lightclient/sync.rs
++++ b/zingolib/src/lightclient/sync.rs
+@@ -128,6 +128,17 @@ impl LightClient {
+     ///
+     /// If sync is already running, stops sync and waits for it to shutdown before clearing the wallet and rescanning.
+     pub async fn rescan(&mut self) -> Result<(), LightClientError> {
++        // LAUREL PATCH (rescan config): the rescan itself is rescan_with_config
++        let sync_config = self.wallet().read().await.wallet_settings.sync_config.clone();
++        self.rescan_with_config(sync_config).await
++    }
++
++    /// LAUREL PATCH (rescan config): [`Self::rescan`] with `sync_config` in
++    /// place of the wallet's stored one, for this rescan alone: the stored
++    /// config, and so every later sync, is unchanged. An app that searches
++    /// wider once (more unused transparent addresses in a row, say) hands
++    /// in the config it wants.
++    pub async fn rescan_with_config(&mut self, sync_config: SyncConfig) -> Result<(), LightClientError> {
+         if self.sync_mode() != SyncMode::NotRunning {
+             self.stop_sync().expect("infallible in this scope");
+ 
+@@ -139,7 +150,7 @@ impl LightClient {
+             }
+         }
+         self.wallet().write().await.clear_all();
+-        self.sync().await
++        self.sync_with_config(sync_config).await
+     }
+ 
+     /// Stops any in-flight Sync Session with [`Self::stop_sync`] and waits for the engine to
 --- a/zingolib/src/lightclient/transmit.rs
 +++ b/zingolib/src/lightclient/transmit.rs
 @@ -74,6 +74,13 @@ pub(crate) trait SubmitFailure: std::fmt::Display {
@@ -2954,6 +3254,103 @@
          let Some(spend_horizon) = self.spend_horizon(false) else {
              return Err(WalletError::NoSyncData);
          };
+--- a/zingolib/src/wallet/propose.rs
++++ b/zingolib/src/wallet/propose.rs
+@@ -72,6 +72,23 @@ impl LightWallet {
+         &mut self,
+         request: TransactionRequest,
+         account_id: zip32::AccountId,
++    ) -> Result<ProportionalFeeProposal, ProposeSendError> {
++        self.create_send_proposal_with(request, account_id, &SpendPolicy::default(), true)
++    }
++
++    /// LAUREL PATCH (proposal hooks): [`Self::create_send_proposal`], with
++    /// the caller's choice of what may be spent (`spend_policy`: which
++    /// pools, which transparent addresses) and of whether the change
++    /// carries the memo that records unified recipients
++    /// (`record_recipients`). The engine keeps no rule about which public
++    /// coins to spend: an app that spends them decides that itself, and
++    /// builds its proposals here.
++    pub fn create_send_proposal_with(
++        &mut self,
++        request: TransactionRequest,
++        account_id: zip32::AccountId,
++        spend_policy: &SpendPolicy,
++        record_recipients: bool,
+     ) -> Result<ProportionalFeeProposal, ProposeSendError> {
+         let memo = self.change_memo_from_transaction_request(&request);
+         let input_selector = GreedyInputSelector::new();
+@@ -83,7 +100,7 @@ impl LightWallet {
+                 ))?;
+         let change_strategy = zcash_client_backend::fees::zip317::SingleOutputChangeStrategy::new(
+             zcash_primitives::transaction::fees::zip317::FeeRule::standard(),
+-            Some(memo),
++            record_recipients.then_some(memo),
+             payment_pool(&self.chain_type, chain_height),
+             DustOutputPolicy::new(DustAction::AllowDustChange, None),
+         );
+@@ -107,7 +124,7 @@ impl LightWallet {
+             request,
+             // TODO: replace wallet min_confirmations field with confirmation policy to unify for all proposals
+             ConfirmationsPolicy::new_symmetrical(self.wallet_settings.min_confirmations, false),
+-            &SpendPolicy::default(),
++            spend_policy,
+             None,
+             None,
+         )
+@@ -213,15 +230,6 @@ impl LightWallet {
+         &mut self,
+         account_id: zip32::AccountId,
+     ) -> Result<crate::data::proposal::ProportionalFeeShieldProposal, ProposeShieldError> {
+-        let input_selector = GreedyInputSelector::new();
+-        let change_strategy = zcash_client_backend::fees::zip317::SingleOutputChangeStrategy::new(
+-            zcash_primitives::transaction::fees::zip317::FeeRule::standard(),
+-            None,
+-            ShieldedPool::Orchard,
+-            DustOutputPolicy::new(DustAction::AllowDustChange, None),
+-        );
+-        let chain_type = self.chain_type;
+-
+         // TODO: store t addrs as concrete types instead of encoded
+         let transparent_addresses = self
+             .transparent_addresses
+@@ -233,6 +241,27 @@ impl LightWallet {
+                 )
+             })
+             .collect::<Result<Vec<_>, zcash_address::ParseError>>()?;
++        self.create_shield_proposal_from(account_id, &transparent_addresses)
++    }
++
++    /// LAUREL PATCH (proposal hooks): [`Self::create_shield_proposal`] of
++    /// the coins at `transparent_addresses` alone, into `account_id`. The
++    /// one above shields every transparent address the wallet has, of
++    /// every account, in one transaction; an app that keeps addresses (or
++    /// accounts) apart names the ones each shield takes.
++    pub fn create_shield_proposal_from(
++        &mut self,
++        account_id: zip32::AccountId,
++        transparent_addresses: &[zcash_transparent::address::TransparentAddress],
++    ) -> Result<crate::data::proposal::ProportionalFeeShieldProposal, ProposeShieldError> {
++        let input_selector = GreedyInputSelector::new();
++        let change_strategy = zcash_client_backend::fees::zip317::SingleOutputChangeStrategy::new(
++            zcash_primitives::transaction::fees::zip317::FeeRule::standard(),
++            None,
++            ShieldedPool::Orchard,
++            DustOutputPolicy::new(DustAction::AllowDustChange, None),
++        );
++        let chain_type = self.chain_type;
+ 
+         let proposed_shield = zcash_client_backend::data_api::wallet::propose_shielding::<
+             LightWallet,
+@@ -249,7 +278,7 @@ impl LightWallet {
+             &input_selector,
+             &change_strategy,
+             Zatoshis::const_from_u64(10_000),
+-            &transparent_addresses,
++            transparent_addresses,
+             account_id,
+             // TODO: replace wallet min_confirmations field with confirmation policy to unify for all proposals
+             ConfirmationsPolicy::new_symmetrical(self.wallet_settings.min_confirmations, false),
 --- /dev/null
 +++ b/zingolib/src/wallet/sapling_key.rs
 @@ -0,0 +1,249 @@
@@ -3474,3 +3871,106 @@
      #[test]
      fn test_memo_bytes_from_string_plain_text() {
          let result = memo_bytes_from_string("Hello World".to_string());
+--- a/zingolib/src/wallet/zcb_traits.rs
++++ b/zingolib/src/wallet/zcb_traits.rs
+@@ -1088,6 +1088,100 @@ impl InputSource for LightWallet {
+             .collect())
+     }
+ 
++    /// LAUREL PATCH (spending transparent coins): the account's spendable
++    /// transparent coins, oldest first, enough for `target_value` (or all of
++    /// them), at most `max_inputs`. Only a proposal whose spend policy asks
++    /// for transparent coins comes here; the backend's default is
++    /// `unimplemented!`. Coins on other accounts' addresses are never
++    /// offered, even when named in `address_allow_list`.
++    fn select_spendable_transparent_outputs(
++        &self,
++        account: Self::AccountId,
++        target_height: TargetHeight,
++        confirmations_policy: ConfirmationsPolicy,
++        output_filter: CoinbaseFilter,
++        address_allow_list: Option<&[TransparentAddress]>,
++        target_value: TargetValue,
++        max_inputs: usize,
++        _fee_rule: &zcash_client_backend::fees::StandardFeeRule,
++        _lock_filter: LockFilter<'_>,
++    ) -> Result<Vec<WalletTransparentOutput<Self::AccountId>>, Self::Error> {
++        let allowed: Option<Vec<String>> = address_allow_list.map(|list| {
++            list.iter()
++                .map(|address| transparent::encode_address(&self.chain_type, *address))
++                .collect()
++        });
++        let ours: Vec<&String> = self
++            .transparent_addresses
++            .iter()
++            .filter(|(address_id, _)| {
++                address_id.account_id() == account && address_id.scope() != TransparentScope::Refund
++            })
++            .map(|(_, address)| address)
++            .filter(|address| allowed.as_ref().is_none_or(|allowed| allowed.contains(*address)))
++            .collect();
++
++        let mut coins: Vec<_> = self
++            .spendable_transparent_coins(
++                target_height.into(),
++                confirmations_policy.allow_zero_conf_shielding(),
++                false,
++            )
++            .into_iter()
++            .filter(|coin| ours.iter().any(|address| address.as_str() == coin.address()))
++            .filter(|coin| {
++                let coinbase = self
++                    .output_transaction(*coin)
++                    .transaction()
++                    .transparent_bundle()
++                    .is_some_and(|bundle| bundle.is_coinbase());
++                match output_filter {
++                    CoinbaseFilter::AllTransparentOutputs => true,
++                    CoinbaseFilter::CoinbaseOnly => coinbase,
++                    CoinbaseFilter::NonCoinbaseOnly => !coinbase,
++                }
++            })
++            .map(|coin| {
++                let height = self
++                    .output_transaction(coin)
++                    .status()
++                    .get_confirmed_height()
++                    .expect("spendable coins are confirmed");
++                (height, coin)
++            })
++            .collect();
++        coins.sort_by_key(|(height, coin)| (*height, coin.output_id()));
++
++        let mut chosen = Vec::new();
++        let mut gathered = 0u64;
++        for (height, coin) in coins {
++            if chosen.len() >= max_inputs {
++                break;
++            }
++            if let TargetValue::AtLeast(target) = target_value
++                && gathered >= u64::from(target)
++            {
++                break;
++            }
++            let Some(output) = WalletTransparentOutput::from_parts(
++                coin.output_id().into(),
++                TxOut::new(
++                    coin.value().try_into().expect("value from checked type"),
++                    coin.script().clone(),
++                ),
++                Some(height),
++                None,
++                None,
++                None,
++            ) else {
++                continue;
++            };
++            gathered = gathered.saturating_add(coin.value()); // a lying server can't overflow it
++            chosen.push(output);
++        }
++        Ok(chosen)
++    }
++
+     fn select_unspent_notes(
+         &self,
+         _account: Self::AccountId,

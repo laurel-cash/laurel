@@ -11,30 +11,32 @@ See the LICENSE file for details.
 // ui_home.tsx -- main window: sidebar with the switcher, and the open
 // account's balance card, quick actions, pools, network and privacy
 
-import { Fragment, ReactNode, useEffect, useRef, useState } from "react";
+import { Fragment, ReactNode, useEffect, useLayoutEffect, useRef, useState } from "react";
 import { AnimatePresence, motion } from "motion/react";
-import { ArrowDownLeft, ArrowUpRight, Check, ChevronRight, Clock, Eye, EyeOff, FileKey, History, House, Lock, Pause, Pencil, Plus, ScanLine, Settings, ShieldAlert, ShieldCheck, SlidersHorizontal, WifiOff, ArrowRightLeft } from "lucide-react";
+import { ArrowDownLeft, ArrowUpRight, Check, ChevronRight, Clock, Eye, EyeOff, FileKey, History, House, Lock, MapPin, Pause, Pencil, Plus, ScanLine, Settings, ShieldAlert, ShieldCheck, SlidersHorizontal, WifiOff, ArrowRightLeft } from "lucide-react";
 import type { LucideIcon } from "lucide-react";
 import { KINDS, UI_FailedWallets, UI_SaveFailed } from "./ui_wallets";
 
-import { addressKind_t, APP_VERSION, balance_t, Com_AllWallets, Com_FormatZec, Com_Split, Com_SyncState, Com_Unreachable, Com_ShownCards, commands, historyItem_t, homeCard_t, poolInfo_t, repeat_t, split_t, syncProgress_t, pool_t, Com_ShowCard, Com_PrivacyNote, Com_PoolsShown, Com_ReadPref, Com_WritePref, Com_IsBool, PREF_ALL_POOLS } from "./ui_local";
+import { accountSummary_t, addressKind_t, APP_VERSION, balance_t, Com_AllWallets, Com_CssPx, Com_FormatZec, Com_Split, Com_SyncState, Com_Unreachable, Com_ShownCards, commands, historyItem_t, homeCard_t, poolInfo_t, repeat_t, split_t, syncProgress_t, pool_t, walletSummary_t, Com_ShowCard, Com_PrivacyNote, Com_PoolsShown, Com_ReadPref, Com_WritePref, Com_IsBool, PREF_ALL_POOLS } from "./ui_local";
 import { Com_NetworkName, Com_PoolName, T } from "./ui_text";
 import { Com_List } from "./ui_locale";
-import { useNow } from "./ui_hooks";
+import { useAppSettings, useNow, useSize } from "./ui_hooks";
 import { page_t, useCurrent, useStore } from "./ui_store";
 import { SPRING, UI_Alert, UI_Amount, UI_Info, UI_Slots, UI_Spinner, UI_Tip, UI_Waiting } from "./ui_widgets";
 import { Com_SyncLabel, UI_Logo, UI_SyncDot } from "./ui_chrome";
 import { UI_BalanceChart } from "./ui_chart";
+import { UI_Usd } from "./ui_price";
 import { UI_DashboardSheet } from "./ui_dashboard";
 import { UI_MoveSheet, UI_ShieldSheet } from "./ui_shield";
 import { UI_SweepSheet } from "./ui_sweep";
 import { UI_ScanSheet } from "./ui_scan";
 import { UI_SyncSheet } from "./ui_sync";
-import { UI_History } from "./ui_history";
+import { UI_History, useTransactions } from "./ui_history";
+import { Com_WaitingCount } from "./ui_txview";
 import { UI_Toasts } from "./ui_toast";
 import { UI_MigrateSheet } from "./ui_migrate";
-import { UI_PoolBadge, UI_PoolGuide, UI_PoolSheet } from "./ui_pool";
-import { Com_DraftFrom, EMPTY_DRAFT, sendDraft_t, UI_SendSheet } from "./ui_send";
+import { UI_PoolBadge, UI_PoolGuide, UI_PoolSheet, UI_PublicAddressesSheet } from "./ui_pool";
+import { Com_DraftFrom, Com_DraftFromScan, EMPTY_DRAFT, sendDraft_t, UI_SendSheet } from "./ui_send";
 import { UI_LowSpaceAlert } from "./ui_storage";
 import { UI_Repeats, useRepeats } from "./ui_repeat";
 import LEAF_SINGLE_SRC from "./assets/leaf-single-320.webp";
@@ -43,7 +45,7 @@ import { addWalletKind_t, UI_Switcher } from "./ui_switcher";
 import { UI_Settings } from "./ui_settings";
 import { UI_FundSheet, UI_ReceiveSheet } from "./ui_receive";
 
-type sheet_t	= "none" | "receive" | "fund" | "send" | "shield" | "move" | "scan" | "sync" | "migrate" | "sweep";
+type sheet_t	= "none" | "receive" | "fund" | "send" | "shield" | "move" | "scan" | "sync" | "migrate" | "sweep" | "addresses";
 
 type navItem_t = {
 	label:		string;
@@ -63,18 +65,21 @@ const NAV: navItem_t[] = [
 
 type action_t = {
 	label:		string;
-	hint:		string;
+	hint:		() => string;		// read as drawn: some say the network's coin, unknown when this file loads
 	icon:		LucideIcon;
 	sheet:		sheet_t;
 };
 
 const ACTIONS: action_t[] = [
-	{ label: T.actions.send,	hint: T.actions.sendHint,		icon: ArrowUpRight,		sheet: "send" },
-	{ label: T.actions.receive,	hint: T.actions.receiveHint,	icon: ArrowDownLeft,	sheet: "receive" },
-	{ label: T.actions.shield,	hint: T.actions.shieldHint,		icon: ShieldCheck,		sheet: "shield" },
-	{ label: T.actions.scan,	hint: T.actions.scanHint,		icon: ScanLine,			sheet: "scan" },
-	{ label: T.actions.fund,	hint: T.actions.fundHint,		icon: Plus,				sheet: "fund" },		// on testnet, the faucet (UI_Actions)
+	{ label: T.actions.send,	hint: () => T.actions.sendHint,		icon: ArrowUpRight,		sheet: "send" },
+	{ label: T.actions.receive,	hint: () => T.actions.receiveHint,	icon: ArrowDownLeft,	sheet: "receive" },
+	{ label: T.actions.shield,	hint: () => T.actions.shieldHint,		icon: ShieldCheck,		sheet: "shield" },
+	{ label: T.actions.scan,	hint: () => T.actions.scanHint,		icon: ScanLine,			sheet: "scan" },
+	{ label: T.actions.fund,	hint: () => T.actions.fundHint,		icon: Plus,				sheet: "fund" },		// on testnet, the faucet (UI_Actions)
 ];
+
+// the repeating payments, in a build that has them (D-031): without, none, and nothing asked
+const useRepeatsHere: () => { data?: repeat_t[] } = __LAUREL_REPEAT_PAYMENTS__ ? useRepeats : () => ( {} );
 
 const TRY_MIN_MSEC		= 900;		// "Trying…" stays at least this long, so a fast failure is still seen
 const STILL_MSEC		= 2600;		// how long "Still offline" answers a try that failed
@@ -225,6 +230,7 @@ function UI_SyncStatus( props: { walletId: string; progress: syncProgress_t | un
 			</div>
 		);
 	case "connecting":
+	case "preparing":
 	case "syncing":
 		return (
 			<div className="sync-status" role="status">
@@ -234,6 +240,45 @@ function UI_SyncStatus( props: { walletId: string; progress: syncProgress_t | un
 	default:
 		return Com_Unreachable( state );
 	}
+}
+
+/*
+==================
+useStacked
+
+The one rule for the split's layout: one row per part whenever its amounts
+don't fit side by side. A width rule alone (a card under 360px) let three
+columns in a 520px card run "0.00043243 ZEC" pending into its neighbour.
+The amounts never wrap, so their widths are the same in either layout and
+the choice can't flip back and forth. The split's width comes from useSize
+(a resize renders again); the room each column takes besides its amount
+comes from the CSS that draws it (--split-col-pad, --split-rule), so the
+two can't drift. Checked after every render: an amount may have changed.
+==================
+*/
+function useStacked() {
+	const box			= useSize< HTMLDivElement >();
+	const [ on, setOn ]	= useState( false );
+
+	useLayoutEffect( () => {
+		const el = box.ref.current;
+		if ( !el || box.width === 0 ) {
+			return;
+		}
+		const pad		= Com_CssPx( el, "--split-col-pad" );
+		const rule		= Com_CssPx( el, "--split-rule" );
+		// each amount's own text, not its column: a Range spans just what it shows
+		const widths	= [ ...el.querySelectorAll( ".split-amount" ) ].map( ( a ) => {
+			const range = document.createRange();
+			range.selectNodeContents( a );
+			return range.getBoundingClientRect().width;
+		} );
+		// the first column has no left padding, each later one both sides and a rule
+		const need		= widths.reduce( ( sum, w ) => sum + w, 0 ) + pad + ( 2 * pad + rule ) * Math.max( 0, widths.length - 1 );
+		setOn( need > box.width );
+	} );
+
+	return { ref: box.ref, on };
 }
 
 /*
@@ -266,9 +311,11 @@ export function UI_Split( props: { balance: balance_t | undefined; synced: boole
 		...( split && split.pending > 0 ? [ { label: T.card.pending, icon: Clock, zats: split.pending, arriving: true } ] : [] ),
 	];
 
+	const stacked = useStacked();
+
 	return (
 		<>
-			<div className="split">
+			<div ref={stacked.ref} className={"split" + ( stacked.on ? " stacked" : "" )}>
 				{cols.map( ( c ) => (
 					<div key={c.label} className={"split-col" + ( c.arriving ? " arriving" : "" )}>
 						<div className="split-label"><c.icon aria-hidden="true" />{c.label}</div>
@@ -288,13 +335,35 @@ export function UI_Split( props: { balance: balance_t | undefined; synced: boole
 
 /*
 ==================
+UI_PendingChip
+
+On the card, while any payment still waits on the network: how many, and
+History one press away, showing just those. Nothing when none do.
+==================
+*/
+function UI_PendingChip( props: { walletId: string; account: number } ) {
+	const txs	= useTransactions( props.walletId, props.account );
+	const go	= useStore( ( s ) => s.GoHistory );
+	const n		= Com_WaitingCount( txs.data ?? [] );
+	if ( n === 0 ) {
+		return null;
+	}
+	return (
+		<button className="pending-chip" title={T.history.pendingSee} onClick={() => go( { status: "waiting" } )}>
+			<span className="tx-chip-dot" aria-hidden="true" />{T.history.pendingCount( n )}
+		</button>
+	);
+}
+
+/*
+==================
 UI_Actions
 
 The four things people come to a wallet to do, all the same shape. Ones
 not built yet still answer when pressed, with what's coming.
 ==================
 */
-function UI_Actions( props: { onSheet: ( s: sheet_t ) => void; split: split_t | undefined } ) {
+export function UI_Actions( props: { onSheet: ( s: sheet_t ) => void; split: split_t | undefined } ) {
 	const network = useStore( ( s ) => s.network );
 	const hidden = useStore( ( s ) => s.hideAmounts );
 
@@ -302,14 +371,17 @@ function UI_Actions( props: { onSheet: ( s: sheet_t ) => void; split: split_t | 
 		if ( a.sheet === "shield" && props.split && props.split.public > 0 && !hidden ) {
 			return T.actions.shieldHintSome( Com_FormatZec( props.split.public ) );
 		}
-		return a.hint;
+		if ( a.sheet === "fund" && network === "testnet" ) {
+			return T.actions.fundHintTest;
+		}
+		return a.hint();
 	};
 
 	return (
 		<section className="panel">
 			<h2 className="panel-title">{T.actions.quick}</h2>
 			<div className="actions">
-				{ACTIONS.map( ( a ) => ( { ...a, hint: a.sheet === "fund" && network === "testnet" ? T.actions.fundHintTest : a.hint } ) ).map( ( a ) => (
+				{ACTIONS.map( ( a ) => (
 					<button key={a.label} className="action" onClick={() => props.onSheet( a.sheet )}>
 						<span className="action-circle"><a.icon aria-hidden="true" /></span>
 						<span className="action-label">{a.label}</span>
@@ -362,10 +434,11 @@ this computer). Its (i) is the guide to what pools are (UI_PoolGuide).
 Each opens its toolbox (UI_PoolSheet).
 ==================
 */
-function UI_Pools( props: { balance: balance_t | undefined; canMove: boolean; canReceive: boolean; onSend: ( from: pool_t ) => void; onMigrate: () => void; onMove: () => void; onShield: () => void; onReceive: ( side: addressKind_t ) => void } ) {
+function UI_Pools( props: { walletId: string; account: number; balance: balance_t | undefined; canMove: boolean; canReceive: boolean; onSend: ( from: pool_t ) => void; onMigrate: () => void; onMove: () => void; onShield: ( from?: string ) => void; onReceive: ( side: addressKind_t ) => void } ) {
 	const [ open, setOpen ] = useState< poolInfo_t | null >( null );
 	const [ all, setAll ]	= useState( () => Com_ReadPref( PREF_ALL_POOLS, false, Com_IsBool ) );
 	const pools = Com_PoolsShown( props.balance, all );
+	const publicOk = useAppSettings().settings?.sendFromPublic === true;
 
 	function ShowAll( on: boolean ) {
 		Com_WritePref( PREF_ALL_POOLS, on );
@@ -394,10 +467,13 @@ function UI_Pools( props: { balance: balance_t | undefined; canMove: boolean; ca
 				balance={props.balance}
 				canMove={props.canMove}
 				canReceive={props.canReceive}
+				publicOk={publicOk}
+				walletId={props.walletId}
+				account={props.account}
 				onSend={( from ) => { setOpen( null ); props.onSend( from ); }}
 				onMigrate={() => { setOpen( null ); props.onMigrate(); }}
 				onMove={() => { setOpen( null ); props.onMove(); }}
-				onShield={() => { setOpen( null ); props.onShield(); }}
+				onShield={( from ) => { setOpen( null ); props.onShield( from ); }}
 				onReceive={( side ) => { setOpen( null ); props.onReceive( side ); }}
 			/>
 		</section>
@@ -460,6 +536,7 @@ function UI_NetworkPanel( props: { progress: syncProgress_t | undefined; onDetai
 	const p		= props.progress;
 	const state	= Com_SyncState( p );
 	const pct	= state === "synced" ? 100 : p?.percent ?? 0;
+	const preparing	= state === "preparing";		// no number yet: a 0% that sits reads as stuck
 
 	return (
 		<section className="panel">
@@ -479,8 +556,8 @@ function UI_NetworkPanel( props: { progress: syncProgress_t | undefined; onDetai
 				<div className="fact">
 					<dt>{T.network.progress}</dt>
 					<dd className="fact-progress">
-						<span className="meter"><span className="meter-fill" style={{ width: `${pct}%` }} /></span>
-						<span className="meter-num">{pct}%</span>
+						<span className={"meter" + ( preparing ? " preparing" : "" )}><span className="meter-fill" style={{ width: preparing ? undefined : `${pct}%` }} /></span>
+						<span className="meter-num">{preparing ? T.sync.preparing : `${pct}%`}</span>
 					</dd>
 				</div>
 			</dl>
@@ -514,7 +591,12 @@ function UI_PrivacyCard( props: { balance: balance_t | undefined; canMove: boole
 		tone	= " warn";
 		title	= T.privacy.publicTitle;
 		text	= T.privacy.public( Com_FormatZec( note.zats ) );
-		action	= <button className="btn primary" onClick={() => props.onSheet( "shield" )}><ShieldCheck aria-hidden="true" />{T.privacy.publicAction}</button>;
+		action	= (
+			<span className="privacy-actions">
+				<button className="btn primary" onClick={() => props.onSheet( "shield" )}><ShieldCheck aria-hidden="true" />{T.privacy.publicAction}</button>
+				<button className="btn" onClick={() => props.onSheet( "addresses" )}><MapPin aria-hidden="true" />{T.privacy.seeAddresses}</button>
+			</span>
+		);
 		break;
 	case "arriving":
 		tone	= " warn";
@@ -575,10 +657,192 @@ function UI_Banner( props: { icon: ReactNode; title: string; body: string; actio
 
 /*
 ==================
+UI_AccountCard
+
+The account at the top of home: its name (renamed here), its wallet, how
+sync is going, and what it holds, which the eye hides
+==================
+*/
+function UI_AccountCard( props: { wallet: walletSummary_t | undefined; account: accountSummary_t | undefined; onRename: () => void; onSync: () => void } ) {
+	const { wallet, account }	= props;
+	const hidden				= useStore( ( s ) => s.hideAmounts );
+	const toggleAmounts			= useStore( ( s ) => s.ToggleAmounts );
+
+	return (
+		<section className="card-hero">
+			<UI_Logo size={190} className="card-leaf" />
+			<div className="card-top">
+				<div className="card-who">
+					<div className="account-head">
+						<h1 className="account-name">{account?.name ?? "—"}</h1>
+						{account && (
+							<UI_Tip label={T.home.rename}>
+								<button className="icon-btn" aria-label={T.home.rename} onClick={props.onRename}>
+									<Pencil aria-hidden="true" />
+								</button>
+							</UI_Tip>
+						)}
+						{wallet && KINDS[wallet.kind].badge && <span className="pill">{KINDS[wallet.kind].badge}</span>}
+					</div>
+					<p className="card-wallet">{wallet?.name}</p>
+				</div>
+				{wallet && <UI_SyncStatus walletId={wallet.id} progress={wallet.progress} onDetails={props.onSync} />}
+			</div>
+
+			<div className="total-row">
+				<h2 className="total"><UI_Amount zats={account?.balance.total} unit /></h2>
+				<UI_Tip label={hidden ? T.actions.show : T.actions.hide}>
+					<button className="icon-btn eye" aria-label={hidden ? T.actions.show : T.actions.hide} onClick={toggleAmounts}>
+						{hidden ? <EyeOff aria-hidden="true" /> : <Eye aria-hidden="true" />}
+					</button>
+				</UI_Tip>
+			</div>
+			{__LAUREL_PRICES__ && account && <UI_Usd zats={account.balance.total} className="usd total-usd" />}{/* none without prices (D-031) */}
+			<UI_Split balance={account?.balance} synced={!!wallet?.progress?.complete} />
+			{wallet && account && <UI_PendingChip walletId={wallet.id} account={account.index} />}
+		</section>
+	);
+}
+
+/*
+==================
+UI_HomeSheets
+
+Every sheet home opens, for the account on screen; the one named in
+sheet is open. Closing any of them goes through onOpenChange.
+==================
+*/
+function UI_HomeSheets( props: {
+	wallet:			walletSummary_t;
+	account:		accountSummary_t;
+	sheet:			sheet_t;
+	receiveSide:	addressKind_t;
+	shieldFrom:		string | null;		// one public address to shield (its row in the pool), or Laurel's pick
+	draft:			sendDraft_t;
+	renaming:		boolean;
+	onSheet:		( s: sheet_t ) => void;
+	onOpenChange:	( open: boolean ) => void;
+	onDraft:		( d: sendDraft_t ) => void;
+	onRenaming:		( open: boolean ) => void;
+	onShield:		( from?: string ) => void;		// Shield, of one public address or Laurel's pick
+} ) {
+	const refresh	= useStore( ( s ) => s.Refresh );
+	const { wallet, account, sheet, onSheet } = props;
+	const close		= props.onOpenChange;
+	const offline	= Com_SyncState( wallet.progress ) === "offline";
+	const named		= `${account.name} · ${wallet.name}`;
+
+	return (
+		<>
+			<UI_ReceiveSheet open={sheet === "receive"} onOpenChange={close} side={props.receiveSide} walletId={wallet.id} account={account.index} accountName={named} onSweep={() => onSheet( "sweep" )} />
+			<UI_FundSheet open={sheet === "fund"} onOpenChange={close} onReceive={() => onSheet( "receive" )} />
+			<UI_SendSheet
+				open={sheet === "send"}
+				onOpenChange={close}
+				walletId={wallet.id}
+				account={account.index}
+				balance={account.balance}
+				offline={offline}
+				draft={props.draft}
+				onDraft={props.onDraft}
+				onScan={() => onSheet( "scan" )}
+				onShield={() => onSheet( "shield" )}
+			/>
+			<UI_ShieldSheet open={sheet === "shield"} onOpenChange={close} walletId={wallet.id} account={account.index} heldZats={account.balance.transparent.confirmed} offline={offline} address={props.shieldFrom} />
+			<UI_PublicAddressesSheet
+				open={sheet === "addresses"}
+				onOpenChange={close}
+				walletId={wallet.id}
+				account={account.index}
+				held={account.balance.transparent.confirmed}
+				arriving={account.balance.transparent.pending > 0}
+				onShield={props.onShield}
+			/>
+			<UI_MoveSheet open={sheet === "move"} onOpenChange={close} walletId={wallet.id} account={account.index} heldZats={account.balance.sapling.confirmed} offline={offline} />
+			<UI_SweepSheet open={sheet === "sweep"} onOpenChange={close} walletId={wallet.id} account={account.index} accountName={named} offline={offline} />
+			<UI_ScanSheet
+				open={sheet === "scan"}
+				onOpenChange={close}
+				onPay={( r ) => {
+					props.onDraft( Com_DraftFromScan( props.draft, r ) );
+					onSheet( "send" );
+				}}
+			/>
+			<UI_SyncSheet open={sheet === "sync"} onOpenChange={close} walletId={wallet.id} progress={wallet.progress} />
+			<UI_MigrateSheet open={sheet === "migrate"} onOpenChange={close} walletId={wallet.id} account={account.index} />
+			<UI_NameSheet
+				open={props.renaming}
+				onOpenChange={props.onRenaming}
+				title={T.sheets.renameAccountTitle}
+				initial={account.name}
+				action={T.common.save}
+				save={async ( name ) => { await commands.wRenameAccountF( wallet.id, account.index, name ); await refresh(); }}
+			/>
+		</>
+	);
+}
+
+/*
+==================
+UI_HomePage
+
+The home page: what the wallet needs from the person first (banners),
+then the account and its actions, and the side cards the dashboard
+shows (card). Changing account slides it across.
+==================
+*/
+function UI_HomePage( props: {
+	wallet:			walletSummary_t | undefined;
+	account:		accountSummary_t | undefined;
+	card:			( c: homeCard_t ) => ReactNode;
+	onSheet:		( s: sheet_t ) => void;
+	onRename:		() => void;
+	onCustomize:	() => void;
+	onBackup:		( walletId: string ) => void;
+} ) {
+	const { wallet, account, onSheet } = props;
+	const home		= useStore( ( s ) => s.home );
+	const repeatDue	= useRepeatsHere().data?.some( ( r ) => r.due ) ?? false;
+
+	return (
+		<div className="home">
+			<UI_LowSpaceAlert />
+			{/* a phrase nobody backed up is one broken disk from gone */}
+			{wallet?.kind === "seed" && !wallet.backedUp && (
+				<UI_Banner icon={<ShieldAlert aria-hidden="true" />} title={T.backup.bannerTitle} body={T.backup.banner} action={T.backup.bannerAction} onAction={() => props.onBackup( wallet.id )} />
+			)}
+			{/* zcashd keys hold money, but receive nothing: it's meant to move on */}
+			{wallet?.kind === "key" && account && account.balance.total > 0 && (
+				<UI_Banner icon={<FileKey aria-hidden="true" />} title={T.home.keyBannerTitle} body={T.home.keyBanner} action={T.home.keyBannerAction} onAction={() => onSheet( "send" )} />
+			)}
+			<AnimatePresence mode="wait" initial={false}>
+				<motion.div key={`${wallet?.id}:${account?.index}`} className="home-grid" initial={{ opacity: 0, x: 12 }} animate={{ opacity: 1, x: 0 }} exit={{ opacity: 0, x: -12 }} transition={SPRING}>
+					<div className="home-main">
+						<UI_AccountCard wallet={wallet} account={account} onRename={props.onRename} onSync={() => onSheet( "sync" )} />
+						{wallet && <UI_Actions onSheet={onSheet} split={account ? Com_Split( account.balance ) : undefined} />}
+						{wallet && account && home.chart && <UI_BalanceChart walletId={wallet.id} account={account.index} total={account.balance.total} progress={wallet.progress} />}
+					</div>
+
+					<aside className="home-side">
+						{Com_ShownCards( home, repeatDue ? [ "repeats" ] : [] ).map( ( c ) => <Fragment key={c}>{props.card( c )}</Fragment> )}
+						<button className="link home-customize" onClick={props.onCustomize}>
+							<SlidersHorizontal aria-hidden="true" /> {T.dashboard.customize}
+						</button>
+					</aside>
+				</motion.div>
+			</AnimatePresence>
+		</div>
+	);
+}
+
+/*
+==================
 UI_Home
 
-Shows the account the switcher points at. Changing account slides the
-numbers across, so it is obvious the view changed.
+Shows the account the switcher points at, on the page chosen, and holds
+which sheet is open and what Send is filled in with: each way into Send
+(a pool, a repeat, a payment again, everything to an address) says it
+here.
 ==================
 */
 export function UI_Home( props: { onAddWallet: ( kind: addWalletKind_t ) => void; onBackup: ( walletId: string ) => void } ) {
@@ -586,134 +850,68 @@ export function UI_Home( props: { onAddWallet: ( kind: addWalletKind_t ) => void
 	const loadError				= useStore( ( s ) => s.loadError );
 	const failed				= useStore( ( s ) => s.failed );
 	const refresh				= useStore( ( s ) => s.Refresh );
-	const hidden				= useStore( ( s ) => s.hideAmounts );
-	const toggleAmounts			= useStore( ( s ) => s.ToggleAmounts );
 	const select				= useStore( ( s ) => s.Select );
+	const home					= useStore( ( s ) => s.home );
+	const page					= useStore( ( s ) => s.page );
+	const setPage				= useStore( ( s ) => s.Go );
 
 	const [ renaming, setRenaming ]	= useState( false );
-	const page		= useStore( ( s ) => s.page );
-	const setPage	= useStore( ( s ) => s.Go );
 	const [ sheet, setSheet ]		= useState< sheet_t >( "none" );
 	const [ draft, setDraft ]		= useState< sendDraft_t >( EMPTY_DRAFT );		// survives a trip to Scan and back
-
-	const home						= useStore( ( s ) => s.home );
-	const repeatDue					= useRepeats().data?.some( ( r ) => r.due ) ?? false;
 	const [ customizing, setCustomizing ] = useState( false );
-
 	const [ receiveSide, setReceiveSide ] = useState< addressKind_t >( "private" );		// a pool opens Receive on its own side
+	const [ shieldFrom, setShieldFrom ] = useState< string | null >( null );		// a public address's own Shield, in its pool
 
-	const key = `${wallet?.id}:${account?.index}`;
-	// closed, every sheet leaves the next Receive on the private side, whichever way it opens
+	// closed, every sheet leaves the next Receive on the private side and the
+	// next Shield to Laurel's pick, whichever way it opens
 	const close = ( open: boolean ) => {
 		if ( !open ) {
 			setSheet( "none" );
 			setReceiveSide( "private" );
+			setShieldFrom( null );
 		}
 	};
 
 	// each side card, by its name in the dashboard's layout
 	function Card( c: homeCard_t ): ReactNode {
 		switch ( c ) {
-		case "repeats":	return <UI_Repeats onPay={PayRepeat} />;
+		case "repeats":	return __LAUREL_REPEAT_PAYMENTS__ ? <UI_Repeats onPay={PayRepeat} /> : null;		// never shown without (Com_ShownCards)
 		case "wallets":	return <UI_AllWallets />;
 		case "network":	return wallet && <UI_NetworkPanel progress={wallet.progress} onDetails={() => setSheet( "sync" )} />;
-		case "pools":	return <UI_Pools balance={account?.balance} canMove={wallet?.can.moveWithin ?? false} canReceive={wallet?.can.receive ?? false} onSend={SendFrom} onMigrate={() => setSheet( "migrate" )} onMove={() => setSheet( "move" )} onShield={() => setSheet( "shield" )} onReceive={( side ) => { setReceiveSide( side ); setSheet( "receive" ); }} />;
+		case "pools":	return <UI_Pools walletId={wallet?.id ?? ""} account={account?.index ?? 0} balance={account?.balance} canMove={wallet?.can.moveWithin ?? false} canReceive={wallet?.can.receive ?? false} onSend={SendFrom} onMigrate={() => setSheet( "migrate" )} onMove={() => setSheet( "move" )} onShield={( from ) => { setShieldFrom( from ?? null ); setSheet( "shield" ); }} onReceive={( side ) => { setReceiveSide( side ); setSheet( "receive" ); }} />;
 		case "privacy":	return <UI_PrivacyCard balance={account?.balance} canMove={wallet?.can.moveWithin ?? false} poolsShown={!home.hidden.includes( "pools" )} onSheet={setSheet} />;
 		default:		return Com_Unreachable( c );
 		}
 	}
 
-	// everything an account holds, to an address (moving out of a wallet): that
-	// account becomes the current one, and Send opens with Max, to be reviewed
-	// a repeating payment that's due: its account, and Send filled in, to be reviewed
+	// Send, filled in, to be reviewed
+	function Send( d: sendDraft_t ) {
+		setDraft( d );
+		setSheet( "send" );
+	}
+
+	// a repeating payment that's due: its account, and Send filled in
 	function PayRepeat( r: repeat_t ) {
 		select( { walletId: r.walletId, account: r.account } );
-		setDraft( { ...EMPTY_DRAFT, to: r.to, amount: Com_FormatZec( r.zats ), memo: r.memo ?? "", toLabel: r.label, repeatId: r.id } );
-		setSheet( "send" );
+		Send( { ...EMPTY_DRAFT, to: r.to, amount: Com_FormatZec( r.zats ), memo: r.memo ?? "", toLabel: r.label, repeatId: r.id } );
 	}
 
+	// everything an account holds, to an address (moving out of a wallet): that
+	// account becomes the current one, and Send opens with Max
 	function SendAll( walletId: string, index: number, to: string ) {
 		select( { walletId: walletId, account: index } );
-		setDraft( { ...EMPTY_DRAFT, to: to, max: true } );
-		setSheet( "send" );
+		Send( { ...EMPTY_DRAFT, to: to, max: true } );
 	}
 
-	// a payment that didn't go through, as a new one to review: same person,
-	// amount and memo, and a fresh quote (the fee and coins of today)
+	// a payment that didn't go through, as a new one: same person, amount and
+	// memo, and a fresh quote (the fee and coins of today)
 	function SendAgain( it: historyItem_t ) {
-		setDraft( { ...EMPTY_DRAFT, to: it.counterparty ?? "", amount: Com_FormatZec( it.amount ), memo: it.memo ?? "" } );
-		setSheet( "send" );
+		Send( { ...EMPTY_DRAFT, to: it.counterparty ?? "", amount: Com_FormatZec( it.amount ), memo: it.memo ?? "" } );
 	}
 
 	// a pool's own Send (UI_PoolSheet): Send with that pool chosen, so Max and the review use only it
 	function SendFrom( from: pool_t ) {
-		setDraft( Com_DraftFrom( from ) );
-		setSheet( "send" );
-	}
-
-	let sheets = null;
-	if ( wallet && account ) {
-		sheets = (
-			<>
-				<UI_ReceiveSheet open={sheet === "receive"} onOpenChange={close} side={receiveSide} walletId={wallet.id} account={account.index} accountName={`${account.name} · ${wallet.name}`} onSweep={() => setSheet( "sweep" )} />
-				<UI_FundSheet open={sheet === "fund"} onOpenChange={close} onReceive={() => setSheet( "receive" )} />
-				<UI_SendSheet
-					open={sheet === "send"}
-					onOpenChange={close}
-					walletId={wallet.id}
-					account={account.index}
-					balance={account.balance}
-					offline={Com_SyncState( wallet.progress ) === "offline"}
-					draft={draft}
-					onDraft={setDraft}
-					onScan={() => setSheet( "scan" )}
-					onShield={() => setSheet( "shield" )}
-				/>
-				<UI_ShieldSheet
-					open={sheet === "shield"}
-					onOpenChange={close}
-					walletId={wallet.id}
-					account={account.index}
-					heldZats={account.balance.transparent.confirmed}
-					offline={Com_SyncState( wallet.progress ) === "offline"}
-				/>
-				<UI_MoveSheet
-					open={sheet === "move"}
-					onOpenChange={close}
-					walletId={wallet.id}
-					account={account.index}
-					heldZats={account.balance.sapling.confirmed}
-					offline={Com_SyncState( wallet.progress ) === "offline"}
-				/>
-				<UI_SweepSheet
-					open={sheet === "sweep"}
-					onOpenChange={close}
-					walletId={wallet.id}
-					account={account.index}
-					accountName={`${account.name} · ${wallet.name}`}
-					offline={Com_SyncState( wallet.progress ) === "offline"}
-				/>
-				<UI_ScanSheet
-					open={sheet === "scan"}
-					onOpenChange={close}
-					onPay={( r ) => {
-						// the request's memo travels with the payment; its message is for the payer to read, not to send back
-						setDraft( { ...draft, to: r.address, amount: r.amount != null ? Com_FormatZec( r.amount ) : draft.amount, memo: r.memo ?? draft.memo, also: r.also, max: r.also.length ? false : draft.max } );
-						setSheet( "send" );
-					}}
-				/>
-				<UI_SyncSheet open={sheet === "sync"} onOpenChange={close} walletId={wallet.id} progress={wallet.progress} />
-				<UI_MigrateSheet open={sheet === "migrate"} onOpenChange={close} walletId={wallet.id} account={account.index} />
-				<UI_NameSheet
-					open={renaming}
-					onOpenChange={setRenaming}
-					title={T.sheets.renameAccountTitle}
-					initial={account.name}
-					action={T.common.save}
-					save={async ( name ) => { await commands.wRenameAccountF( wallet.id, account.index, name ); await refresh(); }}
-				/>
-			</>
-		);
+		Send( Com_DraftFrom( from ) );
 	}
 
 	let body;
@@ -727,65 +925,7 @@ export function UI_Home( props: { onAddWallet: ( kind: addWalletKind_t ) => void
 			: null;
 		break;
 	case "home":
-		body = (
-			<div className="home">
-				<UI_LowSpaceAlert />
-				{/* a phrase nobody backed up is one broken disk from gone */}
-				{wallet?.kind === "seed" && !wallet.backedUp && (
-					<UI_Banner icon={<ShieldAlert aria-hidden="true" />} title={T.backup.bannerTitle} body={T.backup.banner} action={T.backup.bannerAction} onAction={() => props.onBackup( wallet.id )} />
-				)}
-				{/* zcashd keys hold money, but receive nothing: it's meant to move on */}
-				{wallet?.kind === "key" && account && account.balance.total > 0 && (
-					<UI_Banner icon={<FileKey aria-hidden="true" />} title={T.home.keyBannerTitle} body={T.home.keyBanner} action={T.home.keyBannerAction} onAction={() => setSheet( "send" )} />
-				)}
-				<AnimatePresence mode="wait" initial={false}>
-					<motion.div key={key} className="home-grid" initial={{ opacity: 0, x: 12 }} animate={{ opacity: 1, x: 0 }} exit={{ opacity: 0, x: -12 }} transition={SPRING}>
-						<div className="home-main">
-							<section className="card-hero">
-								<UI_Logo size={190} className="card-leaf" />
-								<div className="card-top">
-									<div className="card-who">
-										<div className="account-head">
-											<h1 className="account-name">{account?.name ?? "—"}</h1>
-											{account && (
-												<UI_Tip label={T.home.rename}>
-													<button className="icon-btn" aria-label={T.home.rename} onClick={() => setRenaming( true )}>
-														<Pencil aria-hidden="true" />
-													</button>
-												</UI_Tip>
-											)}
-											{wallet && KINDS[wallet.kind].badge && <span className="pill">{KINDS[wallet.kind].badge}</span>}
-										</div>
-										<p className="card-wallet">{wallet?.name}</p>
-									</div>
-									{wallet && <UI_SyncStatus walletId={wallet.id} progress={wallet.progress} onDetails={() => setSheet( "sync" )} />}
-								</div>
-
-								<div className="total-row">
-									<h2 className="total"><UI_Amount zats={account?.balance.total} unit /></h2>
-									<UI_Tip label={hidden ? T.actions.show : T.actions.hide}>
-										<button className="icon-btn eye" aria-label={hidden ? T.actions.show : T.actions.hide} onClick={toggleAmounts}>
-											{hidden ? <EyeOff aria-hidden="true" /> : <Eye aria-hidden="true" />}
-										</button>
-									</UI_Tip>
-								</div>
-								<UI_Split balance={account?.balance} synced={!!wallet?.progress?.complete} />
-							</section>
-
-							{wallet && <UI_Actions onSheet={setSheet} split={account ? Com_Split( account.balance ) : undefined} />}
-							{wallet && account && home.chart && <UI_BalanceChart walletId={wallet.id} account={account.index} total={account.balance.total} progress={wallet.progress} />}
-						</div>
-
-						<aside className="home-side">
-							{Com_ShownCards( home, repeatDue ? [ "repeats" ] : [] ).map( ( c ) => <Fragment key={c}>{Card( c )}</Fragment> )}
-							<button className="link home-customize" onClick={() => setCustomizing( true )}>
-								<SlidersHorizontal aria-hidden="true" /> {T.dashboard.customize}
-							</button>
-						</aside>
-					</motion.div>
-				</AnimatePresence>
-			</div>
-		);
+		body = <UI_HomePage wallet={wallet} account={account} card={Card} onSheet={setSheet} onRename={() => setRenaming( true )} onCustomize={() => setCustomizing( true )} onBackup={props.onBackup} />;
 		break;
 	default:
 		body = Com_Unreachable( page );
@@ -803,7 +943,13 @@ export function UI_Home( props: { onAddWallet: ( kind: addWalletKind_t ) => void
 			</main>
 			<UI_DashboardSheet open={customizing} onOpenChange={setCustomizing} />
 
-			{sheets}
+			{wallet && account && (
+				<UI_HomeSheets
+					wallet={wallet} account={account} sheet={sheet} receiveSide={receiveSide} shieldFrom={shieldFrom} draft={draft} renaming={renaming}
+					onSheet={setSheet} onOpenChange={close} onDraft={setDraft} onRenaming={setRenaming}
+					onShield={( from ) => { setShieldFrom( from ?? null ); setSheet( "shield" ); }}
+				/>
+			)}
 			<UI_Toasts onOpen={( p ) => { select( { walletId: p.walletId, account: p.account } ); setPage( "history" ); }} />
 		</div>
 	);

@@ -1,6 +1,9 @@
 # Roadmap
 
-Status as of 2026-09-26.
+Written 2026-09-26. Since then: 0.2.0 went to mainnet on Android (`v1`, D-033);
+Windows follows through the Microsoft Store, then iPhone (DECISIONS.md,
+2026-11-17). The lists below are as written in September, and what's left of
+"Before mainnet" is still open.
 
 ## Done
 

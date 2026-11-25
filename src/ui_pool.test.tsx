@@ -10,16 +10,34 @@ See the LICENSE file for details.
 */
 // ui_pool.test.tsx -- a pool, opened: its share said honestly, everything
 // that can be done with it (send from it, receive into it, its own step),
-// the reason where something can't, and its lines in History
+// the reason where something can't, and its lines in History. The public
+// pool lists its addresses, each with what it holds and its own Shield
 
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { cleanup, fireEvent, render, screen } from "@testing-library/react";
+import { QueryClientProvider } from "@tanstack/react-query";
 
 import { T } from "./ui_text";
-import { Com_AddressPool, Com_PoolAddress, Com_PoolsShown, POOLS, poolInfo_t } from "./ui_local";
+import { Com_Abbrev, Com_AddressPool, Com_PoolAddress, Com_PoolsShown, POOLS, poolInfo_t } from "./ui_local";
 import { Com_PoolActions, Com_PoolPrimary, Com_PoolShare, UI_PoolSheet } from "./ui_pool";
 import { useStore } from "./ui_store";
+import { QUERY } from "./ui_query";
 import { Test_Balance } from "./test_engine";
+import type { publicHeld_t } from "./bindings";
+
+// the engine's answer for an account's public addresses
+const engine = vi.hoisted( () => ( { held: [] as publicHeld_t[], asked: 0 } ) );
+
+vi.mock( "./bindings", async ( original ) => {
+	const real = await original< typeof import( "./bindings" ) >();
+	return { ...real, commands: { ...real.commands, wPublicAddressesF: async () => { engine.asked++; return engine.held; } } };
+} );
+
+beforeEach( () => {
+	QUERY.clear();
+	engine.held = [ { address: "t1aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", zats: 0.05 * 100_000_000 } ];
+	engine.asked = 0;
+} );
 
 afterEach( cleanup );
 
@@ -33,7 +51,7 @@ function Acts( patch: { canMove?: boolean; canReceive?: boolean } = {} ) {
 
 function Open( p: poolInfo_t["pool"], balance = BALANCE, patch: { canMove?: boolean; canReceive?: boolean } = {} ) {
 	const acts = Acts( patch );
-	render( <UI_PoolSheet open onOpenChange={() => {}} info={pool( p )} balance={balance} {...acts} /> );
+	render( <QueryClientProvider client={QUERY}><UI_PoolSheet open onOpenChange={() => {}} info={pool( p )} balance={balance} walletId="w" account={0} {...acts} /></QueryClientProvider> );
 	return acts;
 }
 
@@ -51,6 +69,13 @@ describe( "a pool, opened", () => {
 		expect( ready( "sapling", Z ) ).toEqual( [ "send", "receive", "move", "history" ] );
 		expect( ready( "orchard", Z ) ).toEqual( [ "migrate", "history" ] );
 		expect( ready( "transparent", Z ) ).toEqual( [ "shield", "receive", "history" ] );
+	} );
+
+	// Send From Public Money on: public money can be sent from its own page, and Shield stays the lit tile
+	it( "lets public money be sent when the setting is on, still urging Shield", () => {
+		const on = Com_PoolActions( "transparent", Z, true, true, true );
+		expect( on.filter( ( a ) => a.why === null ).map( ( a ) => a.act ) ).toEqual( [ "shield", "send", "receive", "history" ] );
+		expect( Com_PoolPrimary( "transparent", on ) ).toBe( "shield" );
 	} );
 
 	// the lit tile takes money somewhere good: never an invitation into Sapling or the public pool
@@ -135,9 +160,60 @@ describe( "a pool, opened", () => {
 		Open( "orchard" );
 		fireEvent.click( screen.getByRole( "button", { name: new RegExp( T.pools.history ) } ) );
 		expect( useStore.getState().page ).toBe( "history" );
-		expect( useStore.getState().historyPools ).toEqual( [ "orchard" ] );
+		expect( useStore.getState().historyStart ).toEqual( { pools: [ "orchard" ] } );
 
 		useStore.getState().Go( "home" );		// anywhere else opens History unfiltered
-		expect( useStore.getState().historyPools ).toEqual( [] );
+		expect( useStore.getState().historyStart ).toEqual( {} );
+	} );
+} );
+
+describe( "the public pool's addresses", () => {
+	const ONE = "t1aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
+	const TWO = "t1bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb";
+	const Row = ( address: string ) => screen.getByRole( "button", { name: new RegExp( Com_Abbrev( address, 8 ).replace( "…", "." ) ) } );
+
+	// the pool says only how many; the list is a step away, and one address has no Shield of its own
+	it( "says how many addresses, and lists them a step away", async () => {
+		Open( "transparent" );
+		fireEvent.click( await screen.findByRole( "button", { name: new RegExp( T.pools.addresses.spread( 1 ) ) } ) );
+		expect( screen.getByText( T.pools.addresses.one ) ).toBeTruthy();
+		fireEvent.click( Row( engine.held[0].address ) );
+		expect( document.querySelector( ".public-row-full" )?.textContent ).toBe( engine.held[0].address );		// opened: the whole address
+		expect( screen.queryByRole( "button", { name: new RegExp( T.pools.addresses.shieldOne ) } ) ).toBeNull();
+		fireEvent.click( screen.getAllByRole( "button", { name: new RegExp( T.pools.addresses.back ) } )[0] );
+		expect( screen.getByText( T.pools.about.transparent ) ).toBeTruthy();		// back to the pool
+	} );
+
+	// several: an opened row shields that address alone; the panel's Shield It is Laurel's pick
+	it( "shields one chosen address, or lets Laurel pick", async () => {
+		engine.held = [ { address: ONE, zats: 0.03 * Z }, { address: TWO, zats: 0.02 * Z } ];
+		const acts = Open( "transparent" );
+		fireEvent.click( await screen.findByRole( "button", { name: new RegExp( T.pools.addresses.spread( 2 ) ) } ) );
+		fireEvent.click( Row( TWO ) );
+		fireEvent.click( screen.getByRole( "button", { name: new RegExp( T.pools.addresses.shieldOne ) } ) );
+		expect( acts.onShield ).toHaveBeenCalledWith( TWO );
+		fireEvent.click( screen.getByRole( "button", { name: new RegExp( T.pools.shield ) } ) );
+		expect( acts.onShield ).toHaveBeenLastCalledWith();
+	} );
+
+	// many: the largest few, all on asking, and a search
+	it( "shows the largest few of many, all on asking, and finds one", async () => {
+		engine.held = Array.from( { length: 50 }, ( _, i ) => ( { address: `t1${String( i ).padStart( 2, "0" )}${"c".repeat( 31 )}`, zats: ( 50 - i ) * 10_000 } ) );
+		Open( "transparent" );
+		fireEvent.click( await screen.findByRole( "button", { name: new RegExp( T.pools.addresses.spread( 50 ) ) } ) );
+		expect( screen.getAllByRole( "button", { expanded: false } ) ).toHaveLength( 5 );
+		fireEvent.change( screen.getByLabelText( T.pools.addresses.find ), { target: { value: "t142" } } );
+		expect( screen.getAllByRole( "button", { expanded: false } ) ).toHaveLength( 1 );
+		fireEvent.change( screen.getByLabelText( T.pools.addresses.find ), { target: { value: "" } } );
+		fireEvent.click( screen.getByRole( "button", { name: T.pools.addresses.showAll( 50 ) } ) );
+		expect( screen.getAllByRole( "button", { expanded: false } ) ).toHaveLength( 50 );
+	} );
+
+	// an empty public pool, or a private one, asks the engine nothing
+	it( "isn't shown, and asks nothing, where there's no public money", () => {
+		Open( "transparent", Test_Balance( { ironwood: { confirmed: Z } } ) );
+		Open( "ironwood" );
+		expect( screen.queryByText( T.pools.addresses.spread( 1 ) ) ).toBeNull();
+		expect( engine.asked ).toBe( 0 );
 	} );
 } );

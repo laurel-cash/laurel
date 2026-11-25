@@ -17,14 +17,15 @@ See the LICENSE file for details.
 
 import { ReactNode, useEffect, useLayoutEffect, useRef, useState } from "react";
 import { AnimatePresence, motion } from "motion/react";
-import { Check, CircleAlert, Copy as CopyIcon, Info, Lightbulb, TriangleAlert } from "lucide-react";
+import { Check, CircleAlert, Copy as CopyIcon, Info, Lightbulb, TriangleAlert, type LucideIcon } from "lucide-react";
 import * as Tooltip from "@radix-ui/react-tooltip";
 import * as Popover from "@radix-ui/react-popover";
 import * as Dialog from "@radix-ui/react-dialog";
 import { Com_ErrorOf, Com_FormatZec, errorInfo_t } from "./ui_local";
 import { T } from "./ui_text";
 import { useStore } from "./ui_store";
-import { useAction } from "./ui_hooks";
+import { useAction, useAppSettings } from "./ui_hooks";
+import type { appSettings_t } from "./bindings";
 
 const COPIED_MSEC	= 1600;		// how long "Copied" shows
 const SPINNER_BARS	= 12;
@@ -133,6 +134,33 @@ export function UI_Alert( props: {
 
 /*
 ==================
+UI_Callout
+
+A line to read before going on, in a tinted box: a warning (something
+to weigh) or news that isn't a problem. Its icon is the kind's unless
+one is named; null has none. An action, when there is one, sits after
+the words.
+==================
+*/
+export function UI_Callout( props: {
+	kind:		"warn" | "info";
+	icon?:		LucideIcon | null;
+	action?:	ReactNode;
+	className?:	string;
+	children:	ReactNode;
+} ) {
+	const Icon = props.icon === undefined ? ( props.kind === "warn" ? TriangleAlert : Info ) : props.icon;
+	return (
+		<div className={props.kind + "-note" + ( props.className ? " " + props.className : "" )}>
+			{Icon && <Icon aria-hidden="true" />}
+			<span>{props.children}</span>
+			{props.action}
+		</div>
+	);
+}
+
+/*
+==================
 UI_Working
 
 What is happening while a payment is built and sent, where its details
@@ -220,23 +248,93 @@ export function UI_Switch( props: { checked: boolean; onChange: ( on: boolean ) 
 
 /*
 ==================
+UI_SettingSwitch
+
+One on/off app setting as its own section: an icon, what it is, what it
+does, and the switch, saved as it's flipped (S_Set). Nothing until the
+settings are read.
+==================
+*/
+type switchSetting_t = { [K in keyof appSettings_t]: appSettings_t[K] extends boolean ? K : never }[keyof appSettings_t];
+
+export function UI_SettingSwitch( props: { field: switchSetting_t; icon: ReactNode; label: string; hint: string; title?: string } ) {
+	const { settings, save } = useAppSettings();
+	if ( !settings ) {
+		return null;
+	}
+	return (
+		<section className="settings-section">
+			{props.title && <h2 className="section-title">{props.title}</h2>}
+			<ul className="pool-list settings-list">
+				<li className="set-row">
+					<span className="set-icon">{props.icon}</span>
+					<span className="set-text">
+						<span className="set-label">{props.label}</span>
+						<span className="set-sub">{props.hint}</span>
+					</span>
+					<span className="set-actions">
+						<UI_Switch label={props.label} checked={settings[props.field]} busy={save.busy} onChange={( on ) => { save.run( { [props.field]: on } ); }} />
+					</span>
+				</li>
+			</ul>
+			{save.error && <UI_Alert title={T.common.cantSaveSetting} message={save.error} />}
+		</section>
+	);
+}
+
+/*
+==================
+UI_RoundAction
+
+One of a row of actions under what they act on: a round icon over a short
+label. main: the one most come for, in the accent; done: it just worked.
+==================
+*/
+export function UI_RoundAction( props: { icon: ReactNode; label: string; onClick: () => void; title?: string; main?: boolean; done?: boolean } ) {
+	return (
+		<button className={"round-action" + ( props.main ? " main" : "" ) + ( props.done ? " done" : "" )} title={props.title} onClick={props.onClick}>
+			<span className="round-action-icon">{props.icon}</span>
+			<span className="round-action-label">{props.label}</span>
+		</button>
+	);
+}
+
+/*
+==================
 UI_CopyButton
 
 Copies, and says so for a moment. The one place Laurel writes to the
 clipboard (scripts/check_owners.mjs). quiet: a link, for inside an alert.
 ==================
 */
-export function UI_CopyButton( props: { text: string; label?: string; quiet?: boolean } ) {
+export function UI_CopyButton( props: { text: string; label?: string; quiet?: boolean; icon?: boolean; tile?: boolean } ) {
 	const [ copied, setCopied ] = useState( false );
 
+	// a refused clipboard (no focus, no permission) says nothing rather than "Copied"
 	async function Copy() {
-		await navigator.clipboard.writeText( props.text );
+		try {
+			await navigator.clipboard.writeText( props.text );
+		} catch ( e ) {
+			console.error( "clipboard", e );
+			return;
+		}
 		setCopied( true );
 		setTimeout( () => setCopied( false ), COPIED_MSEC );
 	}
 
 	if ( props.quiet ) {
 		return <button className="link quiet" onClick={Copy}>{copied ? T.common.copied : props.label ?? T.common.copy}</button>;
+	}
+	if ( props.tile ) {		// one of a row of actions (UI_RoundAction)
+		return <UI_RoundAction icon={copied ? <Check aria-hidden="true" /> : <CopyIcon aria-hidden="true" />} label={copied ? T.common.copied : props.label ?? T.common.copy} onClick={() => void Copy()} done={copied} />;
+	}
+	if ( props.icon ) {		// a row's own, beside what it copies: the label is its name and its tip
+		const label = props.label ?? T.common.copy;
+		return (
+			<button className={"icon-btn round" + ( copied ? " done" : "" )} aria-label={label} title={copied ? T.common.copied : label} onClick={Copy}>
+				{copied ? <Check aria-hidden="true" /> : <CopyIcon aria-hidden="true" />}
+			</button>
+		);
 	}
 	return (
 		<button className="btn primary" onClick={Copy}>

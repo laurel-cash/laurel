@@ -190,13 +190,25 @@ export function Com_Ticks( max: number, count: number ): number[] {
 ==================
 Com_AxisZec
 
-Amounts on the axis: short, never more digits than they need
+Amounts on the axis: as many decimals as the step between lines needs,
+and at least two, so no two lines read alike (cut to four figures, steps
+of 0.0005 once read 0.000, 0.001, 0.001). Whole hundreds drop them. The
+mark is the language's own (Com_FormatZec).
 ==================
 */
-function Com_AxisZec( zats: number ): string {
-	const s = Com_FormatZec( zats );
-	const [ whole, frac = "" ] = s.split( "." );
-	return whole.length >= 3 ? whole : `${whole}.${frac.slice( 0, 4 - whole.length ).padEnd( 2, "0" )}`;
+export function Com_AxisZec( zats: number, step: number ): string {
+	const s		= Com_FormatZec( zats );
+	const mark	= s.search( /\D/ );
+	const whole	= s.slice( 0, mark );
+	let need = 0;		// the step is a whole number of 10^(8 - need) zats
+	while ( need < 8 && step % 10 ** ( 8 - need ) !== 0 ) {
+		need++;
+	}
+	if ( whole.length >= 3 && need === 0 ) {
+		return whole;
+	}
+	const digits = Math.max( 2, need );
+	return s.slice( 0, mark + 1 ) + s.slice( mark + 1 ).padEnd( digits, "0" ).slice( 0, digits );
 }
 
 /*
@@ -265,7 +277,7 @@ function UI_Plot( props: { plot: plot_t; width: number; height: number; hidden: 
 				{grid.map( ( z ) => (
 					<g key={z}>
 						<line className="chart-grid" x1={PAD_LEFT} x2={PAD_LEFT + w} y1={Y( z )} y2={Y( z )} />
-						{!props.hidden && <text className="chart-axis" x={PAD_LEFT - 8} y={Y( z ) + 4} textAnchor="end">{Com_AxisZec( z )}</text>}
+						{!props.hidden && <text className="chart-axis" x={PAD_LEFT - 8} y={Y( z ) + 4} textAnchor="end">{Com_AxisZec( z, grid[0] )}</text>}
 					</g>
 				) )}
 				<line className="chart-base" x1={PAD_LEFT} x2={PAD_LEFT + w} y1={Y( 0 )} y2={Y( 0 )} />
@@ -353,7 +365,7 @@ export function UI_BalanceChart( props: { walletId: string; account: number; tot
 		body = width > 0 && <UI_Plot plot={plot} width={width} height={Math.max( MIN_HEIGHT, height )} hidden={hidden} split={split} />;
 	}
 
-	if ( mode === "price" || mode === "value" ) {
+	if ( __LAUREL_PRICES__ && ( mode === "price" || mode === "value" ) ) {
 		const of: dollars_t = mode === "price" ? { kind: "price" } : { kind: "value", walletId: props.walletId, account: props.account };
 		body = width > 0 && <UI_PriceView of={of} range={priceRange} width={width} height={Math.max( MIN_HEIGHT, height )} />;
 	}
@@ -362,7 +374,7 @@ export function UI_BalanceChart( props: { walletId: string; account: number; tot
 		<section className="panel chart">
 			<div className="chart-head">
 				<div>
-					<UI_Segmented small id="chart-mode" value={mode} onChange={setMode} options={Com_Options( [ "balance", "value", "price" ] as const, T.chart.modes )} />
+					{__LAUREL_PRICES__ && <UI_Segmented small id="chart-mode" value={mode} onChange={setMode} options={Com_Options( [ "balance", "value", "price" ] as const, T.chart.modes )} />}{/* a build without prices has the balance alone (D-031) */}
 					{mode === "balance" && state !== "synced" && <p className="chart-note">{T.history.syncing}</p>}
 				</div>
 				{mode === "balance" && plot && (
@@ -373,7 +385,7 @@ export function UI_BalanceChart( props: { walletId: string; account: number; tot
 						<UI_Segmented small id="chart-range" value={range} onChange={setRange} options={Com_Options( [ "week", "month", "year", "all" ] as const, T.chart.ranges )} />
 					</div>
 				)}
-				{mode !== "balance" && settingsOn && <UI_Segmented small id="price-range" value={priceRange} onChange={setPriceRange} options={PRICE_RANGES} />}
+				{__LAUREL_PRICES__ && mode !== "balance" && settingsOn && <UI_Segmented small id="price-range" value={priceRange} onChange={setPriceRange} options={PRICE_RANGES} />}
 			</div>
 			<div className="chart-body" ref={ref}>{body}</div>
 		</section>

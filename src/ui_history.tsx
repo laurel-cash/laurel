@@ -15,19 +15,19 @@ See the LICENSE file for details.
 // lines by day, filters them, and shows one in detail.
 
 import { useEffect, useMemo, useState } from "react";
-import { ArrowDownLeft, ArrowLeftRight, ArrowUpRight, Calendar, CircleX, Clock, Download, History, List, Search, SearchX, ShieldCheck, SlidersHorizontal, TriangleAlert, X } from "lucide-react";
+import { ArrowDownLeft, Calendar, CircleX, Clock, Download, History, List, Search, SearchX, SlidersHorizontal, X } from "lucide-react";
 import type { LucideIcon } from "lucide-react";
 
-import { blockEra_t, Com_Abbrev, Com_FormatDate, Com_FormatZec, Com_MemoAsksForSecrets, Com_Options, Com_SyncState, Com_Unreachable, commands, historyItem_t, pool_t, POOLS, syncProgress_t, txCategory_t, txKind_t, txState_t } from "./ui_local";
+import { Com_Abbrev, Com_FormatDate, Com_FormatZec, Com_Options, Com_SyncState, Com_Unreachable, commands, historyItem_t, pool_t, POOLS, syncProgress_t, txCategory_t } from "./ui_local";
 import { useStore } from "./ui_store";
 import { Com_PoolName, T } from "./ui_text";
 import { Com_List } from "./ui_locale";
 import { useQuery } from "@tanstack/react-query";
+import { Com_TxSign, Com_TxStateView, Com_TxTitle, Com_Waiting, KIND_ICON } from "./ui_txview";
+import { UI_TxSheet } from "./ui_txsheet";
 import { KEYS } from "./ui_query";
-import { sheetProps_t, UI_Alert, UI_Amount, UI_ChipSet, UI_Empty, UI_Info, UI_LoadFailed, UI_Popover, UI_Segmented, UI_Sheet, UI_SheetButtons, UI_SheetClose, UI_Spinner, UI_Switch } from "./ui_widgets";
-import { UI_FeeFact, UI_TxidFact } from "./ui_payment";
+import { sheetProps_t, UI_Alert, UI_Amount, UI_ChipSet, UI_Empty, UI_LoadFailed, UI_Popover, UI_Segmented, UI_Sheet, UI_SheetButtons, UI_SheetClose, UI_Spinner, UI_Switch } from "./ui_widgets";
 import { useAction } from "./ui_hooks";
-import { UI_AddressLine } from "./ui_receive";
 
 export type historyFilter_t = "all" | "received" | "sent" | "moves";
 export type statusFilter_t = "any" | "waiting" | "failed";
@@ -38,13 +38,6 @@ export type historyQuery_t = { kind: historyFilter_t; status: statusFilter_t; pe
 export const NO_QUERY: historyQuery_t = { kind: "all", status: "any", period: "any", category: "any", pools: [], text: "" };
 
 const DAY_SECS = 86400;
-
-const KIND_ICON: Record< txKind_t, LucideIcon > = {
-	received:	ArrowDownLeft,
-	sent:		ArrowUpRight,
-	shield:		ShieldCheck,
-	move:		ArrowLeftRight,
-};
 
 // the filter bar's icons: a kind by its line's own icon, a status by what it says
 const FILTER_ICON: Record< historyFilter_t, LucideIcon > = { all: List, received: KIND_ICON.received, sent: KIND_ICON.sent, moves: KIND_ICON.move };
@@ -163,63 +156,6 @@ export function useTransactions( walletId: string, account: number ) {
 
 /*
 ==================
-Com_TxStateView
-
-How one transaction's state shows, decided once for the list, the
-detail and the grouping: waiting ones lead under Pending; a failed one
-keeps its day but says it didn't go through, and only it can be sent
-again: its money is back and nothing was paid. A pending payment's
-expiry is a time, from the blocks left and the network's block times
-at those heights (Com_SecsBetween).
-==================
-*/
-export type txStateView_t = { waiting: boolean; failed: boolean; again: boolean; pill: string | null; tone: "" | " pending" | " failed"; line: ( when: string ) => string };
-
-export function Com_TxStateView( state: txState_t, chainHeight: number, eras: blockEra_t[], now: number ): txStateView_t {
-	switch ( state.kind ) {
-	case "confirmed":
-		return { waiting: false, failed: false, again: false, pill: null, tone: "", line: T.history.confirmed };
-	case "pending": {
-		let expiry: string = T.history.noExpiry;
-		if ( state.expiresAt != null && chainHeight > 0 ) {
-			const left = state.expiresAt - chainHeight;
-			expiry = left > 0 ? T.history.expiresBy( Com_FormatDate( now + Com_SecsBetween( eras, chainHeight, state.expiresAt ), "time" ) ) : T.history.expiresNow;
-		}
-		return { waiting: true, failed: false, again: false, pill: T.history.pending, tone: " pending", line: () => `${T.history.pendingLong} ${expiry}` };
-	}
-	case "unsent":
-		return { waiting: true, failed: false, again: false, pill: T.history.unsent, tone: " pending", line: () => T.history.unsentLong };
-	case "failed":
-		return { waiting: false, failed: true, again: true, pill: T.history.failed, tone: " failed", line: () => T.history.failedLong };
-	default:
-		return Com_Unreachable( state );
-	}
-}
-
-/*
-==================
-Com_SecsBetween
-
-The target time from the block at height `from` to the one at `to`, over
-one network's eras (W_BlockEras, in height order): each block in
-(from, to] takes the spacing of the era it falls in. Since NU7 that is
-25 s; a constant 75 s said a pending payment had 2.5 hours, not 50 minutes.
-==================
-*/
-export function Com_SecsBetween( eras: readonly blockEra_t[], from: number, to: number ): number {
-	let secs = 0;
-	eras.forEach( ( era, i ) => {
-		const first = Math.max( era.from, from + 1 );
-		const last = i + 1 < eras.length ? Math.min( eras[i + 1].from - 1, to ) : to;
-		if ( last >= first ) {
-			secs += ( last - first + 1 ) * era.secs;
-		}
-	} );
-	return secs;
-}
-
-/*
-==================
 Com_GroupByDay
 
 Lines already newest first, in runs of one day each. What waits on the
@@ -229,7 +165,7 @@ network has no day yet and leads, under Pending.
 export function Com_GroupByDay( items: historyItem_t[], now: number ): { label: string; items: historyItem_t[] }[] {
 	const groups: { label: string; items: historyItem_t[] }[] = [];
 	for ( const it of items ) {
-		const label = Com_TxStateView( it.state, 0, [], now ).waiting ? T.history.pending : Com_DayLabel( it.time, now );
+		const label = Com_Waiting( it.state ) ? T.history.pending : Com_DayLabel( it.time, now );
 		const last = groups[groups.length - 1];
 		if ( last && last.label === label ) {
 			last.items.push( it );
@@ -243,22 +179,6 @@ export function Com_GroupByDay( items: historyItem_t[], now: number ): { label: 
 
 /*
 ==================
-Com_TxTitle
-==================
-*/
-function Com_TxTitle( it: historyItem_t ): string {
-	switch ( it.kind ) {
-	case "received":	return T.history.received;
-	case "sent":		return T.history.sent;
-	case "shield":		return T.history.shield;
-	case "move":		return it.into.length === 1 ? T.history.move( Com_PoolName( it.into[0] ) ) : T.history.moveAny;
-	default:			return Com_Unreachable( it.kind );
-	}
-}
-
-
-/*
-==================
 UI_TxRow
 ==================
 */
@@ -266,7 +186,7 @@ function UI_TxRow( props: { item: historyItem_t; onOpen: () => void } ) {
 	const it = props.item;
 	const Icon = KIND_ICON[it.kind];
 	const view = Com_TxStateView( it.state, 0, [], 0 );
-	const sign = view.tone === " failed" ? "" : it.kind === "received" ? "+" : it.kind === "sent" ? "−" : "";		// a failed one moved nothing
+	const sign = Com_TxSign( it );
 	// a memo that arrived is anyone's words (spam, a lure): the list says one is there,
 	// and it is read only in the transaction, opened on purpose, with its warnings
 	const memo = it.memo && it.kind === "received" ? T.history.withMessage : it.memo;
@@ -287,103 +207,6 @@ function UI_TxRow( props: { item: historyItem_t; onOpen: () => void } ) {
 				</span>
 			</button>
 		</li>
-	);
-}
-
-/*
-==================
-UI_TxSheet
-
-One transaction, whole
-==================
-*/
-/*
-==================
-UI_TxNote
-
-The person's own note on a transaction (w_notes.rs): saved when changed,
-and the history read again so the list and search have it
-==================
-*/
-function UI_TxNote( props: { item: historyItem_t; onSaved: () => void } ) {
-	const categories	= useStore( ( s ) => s.constants )?.categories ?? [];
-	const saved			= props.item.note ?? "";
-	const savedCategory	= props.item.category;
-	const [ text, setText ]			= useState( saved );
-	const [ category, setCategory ]	= useState< txCategory_t | null >( savedCategory );
-
-	useEffect( () => {
-		setText( saved );
-		setCategory( savedCategory );
-	}, [ props.item.txid, saved, savedCategory ] );
-
-	const maxChars = useStore( ( s ) => s.constants?.noteMaxChars );
-	const save = useAction( async () => {
-		await commands.ntSaveF( props.item.txid, text, category );
-		props.onSaved();
-	} );
-
-	return (
-		<div className="tx-note">
-			<label className="label" htmlFor="tx-note">{T.history.note} <UI_Info title={T.history.note}>{T.history.noteHint}</UI_Info></label>
-			<textarea id="tx-note" className="field" rows={2} maxLength={maxChars} placeholder={T.history.notePlaceholder} value={text} onChange={( e ) => setText( e.target.value )} />
-			<label className="label" htmlFor="tx-category">{T.history.category}</label>
-			<select id="tx-category" className="field-select" value={category ?? ""} onChange={( e ) => setCategory( ( e.target.value || null ) as txCategory_t | null )}>
-				<option value="">{T.history.noCategory}</option>
-				{categories.map( ( c ) => <option key={c} value={c}>{T.history.categories[c]}</option> )}
-			</select>
-			{save.error && <UI_Alert title={T.history.noteFailed} message={save.error} />}
-			{( text.trim() !== saved || category !== savedCategory ) && (
-				<div className="request-actions">
-					<button className="btn small" disabled={save.busy} onClick={() => void save.run()}>{save.busy ? <UI_Spinner size={12} /> : null}{T.history.saveNote}</button>
-				</div>
-			)}
-		</div>
-	);
-}
-
-export function UI_TxSheet( props: sheetProps_t & { item: historyItem_t | null; chainHeight: number; onSendAgain: ( it: historyItem_t ) => void; onNoteSaved: () => void } ) {
-	const allEras = useStore( ( s ) => s.constants?.blockEras );
-	const network = useStore( ( s ) => s.network );
-	const eras = useMemo( () => ( allEras ?? [] ).filter( ( e ) => e.network === network ), [ allEras, network ] );
-	const it = props.item;
-	if ( !it ) {
-		return null;
-	}
-	const Icon = KIND_ICON[it.kind];
-	const view = Com_TxStateView( it.state, props.chainHeight, eras, Math.floor( Date.now() / 1000 ) );
-	const sign = view.tone === " failed" ? "" : it.kind === "received" ? "+" : it.kind === "sent" ? "−" : "";
-	const when = `${Com_FormatDate( it.time )}, ${Com_FormatDate( it.time, "time" )}`;
-
-	return (
-		<UI_Sheet open={props.open} onOpenChange={props.onOpenChange} title={Com_TxTitle( it )}>
-			<div className="tx-detail">
-				<span className={"tx-icon big " + it.kind}><Icon aria-hidden="true" /></span>
-				<div className="review-amount"><UI_Amount zats={it.amount} prefix={sign} unit /></div>
-				<p className={"tx-status" + view.tone}>{view.line( when )}</p>
-
-				{it.counterparty && (
-					<div className="review-to">
-						<span className="label">{T.history.to}</span>
-						<UI_AddressLine address={it.counterparty} />
-					</div>
-				)}
-				<dl className="facts">
-					{it.from.length > 0 && <div className="fact"><dt>{T.history.from}</dt><dd>{Com_List( it.from.map( Com_PoolName ) )}</dd></div>}
-					{it.into.length > 0 && <div className="fact"><dt>{T.history.into}</dt><dd>{Com_List( it.into.map( Com_PoolName ) )}</dd></div>}
-					{it.kind !== "received" && view.tone !== " failed" && (
-						<UI_FeeFact zats={it.fee} />
-					)}
-					<UI_TxidFact txid={it.txid} />
-				</dl>
-				{it.memo && <p className="review-memo">“{it.memo}”</p>}
-				<UI_TxNote item={it} onSaved={props.onNoteSaved} />
-				{it.memo && Com_MemoAsksForSecrets( it.memo ) && <div className="warn-note"><TriangleAlert aria-hidden="true" /><span>{T.memo.asksForSecrets}</span></div>}
-				{view.again && it.kind === "sent" && it.counterparty
-					? <UI_SheetButtons action={{ label: T.history.sendAgain, onRun: () => { props.onOpenChange( false ); props.onSendAgain( it ); } }} busy={false} onCancel={() => props.onOpenChange( false )} cancel={T.common.close} />
-					: <UI_SheetClose onClose={() => props.onOpenChange( false )} primary />}
-			</div>
-		</UI_Sheet>
 	);
 }
 
@@ -428,44 +251,27 @@ function UI_ExportSheet( props: sheetProps_t & { walletId: string; account: numb
 	);
 }
 
+// the Filters panel's own filters, all off; the kind and the search are the
+// bar's own, in plain view, and Clear All leaves them as they are
+const PANEL_OFF: Partial< historyQuery_t > = { pools: [], status: "any", category: "any", period: "any" };
+
 /*
 ==================
-UI_History
+UI_HistoryFilters
 
-The page. Reloads when the balance or sync state changes, so it never
-disagrees with the balance above it.
+The bar over the list: the search, the kind, and the Filters panel; then
+the panel's filters that are on, each a chip that takes itself off, and
+Clear All for all of them
 ==================
 */
-export function UI_History( props: { walletId: string; account: number; total: number; progress: syncProgress_t | undefined; onReceive: () => void; onSendAgain: ( it: historyItem_t ) => void } ) {
-	const state = Com_SyncState( props.progress );
-
-	const startPools				= useStore( ( s ) => s.historyPools );		// opened from a pool: its lines only
-	const [ query, setQuery ]		= useState< historyQuery_t >( () => ( { ...NO_QUERY, pools: startPools } ) );
-	const categories				= useStore( ( s ) => s.constants )?.categories ?? [];
-	const set = ( patch: Partial< historyQuery_t > ) => setQuery( { ...query, ...patch } );
-	const [ open, setOpen ]			= useState< historyItem_t | null >( null );
-	const [ sheetOpen, setSheetOpen ] = useState( false );
-	const [ exporting, setExporting ] = useState( false );
-
-	const load = useTransactions( props.walletId, props.account );
-	const items = load.data ?? null;
-
-	// a new balance or sync state: read again, for this same key
-	useEffect( () => {
-		void load.refetch();
-	}, [ props.total, state ] );
-
-	const shown = useMemo( () => ( items ?? [] ).filter( ( it ) => Com_Matches( it, query, Math.floor( Date.now() / 1000 ) ) ), [ items, query ] );
-	const groups = useMemo( () => Com_GroupByDay( shown, Math.floor( Date.now() / 1000 ) ), [ shown ] );
+function UI_HistoryFilters( props: { query: historyQuery_t; set: ( patch: Partial< historyQuery_t > ) => void } ) {
+	const { query, set }	= props;
+	const categories		= useStore( ( s ) => s.constants )?.categories ?? [];
 
 	function TogglePool( p: pool_t ) {
 		set( { pools: query.pools.includes( p ) ? query.pools.filter( ( x ) => x !== p ) : [ ...query.pools, p ] } );
 	}
 
-	// the filters in the Filters panel that are on, each a chip that takes itself off, and
-	// Clear All for all of them; the kind and the search are the bar's own, in plain view,
-	// and stay as they are
-	const PANEL_OFF: Partial< historyQuery_t > = { pools: [], status: "any", category: "any", period: "any" };
 	const active: { key: string; label: string; className?: string; remove: () => void }[] = [
 		...query.pools.map( ( p ) => ( { key: p, label: Com_PoolName( p ), className: "chip-pool pool-" + p, remove: () => TogglePool( p ) } ) ),
 		...( query.status !== "any" ? [ { key: "status", label: T.history.statuses[query.status], remove: () => set( { status: "any" } ) } ] : [] ),
@@ -473,43 +279,8 @@ export function UI_History( props: { walletId: string; account: number; total: n
 		...( query.period !== "any" ? [ { key: "period", label: T.history.periods[query.period], remove: () => set( { period: "any" } ) } ] : [] ),
 	];
 
-	let body;
-	if ( load.error ) {
-		body = <UI_LoadFailed title={T.history.cantLoad} error={load.error} onRetry={() => void load.refetch()} />;
-	} else if ( !items ) {
-		body = <UI_Empty><UI_Spinner size={18} /></UI_Empty>;
-	} else if ( !items.length ) {
-		body = (
-			<UI_Empty icon={<History aria-hidden="true" />} title={T.history.emptyTitle} text={T.history.empty}>
-				<button className="btn primary" onClick={props.onReceive}><ArrowDownLeft aria-hidden="true" />{T.privacy.emptyAction}</button>
-			</UI_Empty>
-		);
-	} else if ( !shown.length ) {
-		body = (
-			<UI_Empty icon={<SearchX aria-hidden="true" />} tone="quiet" title={T.history.noMatchTitle} text={T.history.noMatch}>
-				<button className="btn" onClick={() => setQuery( NO_QUERY )}>{T.history.clear}</button>
-			</UI_Empty>
-		);
-	} else {
-		body = groups.map( ( g ) => (
-			<section key={g.label} className="tx-group">
-				<h2 className="tx-day">{g.label}</h2>
-				<ul className="pool-list tx-list">
-					{g.items.map( ( it ) => <UI_TxRow key={it.txid} item={it} onOpen={() => { setOpen( it ); setSheetOpen( true ); }} /> )}
-				</ul>
-			</section>
-		) );
-	}
-
 	return (
-		<div className="history">
-			<div className="history-head">
-				<h1 className="page-title">{T.history.title}</h1>
-				{!!items?.length && <button className="btn small" onClick={() => setExporting( true )}><Download aria-hidden="true" />{T.history.export}</button>}
-			</div>
-			{state !== "synced" && <p className="chart-note">{T.history.syncing}</p>}
-
-			{!!items?.length && <>
+		<>
 			<div className="history-tools">
 				<label className="history-search">
 					<Search aria-hidden="true" />
@@ -566,9 +337,109 @@ export function UI_History( props: { walletId: string; account: number; total: n
 					<button className="link small" onClick={() => set( PANEL_OFF )}>{T.history.clearAll}</button>
 				</div>
 			)}
-			</>}
+		</>
+	);
+}
 
-			<div>{body}</div>
+/*
+==================
+UI_HistoryList
+
+What the list shows: why it can't load, that it's loading, that there
+is nothing yet (and how to receive), that nothing matches (and how to
+clear), or the lines, by day
+==================
+*/
+function UI_HistoryList( props: {
+	items:		historyItem_t[] | null;
+	shown:		historyItem_t[];
+	error:		unknown;
+	onRetry:	() => void;
+	onReceive:	() => void;
+	onClear:	() => void;
+	onOpen:		( it: historyItem_t ) => void;
+} ) {
+	const groups = useMemo( () => Com_GroupByDay( props.shown, Math.floor( Date.now() / 1000 ) ), [ props.shown ] );
+
+	if ( props.error ) {
+		return <UI_LoadFailed title={T.history.cantLoad} error={props.error} onRetry={props.onRetry} />;
+	}
+	if ( !props.items ) {
+		return <UI_Empty><UI_Spinner size={18} /></UI_Empty>;
+	}
+	if ( !props.items.length ) {
+		return (
+			<UI_Empty icon={<History aria-hidden="true" />} title={T.history.emptyTitle} text={T.history.empty}>
+				<button className="btn primary" onClick={props.onReceive}><ArrowDownLeft aria-hidden="true" />{T.privacy.emptyAction}</button>
+			</UI_Empty>
+		);
+	}
+	if ( !props.shown.length ) {
+		return (
+			<UI_Empty icon={<SearchX aria-hidden="true" />} tone="quiet" title={T.history.noMatchTitle} text={T.history.noMatch}>
+				<button className="btn" onClick={props.onClear}>{T.history.clear}</button>
+			</UI_Empty>
+		);
+	}
+	return groups.map( ( g ) => (
+		<section key={g.label} className="tx-group">
+			<h2 className="tx-day">{g.label}</h2>
+			<ul className="pool-list tx-list">
+				{g.items.map( ( it ) => <UI_TxRow key={it.txid} item={it} onOpen={() => props.onOpen( it )} /> )}
+			</ul>
+		</section>
+	) );
+}
+
+/*
+==================
+UI_History
+
+The page. Reloads when the balance or sync state changes, so it never
+disagrees with the balance above it.
+==================
+*/
+export function UI_History( props: { walletId: string; account: number; total: number; progress: syncProgress_t | undefined; onReceive: () => void; onSendAgain: ( it: historyItem_t ) => void } ) {
+	const state = Com_SyncState( props.progress );
+
+	const start						= useStore( ( s ) => s.historyStart );		// opened from a pool, or from what waits: those lines only
+	const [ query, setQuery ]		= useState< historyQuery_t >( () => ( { ...NO_QUERY, ...start } ) );
+	const set = ( patch: Partial< historyQuery_t > ) => setQuery( { ...query, ...patch } );
+	const [ open, setOpen ]			= useState< historyItem_t | null >( null );
+	const [ sheetOpen, setSheetOpen ] = useState( false );
+	const [ exporting, setExporting ] = useState( false );
+
+	const load = useTransactions( props.walletId, props.account );
+	const items = load.data ?? null;
+
+	// a new balance or sync state: read again, for this same key
+	useEffect( () => {
+		void load.refetch();
+	}, [ props.total, state ] );
+
+	const shown = useMemo( () => ( items ?? [] ).filter( ( it ) => Com_Matches( it, query, Math.floor( Date.now() / 1000 ) ) ), [ items, query ] );
+
+	return (
+		<div className="history">
+			<div className="history-head">
+				<h1 className="page-title">{T.history.title}</h1>
+				{!!items?.length && <button className="btn small" onClick={() => setExporting( true )}><Download aria-hidden="true" />{T.history.export}</button>}
+			</div>
+			{state !== "synced" && <p className="chart-note">{T.history.syncing}</p>}
+
+			{!!items?.length && <UI_HistoryFilters query={query} set={set} />}
+
+			<div>
+				<UI_HistoryList
+					items={items}
+					shown={shown}
+					error={load.error}
+					onRetry={() => void load.refetch()}
+					onReceive={props.onReceive}
+					onClear={() => setQuery( NO_QUERY )}
+					onOpen={( it ) => { setOpen( it ); setSheetOpen( true ); }}
+				/>
+			</div>
 
 			<UI_TxSheet
 				open={sheetOpen}

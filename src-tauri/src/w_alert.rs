@@ -20,21 +20,29 @@ See the LICENSE file for details.
 // Kept apart from the settings on purpose: the settings are saved whole
 // from the ui's copy, which would bring back an alert the engine had
 // just marked as gone off.
-
-use std::path::PathBuf;
-use std::sync::{ LazyLock, Mutex };
+//
+// Part of the prices module (D-031, feature prices): left out with it, as
+// the end of this file says.
 
 use serde::{ Deserialize, Serialize };
 use specta::Type;
 use tauri::AppHandle;
 use tauri_specta::Event;
 
-use crate::w_date::{ Com_Every, Com_NewId, Com_Now };
-use crate::w_disk::{ Com_ReadJson, Com_WriteJson };
 use crate::w_local::*;
-use crate::w_price::{ priceRange_t, P_Series };
 
+#[cfg( feature = "prices" )]
+use {
+	std::path::PathBuf,
+	std::sync::{ LazyLock, Mutex },
+	crate::w_date::{ Com_Every, Com_NewId, Com_Now },
+	crate::w_disk::{ Com_ReadJson, Com_WriteJson },
+	crate::w_price::{ priceRange_t, P_Series },
+};
+
+#[cfg( feature = "prices" )]
 const ALERTS_FILE_NAME: &str	= "price-alerts.json";
+#[cfg( feature = "prices" )]
 const WATCH_SECS: u64			= 120;		// as often as the hour's prices are kept fresh
 
 #[derive( Clone, Debug, PartialEq, Serialize, Deserialize, Type )]
@@ -55,17 +63,22 @@ pub struct priceAlertEvent_t {
 }
 
 // one change of the file at a time; the price at the last look
+#[cfg( feature = "prices" )]
 static al_writing: LazyLock< tokio::sync::Mutex< () > > = LazyLock::new( || tokio::sync::Mutex::new( () ) );
+#[cfg( feature = "prices" )]
 static al_last: LazyLock< Mutex< Option< f64 > > > = LazyLock::new( || Mutex::new( None ) );
 
+#[cfg( feature = "prices" )]
 fn Al_Path() -> wresult_t< PathBuf > {
 	Com_DataPath( ALERTS_FILE_NAME ).ok_or_else( Com_NoDataFolder )
 }
 
+#[cfg( feature = "prices" )]
 fn Al_Read() -> wresult_t< Vec< priceAlert_t > > {
 	Ok( Com_ReadJson( &Al_Path()?, file_t::FILE_ALERTS )?.unwrap_or_default() )
 }
 
+#[cfg( feature = "prices" )]
 fn Al_Write( all: &[ priceAlert_t ] ) -> wresult_t< () > {
 	Com_WriteJson( &Al_Path()?, &all )
 }
@@ -78,6 +91,7 @@ Whether the price went past a waiting alert between two looks: up
 through it for "above", down through it for "below"
 ==================
 */
+#[cfg( feature = "prices" )]
 pub fn Com_Crossed( before: f64, now: f64, a: &priceAlert_t ) -> bool {
 	a.fired.is_none() && match a.above {
 		true	=> before < a.usd && now >= a.usd,
@@ -85,6 +99,7 @@ pub fn Com_Crossed( before: f64, now: f64, a: &priceAlert_t ) -> bool {
 	}
 }
 
+#[cfg( feature = "prices" )]
 pub fn Al_List() -> wresult_t< Vec< priceAlert_t > > {
 	Al_Read()
 }
@@ -96,6 +111,7 @@ Al_Add
 A new alert: above or below a price in dollars, more than nothing
 ==================
 */
+#[cfg( feature = "prices" )]
 pub async fn Al_Add( above: bool, usd: f64 ) -> wresult_t< priceAlert_t > {
 	if ( !usd.is_finite() || usd <= 0.0 ) {
 		return Err( werr_t::WERR_NO_AMOUNT );
@@ -108,6 +124,7 @@ pub async fn Al_Add( above: bool, usd: f64 ) -> wresult_t< priceAlert_t > {
 	Ok( made )
 }
 
+#[cfg( feature = "prices" )]
 pub async fn Al_Remove( id: &str ) -> wresult_t< () > {
 	let _writing = al_writing.lock().await;
 	let mut all = Al_Read()?;
@@ -123,6 +140,7 @@ One look at the price: every waiting alert it crossed since the last
 look goes off, once. The first look only learns the price.
 ==================
 */
+#[cfg( feature = "prices" )]
 async fn Al_Look( app: &AppHandle ) -> wresult_t< () > {
 	let all = Al_Read()?;
 	if ( !crate::w_settings::S_Get().showPrice || all.iter().all( |a| a.fired.is_some() ) ) {
@@ -167,7 +185,9 @@ Al_Watch
 A look every couple of minutes, for as long as Laurel runs
 ==================
 */
+#[cfg( feature = "prices" )]
 pub fn Al_Watch( app: AppHandle ) {
+	log::info!( "Al_Watch: {}", crate::w_price::MODULE_MARK );
 	Com_Every( "Al_Watch", WATCH_SECS, move || {
 		let app = app.clone();
 		async move { Al_Look( &app ).await }
@@ -175,7 +195,35 @@ pub fn Al_Watch( app: AppHandle ) {
 }
 
 
-#[cfg( test )]
+/*
+==================
+Left out (D-031)
+
+What the commands answer in a build without prices: the same names,
+nothing behind them. Nothing read or written, nothing watched or logged;
+a price-alerts.json an earlier build wrote stays where it is
+==================
+*/
+#[cfg( not( feature = "prices" ) )]
+pub fn Al_List() -> wresult_t< Vec< priceAlert_t > > {
+	Err( werr_t::WERR_NOT_IN_BUILD )
+}
+
+#[cfg( not( feature = "prices" ) )]
+pub async fn Al_Add( _above: bool, _usd: f64 ) -> wresult_t< priceAlert_t > {
+	Err( werr_t::WERR_NOT_IN_BUILD )
+}
+
+#[cfg( not( feature = "prices" ) )]
+pub async fn Al_Remove( _id: &str ) -> wresult_t< () > {
+	Err( werr_t::WERR_NOT_IN_BUILD )
+}
+
+#[cfg( not( feature = "prices" ) )]
+pub fn Al_Watch( _app: AppHandle ) {}
+
+
+#[cfg( all( test, feature = "prices" ) )]
 mod tests {
 	use super::*;
 
@@ -205,5 +253,26 @@ mod tests {
 
 		let gone = priceAlert_t { fired: Some( 1 ), ..up };
 		assert!( !Com_Crossed( 59.0, 61.0, &gone ), "once" );
+	}
+}
+
+
+#[cfg( all( test, not( feature = "prices" ) ) )]
+mod left_out {
+	use super::*;
+
+	// every command answers that this build has no price alerts, and touches nothing
+	#[tokio::test( flavor = "multi_thread" )]
+	async fn every_command_says_not_in_this_build() {
+		assert!( matches!( Al_List(), Err( werr_t::WERR_NOT_IN_BUILD ) ) );
+		assert!( matches!( Al_Add( true, 60.0 ).await, Err( werr_t::WERR_NOT_IN_BUILD ) ) );
+		assert!( matches!( Al_Remove( "a" ).await, Err( werr_t::WERR_NOT_IN_BUILD ) ) );
+	}
+
+	// an alert an earlier build saved still reads, for a build with the module
+	#[test]
+	fn a_saved_alert_still_reads() {
+		let read: Vec< priceAlert_t > = serde_json::from_str( r#"[{"id":"a1","above":true,"usd":60.0,"fired":null}]"# ).unwrap();
+		assert!( read[0].above );
 	}
 }
