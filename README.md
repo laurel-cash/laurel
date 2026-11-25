@@ -1,7 +1,7 @@
 # Laurel
 
-> **Real ZEC. Not independently audited.** Start with small amounts, and keep
-> your recovery phrase safe: nobody, Laurel included, can recover it.
+> **Real ZEC.** Start with small amounts, and keep your recovery phrase
+> safe: nobody, Laurel included, can recover it.
 
 Laurel is a self-custodial Zcash wallet for Android and Windows, built with
 Tauri 2, a Rust engine on [zingolib](https://github.com/zingolabs/zingolib)
@@ -30,8 +30,7 @@ style. [docs/README.md](docs/README.md) indexes the rest.
 
 ## How Laurel is built
 
-Laurel hasn't had an independent security audit; the code is public so you
-can check it.
+The code is public so you can check it.
 
 What holds it together, all in this repository:
 
