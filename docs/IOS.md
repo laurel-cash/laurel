@@ -57,7 +57,7 @@ same on both phones and is checked by the Android gate first.
    committed as `gen/android` is; `project.yml` is its source (XcodeGen).
 2. A first start in a simulator: a screenshot and the app's log, uploaded as the
    run's `first-start` artifact.
-3. Run by hand with `testflight` ticked: the device build, signed by Xcode's automatic
+3. A push to the `testflight` branch (or, once the workflow is on main, a run by hand with `testflight` ticked): the device build, signed by Xcode's automatic
    signing with the API key, its build number the run's (`0.3.3.N`), uploaded with
    `altool`. App Store Connect then asks the export-compliance question once per build
    until Info.plist answers it.

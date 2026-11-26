@@ -1,11 +1,12 @@
 # The iPhone build (docs/IOS.md): GitHub's macOS runners do what this tree can't do
-# on Windows. Runs on the `ios` branch and by hand; only a run by hand with `testflight`
-# signs and uploads, with the App Store Connect key held as the repository's secrets.
+# on Windows. Runs on the `ios` branch and by hand. A push to `testflight` (or a run by
+# hand with `testflight`: GitHub offers that only once this file is on main) also signs
+# and uploads, with the App Store Connect key held as the repository's secrets.
 name: iOS
 
 on:
   push:
-    branches: [ ios ]
+    branches: [ ios, testflight ]
   workflow_dispatch:
     inputs:
       testflight:
@@ -83,7 +84,7 @@ jobs:
       # the device build, signed by Xcode with the API key (automatic signing), its build
       # number this run's, then uploaded; the key file exists only for these two commands
       - name: TestFlight
-        if: inputs.testflight
+        if: inputs.testflight || github.ref == 'refs/heads/testflight'
         env:
           APPLE_API_KEY: ${{ secrets.ASC_KEY_ID }}
           APPLE_API_ISSUER: ${{ secrets.ASC_ISSUER_ID }}
