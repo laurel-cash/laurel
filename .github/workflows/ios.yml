@@ -30,7 +30,7 @@ jobs:
   # a screenshot and the app's log, uploaded to be looked at
   simulator:
     name: Simulator
-    runs-on: macos-15
+    runs-on: macos-26  # App Store Connect takes only apps built with Xcode 26 or later
     timeout-minutes: 120
     steps:
       - uses: actions/checkout@v4
@@ -50,8 +50,8 @@ jobs:
             ~/.cargo/registry
             ~/.cargo/git
             src-tauri/target
-          key: ios-sim-${{ hashFiles( 'src-tauri/Cargo.lock' ) }}
-          restore-keys: ios-sim-
+          key: ios-sim-26-${{ hashFiles( 'src-tauri/Cargo.lock' ) }}
+          restore-keys: ios-sim-26-
       - name: Build
         run: npx tauri ios build --target aarch64-sim --debug --ci --features v1
       - name: First start
