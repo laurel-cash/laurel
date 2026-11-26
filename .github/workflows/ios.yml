@@ -121,6 +121,9 @@ jobs:
     name: Web
     runs-on: macos-26
     timeout-minutes: 30
+    # safaridriver doesn't reach the runner's simulator Safari yet ("timed out while
+    # connecting to a Safari instance", booted first or not, 11-26): said, not blocking
+    continue-on-error: true
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
