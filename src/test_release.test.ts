@@ -15,7 +15,7 @@ See the LICENSE file for details.
 import { describe, expect, it } from "vitest";
 
 // @ts-expect-error: a plain node module of the release scripts, without types
-import { Com_ActivityProblems, Com_CargoProblems, Com_IosProblems, Com_Features, Com_LibraryProblems, Com_LineProblems, Com_ModuleMark, Com_ModuleProblems, Com_PublicPath, Com_WordProblems, Com_WordRules, EXPORT_SETTINGS, MODULES } from "../scripts/release_rules.mjs";
+import { Com_ActivityProblems, Com_CargoProblems, Com_IosIconProblems, Com_IosProblems, Com_Features, Com_LibraryProblems, Com_LineProblems, Com_ModuleMark, Com_ModuleProblems, Com_PublicPath, Com_WordProblems, Com_WordRules, EXPORT_SETTINGS, MODULES } from "../scripts/release_rules.mjs";
 import MAIN_ACTIVITY from "../src-tauri/gen/android/app/src/main/java/com/rptxsoftware/wallet/MainActivity.kt?raw";
 import W_IOS from "../src-tauri/src/w_ios.rs?raw";
 import IOS_PROJECT from "../src-tauri/gen/apple/project.yml?raw";
@@ -184,5 +184,14 @@ describe( "the iPhone's own side", () => {
 		expect( Com_IosProblems( ios.replace( "\nNSURL", "\n// NSURL" ), project ) ).toHaveLength( 1 );
 		expect( Com_IosProblems( ios, "" ) ).toHaveLength( 1 );
 		expect( Com_IosProblems( ios, project.replace( "        com", "        # com" ) ) ).toHaveLength( 1 );
+	} );
+
+	it( "takes only Laurel's opaque home screen icon", () => {
+		const header = ( colour: number ) => Uint8Array.from( [ 0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0, 0, 0, 13, 0x49, 0x48, 0x44, 0x52, 0, 0, 4, 0, 0, 0, 4, 0, 8, colour, 0, 0, 0 ] );
+		const laurel = "0".repeat( 64 ), tauri = "00badc78c2ecb7460bbe02aeeca1e8848724ee133391bb3025df561007187eaf";
+		expect( Com_IosIconProblems( header( 2 ), laurel ) ).toEqual( [] );
+		expect( Com_IosIconProblems( header( 6 ), laurel ) ).toHaveLength( 1 );
+		expect( Com_IosIconProblems( header( 2 ), tauri ) ).toHaveLength( 1 );
+		expect( Com_IosIconProblems( new Uint8Array( 8 ), laurel ) ).toHaveLength( 1 );
 	} );
 } );

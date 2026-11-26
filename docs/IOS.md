@@ -37,6 +37,10 @@ same on both phones and is checked by the Android gate first.
 - `Com_IosProblems` (release_rules.mjs, in check_release.mjs) is `Com_ActivityProblems`'s
   twin: `w_ios.rs` keeps both covers, the backup exclusion and the background task, and
   project.yml the data protection.
+- `Com_IosIconProblems` (same place): the home screen icon is Laurel's, not Tauri's
+  placeholder, and opaque. Made from app-icon.png cropped to full bleed (80 px in, so
+  no rounded corner is left), then `tauri icon -o` to a scratch folder and only `ios/`
+  copied, flattened to RGB.
 - Gate E again on a real iPhone (TestFlight), with the same steps as
   `gate-e-mainnet.md`.
 

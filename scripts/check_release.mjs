@@ -18,9 +18,10 @@ See the LICENSE file for details.
 //
 //   node scripts/check_release.mjs
 
+import { createHash } from "node:crypto";
 import { createRequire } from "node:module";
 import { readFileSync, readdirSync } from "node:fs";
-import { Com_ActivityProblems, Com_CargoProblems, Com_IosProblems, Com_Uncommented } from "./release_rules.mjs";
+import { Com_ActivityProblems, Com_CargoProblems, Com_IosIconProblems, Com_IosProblems, Com_Uncommented } from "./release_rules.mjs";
 
 // Cargo.toml's [profile.release], as it must be
 const RELEASE = {
@@ -87,6 +88,10 @@ for ( const problem of Com_ActivityProblems( readFileSync( "src-tauri/gen/androi
 // and the iPhone's twin: covered when it isn't the active app or the screen is captured,
 // out of backups, saved in the background, its files closed while locked (release_rules.mjs)
 for ( const problem of Com_IosProblems( readFileSync( "src-tauri/src/w_ios.rs", "utf8" ), readFileSync( "src-tauri/gen/apple/project.yml", "utf8" ) ) ) {
+	Fail( problem );
+}
+const iosIcon = readFileSync( "src-tauri/gen/apple/Assets.xcassets/AppIcon.appiconset/AppIcon-512@2x.png" );
+for ( const problem of Com_IosIconProblems( iosIcon, createHash( "sha256" ).update( iosIcon ).digest( "hex" ) ) ) {
 	Fail( problem );
 }
 // a phone app: Tauri's template offers Laurel to Android TV (leanback), which Play then

@@ -168,6 +168,35 @@ export function Com_IosProblems( ios, project ) {
 	return problems;
 }
 
+/*
+==================
+Com_IosIconProblems
+
+The home screen's icon (the 1024 point one, AppIcon-512@2x.png, and its
+SHA-256): not Tauri's placeholder, which `tauri ios init` leaves in place
+(build 0.3.3 (8) went to TestFlight with it), and opaque: App Store
+Connect refuses an alpha channel. Laurel's is full bleed: iOS rounds the
+corners itself
+==================
+*/
+const TAURI_ICON = "00badc78c2ecb7460bbe02aeeca1e8848724ee133391bb3025df561007187eaf";
+
+export function Com_IosIconProblems( png, sha256 ) {
+	const PNG = [ 0x89, 0x50, 0x4e, 0x47 ];
+	if ( png.length < 26 || PNG.some( ( b, i ) => png[ i ] !== b ) ) {
+		return [ "AppIcon-512@2x.png isn't a PNG" ];
+	}
+	const problems = [];
+	if ( sha256 === TAURI_ICON ) {
+		problems.push( "AppIcon-512@2x.png is Tauri's placeholder, not Laurel's icon" );
+	}
+	const RGB = 2;		// IHDR colour type: 6 is RGBA
+	if ( png[ 25 ] !== RGB ) {
+		problems.push( "AppIcon-512@2x.png has an alpha channel: App Store Connect refuses it" );
+	}
+	return problems;
+}
+
 // the phone's library, or the Store's exe. The testnet line (the Play beta): the
 // testnet build, with all four modules for its testers. v1: the v1 build, with
 // exactly the audited modules its build names (`modules`, none unless named: D-033,
