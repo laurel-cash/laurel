@@ -61,6 +61,7 @@ jobs:
           d = json.load( sys.stdin )[ "devices" ]
           print( next( x[ "udid" ] for k, v in sorted( d.items(), reverse = True ) if "iOS" in k for x in v if x[ "name" ].startswith( "iPhone" ) ) )' )
           echo "device $UDID"
+          echo "UDID=$UDID" >> "$GITHUB_ENV"
           xcrun simctl boot "$UDID"
           xcrun simctl bootstatus "$UDID" -b
           xcrun simctl install "$UDID" src-tauri/gen/apple/build/arm64-sim/Laurel.app
@@ -73,6 +74,19 @@ jobs:
           cp app-console.log out/ || true
           cat out/running.txt
           tail -n 40 out/app.log
+      # the text size in the iPhone's own web view (useTextScale: WebKit's page zoom): the
+      # setting written as Laurel writes it, Laurel started again, a picture beside the first
+      - name: Text size
+        run: |
+          C=$( xcrun simctl get_app_container "$UDID" cash.laurel.wallet data )
+          D=$( find "$C/Library" -maxdepth 3 -type d -name cash.laurel.wallet | head -n 1 )
+          echo "data folder: ${D:-none}"
+          ls -la "$D" || true
+          echo '{"textScale":150}' > "$D/laurel-settings.json"
+          xcrun simctl terminate "$UDID" cash.laurel.wallet || true
+          xcrun simctl launch "$UDID" cash.laurel.wallet
+          sleep 25
+          xcrun simctl io "$UDID" screenshot out/text-150.png
       - name: Keep the screenshot and logs
         if: always()
         uses: actions/upload-artifact@v4
@@ -98,3 +112,30 @@ jobs:
           IPA=$( find src-tauri/gen/apple/build -name '*.ipa' | head -n 1 )
           echo "uploading $IPA"
           xcrun altool --upload-app --type ios --file "$IPA" --apiKey "$APPLE_API_KEY" --apiIssuer "$APPLE_API_ISSUER"
+
+  # the phone's screens in the iPhone's own WebKit, with a finger's swipe and the home
+  # bar's safe area (scripts/check_layout_ios.mjs): what Edge's layout check can't see
+  web:
+    name: Web
+    runs-on: macos-26
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - name: Tools
+        run: |
+          npm ci
+          sudo safaridriver --enable
+      - name: Layout
+        run: node scripts/check_layout_ios.mjs
+      - name: Keep the pictures
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: web
+          path: out/web
+          if-no-files-found: warn
+          retention-days: 14

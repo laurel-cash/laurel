@@ -29,6 +29,7 @@ import { existsSync, mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { Com_Settled, SETTLE_AGAIN_MS } from "./layout_settle.mjs";
+import { Com_DevServer, Com_Line as Line, Com_Within } from "./layout_tools.mjs";
 
 const EDGE	= "C:/Program Files (x86)/Microsoft/Edge/Application/msedge.exe";
 const PORT	= 1433;
@@ -80,20 +81,8 @@ if ( !existsSync( EDGE ) ) {
 	process.exit( 0 );
 }
 
-// a promise, or the reason it never came
-const Within = ( what, promise, ms = WAIT_MS ) => Promise.race( [ promise, new Promise( ( _, fail ) => setTimeout( () => fail( new Error( `${what} took over ${ms / 1000}s` ) ), ms ) ) ] );
-
-// the first line of a child's output matching re
-const Line = ( stream, re ) => new Promise( ( ok ) => {
-	let text = "";
-	stream.on( "data", ( d ) => {
-		text += d;
-		const m = re.exec( text );
-		if ( m ) {
-			ok( m );
-		}
-	} );
-} );
+// a promise, or the reason it never came: by WAIT_MS unless said
+const Within = ( what, promise, ms = WAIT_MS ) => Com_Within( what, promise, ms );
 
 /*
 ==================
@@ -124,15 +113,13 @@ async function Cdp( url ) {
 	return { send, close: () => socket.close() };
 }
 
-// the page with every module a build may leave out (D-031), as the testnet line ships it,
-// unless the run names its own (LAUREL_FEATURES)
-const server = spawn( process.execPath, [ "node_modules/vite/bin/vite.js", "--port", String( PORT ), "--strictPort" ], { stdio: "pipe", windowsHide: true, env: { ...process.env, LAUREL_FEATURES: process.env.LAUREL_FEATURES ?? "full" } } );
+let server = null;
 const profile = mkdtempSync( join( tmpdir(), "laurel-layout-" ) );
 let edge = null;
 let bad = 0;
 let unsettledCount = 0;		// faults seen in one of two measures (layout_settle.mjs): said, not counted
 try {
-	await Within( "the dev server", Line( server.stdout, /Local/ ) );
+	server = await Com_DevServer( PORT, WAIT_MS );
 	edge = spawn( EDGE, [ `--user-data-dir=${profile}`, "--headless=new", "--disable-gpu", "--hide-scrollbars", "--remote-debugging-port=0", "about:blank" ], { windowsHide: true } );
 	const [ , ws ] = await Within( "Edge", Line( edge.stderr, /DevTools listening on (ws:\/\/\S+)/ ) );
 	const cdp = await Cdp( ws );
@@ -270,7 +257,7 @@ try {
 	bad++;
 } finally {
 	edge?.kill();
-	server.kill();
+	server?.kill();
 	try {
 		rmSync( profile, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 } );
 	} catch {
