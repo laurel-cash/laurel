@@ -148,8 +148,8 @@ function UI_TxStatusChip( props: { view: txStateView_t; confirmations: number | 
 	return (
 		<span className="tx-chip confirmed" role="status">
 			<Check aria-hidden="true" />
-			{T.history.confirmedChip}
-			{n !== null && <> · <span key={n} className="tx-count">{T.history.confirmations( n )}</span></>}
+			{/* one run of words: as the chip's own items, " · " wrapped alone onto a line (175%) */}
+			<span>{T.history.confirmedChip}{n !== null && <> · <span key={n} className="tx-count">{T.history.confirmations( n )}</span></>}</span>
 		</span>
 	);
 }

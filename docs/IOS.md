@@ -43,11 +43,16 @@ same on both phones and is checked by the Android gate first.
   run by vite.config.ts). Never css zoom (WebKit lays it out differently and squeezed
   the sheets to a strip), nor WKWebView's page zoom (taken, and changed nothing on a
   phone, 11-26). ios.yml's Simulator job pictures the real app at 100% and 150%.
-- The phone's notch and home bar are `--safe-top` / `--safe-bottom` (ui.css :root), so
-  a browser can be given an iPhone's.
+- A phone's frame is sized in one place, ui.css's frame block (A PHONE'S FRAME, in
+  :root): the notch and home bar (`--safe-top` / `--safe-bottom`, so a browser can be
+  given an iPhone's), the top bar (`--bar-h`, 44) and the tab bar (`--tab-h`, 49), and
+  their words (`--frame-*`). As an iPhone's own, the bars keep their size at any text
+  size; only the page between them grows. check_frame.mjs keeps it so, and the kit
+  measures every picture's bars against these.
 - Look before shipping a layout: `npm run kit` (scripts/ui_kit.mjs) pictures every
   screen and sheet (scripts/ui_screens.mjs) on three iPhones at 100/130/175%, at its
-  top and scrolled to its end, with check_layout's faults beside each:
+  top and scrolled to its end, with check_layout's faults beside each and the phone's own status bar
+  and home bar line drawn over it:
   out/kit/index.html and one sheet-<phone>-<size>.jpg each (about 30s a phone; the
   phones side by side). `--only=`, `--phones=`,
   `--scales=` narrow it.

@@ -139,11 +139,12 @@
 					}
 					// drawn in Laurel's own font: in another every width measured is another's (the
 					// kit's pictures were in Segoe UI, narrower than Inter, and missed what overflowed)
-					if ( ![ ...document.fonts ].some( ( f ) => f.family === "Inter Variable" && f.status === "loaded" ) ) faults.push( "Inter never loaded: measured in a stand-in font" );
+					const font = getComputedStyle( document.documentElement ).getPropertyValue( "--font" ).split( "," )[0].trim().replace( /^"|"$/g, "" );		// ui.css's own
+					if ( ![ ...document.fonts ].some( ( f ) => f.family === font && f.status === "loaded" ) ) faults.push( `${font} never loaded: measured in a stand-in font` );
 					// the page never scrolls sideways
 					if ( document.documentElement.scrollWidth > innerWidth + 1 ) faults.push( `the page is ${document.documentElement.scrollWidth}px wide in a ${innerWidth}px window` );
 					const texts = Texts();		// once: both read every box's words, the costliest look
-					return faults.concat( Overlaps( texts ), BrokenWords( texts ), PastTheEdge(), UnderTheBar() );
+					return faults.concat( Overlaps( texts ), BrokenWords( texts ), PastTheEdge(), UnderTheBar(), Unscrollable(), BarSizes() );
 				};
 
 				// what shows: a box of 1px or less is hidden for a screen reader (.sr-only, an
@@ -238,11 +239,52 @@
 					return out;
 				};
 
+				// a phone's tab bar (fixed at the bottom), or none: a computer's sidebar
+				const PhoneBar = () => {
+					const nav = document.querySelector( ".sidebar .nav" );
+					return nav && getComputedStyle( nav ).position === "fixed" ? nav : null;
+				};
+
+				// a length ui.css names (--bar-h, --safe-top...) in css px: unzoomed, as a phone's
+				// css zoom (an Android text size) draws it larger but lays it out the same
+				const Px = ( name ) => {
+					const probe = document.createElement( "div" );
+					probe.style.cssText = `position: absolute; visibility: hidden; height: var( ${name} )`;
+					document.body.append( probe );
+					const px = probe.offsetHeight;
+					probe.remove();
+					return px;
+				};
+				// a phone's bars are the sizes ui.css's frame names, at any text size: the top bar
+				// ends --bar-h under the status bar, the tab bar is --tab-h over --tab-under (each
+				// grew with the text, and its band read as wasted, 11-26/27)
+				const BarSizes = () => {
+					const nav = PhoneBar();
+					const top = document.querySelector( ".sidebar .switcher" );
+					if ( !nav || !top ) return [];
+					const out = [];
+					const Near = ( a, b ) => Math.abs( a - b ) <= 1.5;
+					const zoom = top.getBoundingClientRect().height / top.offsetHeight;		// drawn px per css px
+					const bar = top.getBoundingClientRect().bottom / zoom, barWant = Px( "--safe-top" ) + Px( "--bar-h" );
+					if ( !Near( bar, barWant ) ) out.push( `the top bar ends at ${Math.round( bar )}px, not ${Math.round( barWant )}px (--safe-top + --bar-h)` );
+					const tab = nav.clientHeight, tabWant = Px( "--tab-h" ) + Px( "--tab-under" );		// less its top line
+					if ( !Near( tab, tabWant ) ) out.push( `the tab bar is ${Math.round( tab )}px, not ${Math.round( tabWant )}px (--tab-h + --tab-under)` );
+					return out;
+				};
+
+				// a phone's page always scrolls (ui.css, .content::after): iOS let no finger scroll
+				// one that fit when laid out and grew after (Settings at 175%, 11-27)
+				const Unscrollable = () => {
+					const page = document.querySelector( "main.content" );
+					if ( !PhoneBar() || !page ) return [];
+					return page.scrollHeight > page.clientHeight ? [] : [ `${Tag( page )} can't be scrolled: ${page.scrollHeight} in ${page.clientHeight}px` ];
+				};
+
 				// a phone's bottom bar never hides the end of a page: scrolled all the way, the
 				// last words are above it
 				const UnderTheBar = () => {
-					const nav = document.querySelector( ".sidebar .nav" );
-					if ( !nav || getComputedStyle( nav ).position !== "fixed" ) return [];
+					const nav = PhoneBar();
+					if ( !nav ) return [];
 					const top = nav.getBoundingClientRect().top;
 					const out = [];
 					for ( const sc of [ document.scrollingElement, ...document.querySelectorAll( "body *" ) ] ) {

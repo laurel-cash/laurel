@@ -51,9 +51,10 @@ export function Com_ScreenUrl( port, screen, flags ) {
 }
 
 // iPhones by their css size and safe areas (portrait): the smallest still sold, the
-// common one, the largest
+// common one, the largest. island: the Dynamic Island's box under the status bar
+// (top, width, height), else a plain status bar
 export const IPHONES = [
 	{ id: "se",		name: "iPhone SE",			w: 375, h: 667, top: 20, bottom: 0 },
-	{ id: "16",		name: "iPhone 16",			w: 393, h: 852, top: 59, bottom: 34 },
-	{ id: "max",	name: "iPhone 16 Pro Max",	w: 440, h: 956, top: 62, bottom: 34 },
+	{ id: "16",		name: "iPhone 16",			w: 393, h: 852, top: 59, bottom: 34, island: [ 11, 125, 37 ] },
+	{ id: "max",	name: "iPhone 16 Pro Max",	w: 440, h: 956, top: 62, bottom: 34, island: [ 11, 125, 37 ] },
 ];

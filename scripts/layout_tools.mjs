@@ -130,7 +130,11 @@ export async function Com_Edge( name, ms ) {
 			// wait 0: no deadline of its own, its caller's
 			Eval:	async ( expression, wait = ms ) => {
 				const answer = Send( "Runtime.evaluate", { expression, awaitPromise: true, returnByValue: true } );
-				return ( await ( wait ? Com_Within( `${tab}: the page`, answer, wait ) : answer ) ).result?.value;
+				const { result, exceptionDetails } = await ( wait ? Com_Within( `${tab}: the page`, answer, wait ) : answer );
+				if ( exceptionDetails ) {		// the page's own error, said, not an empty answer read as one
+					throw new Error( `${tab}: the page threw: ${exceptionDetails.exception?.description ?? exceptionDetails.text}` );
+				}
+				return result?.value;
 			},
 			Close:	() => cdp.send( "Target.closeTarget", { targetId } ),
 		};

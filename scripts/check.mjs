@@ -58,6 +58,7 @@ const UI = [
 	[ "owners",		NODE, [ "scripts/check_owners.mjs" ] ],
 	[ "docs",		NODE, [ "scripts/check_docs.mjs" ] ],
 	[ "contrast",	NODE, [ "scripts/check_contrast.mjs" ] ],
+	[ "frame",		NODE, [ "scripts/check_frame.mjs" ] ],		// a phone's bars sized in one place (ui.css's frame block)
 	[ "bundle",		NODE, [ "scripts/check_bundle.mjs" ] ],		// the real-money ui bundle holds no module it leaves out (D-031)
 	[ "version",	NODE, [ "scripts/check_version.mjs" ] ],
 	[ "release",	NODE, [ "scripts/check_release.mjs" ] ],

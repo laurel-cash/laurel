@@ -27,21 +27,25 @@ TOKENS
 	/* the text size where only text grows (an iPhone: useTextScale, textZoom "text"). Every
 	   font size written here in px is drawn times this: scripts/text_scale.mjs */
 	--text-scale:	1;
-	/* a phone's tab bar keeps its words' size at any text size, as an iPhone's does: at
-	   175% "Settings" broke in two and the taller bar hid each page's end (ui_kit, 11-26).
-	   Not px, so text_scale.mjs leaves it be */
-	--tab-text:		var( --text-min );
 	/* the text size's own choices grow only so far: the way back from too large is always in
 	   one row ("100 / %" broke under each number at 175% on an iPhone SE, 11-27) */
 	--steady-text:	min( calc( 13px * var( --text-scale, 1 ) ), 16px );		/* grows, to what five fit in */
-	/* a phone's notch and home bar, named once: scripts/ui_kit.mjs gives them an iPhone's
-	   sizes in a browser, which has neither */
-	--safe-top:		env( safe-area-inset-top, 0px );
-	--safe-bottom:	env( safe-area-inset-bottom, 0px );
-	/* under a phone's tab bar: the home bar's line is ~13px from the screen's bottom, so the
-	   buttons may come down to just above it. The whole 34px left empty read as a wasted
-	   band under the bar (Operator, builds 17 and 18); a phone with a home button: 4px */
+
+	/* A PHONE'S FRAME, named once: every rule of the bars and the page between them takes
+	   its sizes from here, and ui_kit.mjs measures each phone against them (mock.html,
+	   BarSizes). As an iPhone's own: the bars keep their size at any text size, only what's
+	   between them grows (the bars grew with it, and their bands read as wasted, 11-26/27).
+	   Their words' sizes are var()s, not px, so text_scale.mjs leaves them be */
+	--safe-top:		env( safe-area-inset-top, 0px );		/* the status bar and the notch */
+	--safe-bottom:	env( safe-area-inset-bottom, 0px );		/* the home bar; 0 with a home button */
+	--bar-h:		44px;		/* the top bar under the status bar: an iPhone's navigation bar */
+	--tab-h:		49px;		/* the tab bar's buttons: an iPhone's tab bar */
+	/* under the tab bar's buttons: the home bar's line is ~13px from the screen's bottom,
+	   so they come down to just above it; with a home button, 4px */
 	--tab-under:	max( 4px, var( --safe-bottom ) - 20px );
+	--frame-title:	15px;		/* the account in the top bar */
+	--frame-sub:	12px;		/* the wallet under it */
+	--frame-tab:	10px;		/* a tab's word */
 
 	--titlebar-h:	40px;
 
@@ -7011,8 +7015,9 @@ HISTORY
 
 /* where it went, end to end, the money flowing along the line between */
 .tx-route {
-	display: grid;
-	grid-template-columns: minmax( 0, 1fr ) auto minmax( 0, 1fr );
+	display: flex;
+	flex-wrap: wrap;
+	container: tx-route / inline-size;
 	align-items: center;
 	gap: 8px;
 	padding: 16px 12px 14px;
@@ -7022,6 +7027,7 @@ HISTORY
 }
 
 .tx-route-end {
+	flex: 1 1 0;		/* From and To share the room either side of the arrow */
 	display: flex;
 	flex-direction: column;
 	align-items: center;
@@ -7091,9 +7097,20 @@ HISTORY
 	display: -webkit-box;
 	max-width: 100%;
 	overflow: hidden;
-	overflow-wrap: normal;		/* whole words: "Priv / ate" broke at 320px and 175% */
 	-webkit-box-orient: vertical;
 	-webkit-line-clamp: 2;
+}
+
+/* too narrow for From and To side by side (a large text size: em, so it follows it): one
+   over the other, the arrow pointing down. Side by side they broke "Priv / ate" at 175% */
+@container tx-route ( max-width: 21em ) {
+	.tx-route-end {
+		flex-basis: 100%;
+	}
+	.tx-route-link {
+		margin: 0 auto;
+		transform: rotate( 90deg );
+	}
 }
 
 .tx-route-name {
@@ -7102,10 +7119,9 @@ HISTORY
 }
 
 .tx-route-name.address {
-	display: block;		/* whole, broken anywhere: an address is never cut short */
+	display: block;		/* whole: an address is never cut short */
 	font-family: var( --font-mono );
 	font-size: 12px;
-	overflow-wrap: anywhere;
 	-webkit-line-clamp: none;
 }
 
@@ -8655,7 +8671,7 @@ ZEC PRICE
 /* Phones: the account picker stays at the top and navigation stays within
    thumb reach. Sheets scroll inside the keyboard's remaining viewport. */
 :root[data-mobile="true"] {
-	--titlebar-h: calc( 44px + var( --safe-top ) );
+	--titlebar-h: calc( var( --bar-h ) + var( --safe-top ) );
 }
 :root[data-mobile="true"] .titlebar {
 	padding-top: var( --safe-top );
@@ -8707,9 +8723,15 @@ ZEC PRICE
 	}
 	.sidebar .switcher {
 		justify-content: flex-start;
-		min-height: 44px;
+		height: var( --bar-h );
 		margin-bottom: 0;
-		padding: 4px 6px;
+		padding: 0 6px;
+	}
+	.sidebar .switcher-account {
+		font-size: var( --frame-title );
+	}
+	.sidebar .switcher-wallet {
+		font-size: var( --frame-sub );
 	}
 	.titlebar {
 		pointer-events: none;		/* the account under it takes the taps; the lock its own */
@@ -8981,7 +9003,7 @@ ZEC PRICE
 		right: 34px;
 		transform: translateY( -50% );
 	}
-	/* an iPhone's tab: 49px, the icon over a small word, the chosen one in the accent
+	/* an iPhone's tab (--tab-h), the icon over a small word, the chosen one in the accent
 	   alone. With a pill of its own and padding round the bar, it stood 60px over a
 	   band that looked empty (11-26) */
 	.sidebar .nav-item,
@@ -8990,10 +9012,10 @@ ZEC PRICE
 		justify-content: center;
 		gap: 2px;
 		height: 100%;
-		min-height: 49px;
+		height: var( --tab-h );
 		padding: 4px 2px 2px;
 		background: none;
-		font-size: var( --tab-text );
+		font-size: var( --frame-tab );
 	}
 	.sidebar .nav-item .nav-icon {
 		width: 22px;
@@ -9015,7 +9037,20 @@ ZEC PRICE
 		min-height: 0;
 		min-width: 0;
 		margin-top: 0;
-		padding: 16px 12px calc( 65px + var( --tab-under ) );		/* the tab bar's 49px, and room past it */
+		position: relative;		/* holds its ::after */
+		padding: 16px 12px calc( var( --tab-h ) + 16px + var( --tab-under ) );		/* the tab bar, and room past it */
+	}
+	/* a page always scrolls, if only by 1px, as an iPhone's own lists always do: iOS let
+	   no finger scroll a page that fit when it was laid out and grew past the screen after
+	   (Settings at a large text size, 11-27) */
+	.content::after {
+		content: "";
+		position: absolute;
+		top: 0;
+		left: 0;
+		width: 1px;
+		height: calc( 100% + 1px );
+		pointer-events: none;
 	}
 	/* a step starts at the top, under the bar, not centred: the 24 words and "I've
 	   Written It Down" fit one screen without scrolling */
