@@ -24,16 +24,12 @@ See the LICENSE file for details.
 //
 //   npm run layout        (Windows with Edge; starts its own dev server)
 
-import { spawn } from "node:child_process";
-import { existsSync, mkdtempSync, rmSync } from "node:fs";
-import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { existsSync } from "node:fs";
 import { Com_Settled, SETTLE_AGAIN_MS } from "./layout_settle.mjs";
-import { Com_DevServer, Com_Line as Line, Com_Within } from "./layout_tools.mjs";
+import { Com_DevServer, Com_Edge, Com_Within, EDGE, FRAMES } from "./layout_tools.mjs";
+import { Com_ScreenUrl, Com_Screens } from "./ui_screens.mjs";
 
-const EDGE	= "C:/Program Files (x86)/Microsoft/Edge/Application/msedge.exe";
 const PORT	= 1433;
-const FRAMES = "new Promise( ( ok ) => requestAnimationFrame( () => requestAnimationFrame( ok ) ) )";
 // the longest any one step may take before the check says so; LAUREL_LAYOUT_WAIT_MS for a
 // machine busy with other work (a first draw at 100% cpu took past 30s), said in the last line
 const WAIT_MS = Number( process.env.LAUREL_LAYOUT_WAIT_MS ) || 30_000;
@@ -46,18 +42,10 @@ const FIRST_DRAW_MS = WAIT_MS * 4;
 // (a taller one too: the action hints only show above 880px, and were cut there unseen)
 const SIZES	= [ [ 1100, 720 ], [ 1100, 900 ], [ 900, 600 ], [ 629, 411 ], [ 514, 343 ] ];
 
-// the screens opened over the dashboard, measured at every size too: mock.html's ?click
-// opens each, &drawn says when it's there. The sheets whose rows of tiles and cards, and
-// the popover of chips, are where a narrow window pushes something out of its box
-const SCREENS = [
-	{ name: "a pool's sheet",		click: ".pools-more .link|.pool-list li:nth-child(2) .pool-row",				drawn: ".pool-hero" },
-	{ name: "Receive",				click: ".actions .action:nth-child(2)",											drawn: ".tile-grid.three" },
-	{ name: "Receive's kinds",		click: ".actions .action:nth-child(2)|.tile-grid.three > button:last-child",	drawn: ".kind-list" },
-	{ name: "a transaction",		click: ".nav li:nth-child(4) .nav-item|.tx-row",								drawn: ".tx-route" },
-	{ name: "History's filters",	click: ".nav li:nth-child(4) .nav-item|.filter-btn",							drawn: ".chip-set" },
-	{ name: "Settings",				click: ".nav li:nth-child(5) .nav-item",										drawn: ".settings-nav" },
-	{ name: "a settings pane",		pane: "security",																drawn: ".pane-head" },
-];
+// the screens opened over the dashboard (ui_screens.mjs), measured at every size too: the
+// sheets whose rows of tiles and cards, and the popover of chips, are where a narrow window
+// pushes something out of its box
+const SCREENS = Com_Screens( [ "pool", "receive", "receive-kinds", "transaction", "filters", "settings", "security" ] );
 
 // the pseudo-locale's longer words, at the default size and the smallest
 const PSEUDO_SIZES = [ SIZES[0], SIZES[SIZES.length - 1] ];
@@ -84,60 +72,28 @@ if ( !existsSync( EDGE ) ) {
 // a promise, or the reason it never came: by WAIT_MS unless said
 const Within = ( what, promise, ms = WAIT_MS ) => Com_Within( what, promise, ms );
 
-/*
-==================
-Cdp
-
-The DevTools protocol over the browser's socket: send( method, params,
-session ) answers with the result, or throws the browser's error
-==================
-*/
-async function Cdp( url ) {
-	const socket = new WebSocket( url );
-	await new Promise( ( ok, fail ) => { socket.onopen = ok; socket.onerror = () => fail( new Error( "no DevTools socket" ) ); } );
-	let next = 0;
-	const waiting = new Map();
-	socket.onmessage = ( e ) => {
-		const m = JSON.parse( e.data );
-		const w = waiting.get( m.id );
-		if ( w ) {
-			waiting.delete( m.id );
-			m.error ? w.fail( new Error( m.error.message ) ) : w.ok( m.result );
-		}
-	};
-	const send = ( method, params = {}, sessionId ) => new Promise( ( ok, fail ) => {
-		const id = ++next;
-		waiting.set( id, { ok, fail } );
-		socket.send( JSON.stringify( { id, method, params, sessionId } ) );
-	} );
-	return { send, close: () => socket.close() };
-}
 
 let server = null;
-const profile = mkdtempSync( join( tmpdir(), "laurel-layout-" ) );
 let edge = null;
 let bad = 0;
 let unsettledCount = 0;		// faults seen in one of two measures (layout_settle.mjs): said, not counted
 try {
 	server = await Com_DevServer( PORT, WAIT_MS );
-	edge = spawn( EDGE, [ `--user-data-dir=${profile}`, "--headless=new", "--disable-gpu", "--hide-scrollbars", "--remote-debugging-port=0", "about:blank" ], { windowsHide: true } );
-	const [ , ws ] = await Within( "Edge", Line( edge.stderr, /DevTools listening on (ws:\/\/\S+)/ ) );
-	const cdp = await Cdp( ws );
+	edge = await Com_Edge( "check_layout", WAIT_MS );
 	// a tab at a url, opened at the first size: at the browser's own (800 x 600, under the
 	// smallest window) the balance isn't drawn as it is in Laurel, and the first draw waited 7s
 	const Tab = async ( url ) => {
-		const { targetId } = await cdp.send( "Target.createTarget", { url: "about:blank" } );
-		const { sessionId } = await cdp.send( "Target.attachToTarget", { targetId, flatten: true } );
+		const { Send, Eval } = await edge.Tab( url );
 		const tab = {
-			Size:		( [ w, h ], phone = false ) => cdp.send( "Emulation.setDeviceMetricsOverride", { width: w, height: h, deviceScaleFactor: 1, mobile: phone }, sessionId ),
+			Size:		( [ w, h ], phone = false ) => Send( "Emulation.setDeviceMetricsOverride", { width: w, height: h, deviceScaleFactor: 1, mobile: phone } ),
 			// in front, as Laurel's window always is: a tab behind others gets an animation
 			// frame about once a second, and a popover placed in a frame stays where it was
-			Front:		() => cdp.send( "Page.bringToFront", {}, sessionId ),
+			Front:		() => Send( "Page.bringToFront" ),
 			// a phone's text size, as useTextScale sets it: css zoom, and --app-zoom for what's sized by the screen
 			// each then two frames on: the page re-laid out at its new size before it's measured
-			Phone:		( on ) => cdp.send( "Runtime.evaluate", { expression: `window.__phone( ${on} ); ${FRAMES}`, awaitPromise: true }, sessionId ),
-			Zoom:		( z ) => cdp.send( "Runtime.evaluate", { expression: `document.documentElement.style.zoom = "${z}"; document.documentElement.style.setProperty( "--app-zoom", "${z}" ); ${FRAMES}`, awaitPromise: true }, sessionId ),
-			Look:		async () => ( await cdp.send( "Runtime.evaluate", { expression: "window.__layout ? window.__layout() : null", awaitPromise: true, returnByValue: true }, sessionId ) ).result.value,
+			Phone:		( on ) => Eval( `window.__phone( ${on} ); ${FRAMES}` ),
+			Zoom:		( z ) => Eval( `document.documentElement.style.zoom = "${z}"; document.documentElement.style.setProperty( "--app-zoom", "${z}" ); ${FRAMES}` ),
+			Look:		() => Eval( "window.__layout ? window.__layout() : null", 0 ),		// no deadline of its own: Measure's caller's
 			// faults the page keeps (layout_settle.mjs): a measure that finds any is taken again
 			// a moment on, and one in only one of them is said, not counted
 			Measure:	async ( what ) => {
@@ -152,8 +108,7 @@ try {
 			},
 		};
 		await tab.Size( SIZES[0] );
-		await cdp.send( "Emulation.setFocusEmulationEnabled", { enabled: true }, sessionId );		// a tab behind another isn't slowed
-		await cdp.send( "Page.navigate", { url: url }, sessionId );
+		await Send( "Page.navigate", { url } );
 		return tab;
 	};
 	const Drawn = ( tab, what, ms = WAIT_MS ) => Within( what, ( async () => { while ( !await tab.Look() ) await new Promise( ( ok ) => setTimeout( ok, 50 ) ); } )(), ms );
@@ -169,7 +124,7 @@ try {
 	] );
 	await main.Front();
 	await Drawn( main, "the first draw", FIRST_DRAW_MS );
-	const screens = await Promise.all( SCREENS.map( ( s ) => Tab( `http://127.0.0.1:${PORT}/mock.html?check&pane=${s.pane ?? ""}${s.click ? `&click=${encodeURIComponent( s.click )}` : ""}&drawn=${encodeURIComponent( s.drawn )}` ) ) );
+	const screens = await Promise.all( SCREENS.map( ( s ) => Tab( Com_ScreenUrl( PORT, s, [ "check" ] ) ) ) );
 	await main.Front();
 	for ( const [ w, h ] of SIZES ) {
 		await main.Size( [ w, h ] );
@@ -243,26 +198,14 @@ try {
 		console.error( `check_layout: pseudo-locale: "${text}" isn't from the language's text (ui_text.ts); no translation would reach it` );
 		bad++;
 	}
-	// closed, not killed: its helper processes let go of the profile before it is removed.
-	// Everything is measured by now, so a slow exit (a loaded machine: twice in one
-	// day) is killed below and said, not counted as a fault of the layout
-	const exited = new Promise( ( ok ) => edge.on( "exit", ok ) );
-	await cdp.send( "Browser.close" ).catch( () => {} );
-	if ( !await Within( "Edge closing", exited ).then( () => true, () => false ) ) {
-		console.warn( `check_layout: Edge took over ${WAIT_MS / 1000}s to close after measuring: killed it` );
-	}
-	cdp.close();
 } catch ( e ) {
 	console.error( `check_layout: ${e.message}` );
 	bad++;
 } finally {
-	edge?.kill();
+	// closed only now, everything measured: a slow exit (a loaded machine: twice in one day)
+	// is killed and said, never a fault of the layout
+	await edge?.Close();
 	server?.kill();
-	try {
-		rmSync( profile, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 } );
-	} catch {
-		// a browser helper still holding a file: the system's temp folder is cleared anyway
-	}
 }
 
 // what wasn't counted, and the limit it ran with, in the line the gate shows

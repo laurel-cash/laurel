@@ -280,7 +280,7 @@ describe( "mobile", () => {
 		expect( document.documentElement.style.zoom ).toBe( "" );
 	} );
 
-	it( "grows an iPhone's text with WebKit's text size, never css zoom (the sheets squeezed to a strip) or the page zoom (it changed nothing)", async () => {
+	it( "grows an iPhone's text by --text-scale, never css zoom (the sheets squeezed to a strip) or the page zoom (it changed nothing)", async () => {
 		engine.mobile = true;
 		engine.textZoom = "text";
 		engine.textScale = 175;
@@ -288,11 +288,11 @@ describe( "mobile", () => {
 		await Start();
 		await screen.findByText( T.welcome.title );
 		const root = document.documentElement.style;
-		expect( root.getPropertyValue( "-webkit-text-size-adjust" ) ).toBe( "175%" );
+		expect( root.getPropertyValue( "--text-scale" ) ).toBe( "1.75" );
 		expect( root.zoom ).toBe( "" );
 		expect( root.getPropertyValue( "--app-zoom" ) ).toBe( "" );
 		cleanup();
-		expect( root.getPropertyValue( "-webkit-text-size-adjust" ) ).toBe( "" );
+		expect( root.getPropertyValue( "--text-scale" ) ).toBe( "" );
 	} );
 
 	it( "keeps desktop window controls off the phone", async () => {

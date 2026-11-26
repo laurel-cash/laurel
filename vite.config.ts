@@ -15,6 +15,8 @@ import react from "@vitejs/plugin-react";
 
 // @ts-expect-error: a plain node module of the release scripts, without types
 import { Com_Features, Com_ModuleMark, Com_ModuleProblems } from "./scripts/release_rules.mjs";
+// @ts-expect-error: a plain node module of the build, without types
+import { TEXT_SCALE } from "./scripts/text_scale.mjs";		// an iPhone's text size: every px font size times --text-scale
 
 // the modules a build may leave out (D-031), left out of the page as cargo leaves
 // them out of the engine: one list, the build's --features, handed here by android.ps1
@@ -48,6 +50,7 @@ const DEV_PORT	= 1420;
 export const WEBVIEW_FLOOR = 111;
 
 export default defineConfig( () => ( {
+	css: { postcss: { plugins: [ TEXT_SCALE ] } },
 	plugins: [
 		react(),
 		{

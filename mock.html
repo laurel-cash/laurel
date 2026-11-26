@@ -17,6 +17,9 @@
 			// turned ?sapling on
 			const QUERY = new URLSearchParams( location.search );
 			const Flag = ( name ) => QUERY.has( name );
+			// waits every script of this page shares: a while, and the page's next frame
+			const Sleep = ( ms ) => new Promise( ( ok ) => setTimeout( ok, ms ) );
+			const Frame = () => new Promise( ( ok ) => requestAnimationFrame( () => ok() ) );
 			const Z = 100_000_000;
 			// checking: private money the engine is still checking (not yet spendable)
 			const bal = ( i, o, s, t, checking = 0 ) => ( { ironwood: { confirmed: i, pending: 0 }, orchard: { confirmed: o, pending: 0 }, sapling: { confirmed: s, pending: 0 }, transparent: { confirmed: t, pending: 0 }, total: i + o + s + t, spendable: i + o + s - checking } );
@@ -34,7 +37,7 @@
 				V_Open_f:		Flag( "locked" ) ? { state: "locked", protection: "password", osProtectionAvailable: true, minPasswordLen: 8 } : { state: "unlocked", protection: "os", osProtectionAvailable: true, minPasswordLen: 8 },
 				V_Unlock_f:		{ state: "unlocked", protection: "password", osProtectionAvailable: true, minPasswordLen: 8 },
 				V_Status_f:		{ state: "unlocked", protection: "os", osProtectionAvailable: true, minPasswordLen: 8 },
-				W_Constants_f:	{ mobile: Flag( "phone" ), updateCheck: Flag( "phone" ), textZoom: Flag( "phone" ) ? "css" : "page", phraseLengths: [ 12, 24 ], maxAccounts: 20, maxNameLen: 40, defaultWalletName: "My Wallet", defaultAccountName: "Main", blockSecs: 75, autoLockChoices: [ 1, 5, 10, 15, 30, 60 ], lockAwayChoices: [ 0, 60, 300 ], memoMaxBytes: 512, categories: [ "income", "food" ], textScales: [ 100, 115, 130, 150, 175 ], dustZats: 5000 },
+				W_Constants_f:	{ mobile: Flag( "phone" ), updateCheck: Flag( "phone" ), textZoom: Flag( "ios" ) ? "text" : Flag( "phone" ) ? "css" : "page", phraseLengths: [ 12, 24 ], maxAccounts: 20, maxNameLen: 40, defaultWalletName: "My Wallet", defaultAccountName: "Main", blockSecs: 75, autoLockChoices: [ 1, 5, 10, 15, 30, 60 ], lockAwayChoices: [ 0, 60, 300 ], memoMaxBytes: 512, categories: [ "income", "food" ], textScales: [ 100, 115, 130, 150, 175 ], dustZats: 5000 },
 				// &scale=175: the text size, set as the app sets it (useTextScale: css zoom on a phone)
 				S_Get_f:		{ autoLockMinutes: null, lockAwaySecs: 60, notifyInApp: true, notifySystem: true, network: "testnet", showPrice: false, textScale: Number( QUERY.get( "scale" ) ?? 100 ) },
 				// ?sapling: some money in Sapling, to move (W_QuoteMove_f)
@@ -108,8 +111,8 @@
 				// too late (its WAIT_MS); a page that gave up at 8s once failed a busy gate
 				const SETTLE_MS = 700;
 				let settled = false;
-				const DRAWN = QUERY.get( "drawn" ) ?? ".split .split-amount";
-				const Drawn = () => !!document.querySelector( DRAWN );
+				// window.__drawn: another screen's, set by __screen when it opens one in place
+				const Drawn = () => !!document.querySelector( window.__drawn ?? QUERY.get( "drawn" ) ?? ".split .split-amount" );
 				const Faults = () => {
 					const faults = [];
 					const name = ( el ) => el.tagName.toLowerCase() + ( el.className && typeof el.className === "string" ? "." + el.className.trim().split( /\s+/ ).join( "." ) : "" );
@@ -136,7 +139,8 @@
 					}
 					// the page never scrolls sideways
 					if ( document.documentElement.scrollWidth > innerWidth + 1 ) faults.push( `the page is ${document.documentElement.scrollWidth}px wide in a ${innerWidth}px window` );
-					return faults.concat( Overlaps(), BrokenWords(), PastTheEdge(), UnderTheBar() );
+					const texts = Texts();		// once: both read every box's words, the costliest look
+					return faults.concat( Overlaps( texts ), BrokenWords( texts ), PastTheEdge(), UnderTheBar() );
 				};
 
 				// what shows: a box of 1px or less is hidden for a screen reader (.sr-only, an
@@ -149,10 +153,12 @@
 				};
 				const Tag = ( el ) => el.tagName.toLowerCase() + ( typeof el.className === "string" && el.className.trim() ? "." + el.className.trim().split( /\s+/ ).join( "." ) : "" );
 				const OwnText = ( el ) => [ ...el.childNodes ].some( ( n ) => n.nodeType === 3 && n.textContent.trim() );
-				// the fixed layer a box is in (the bottom bar, the title bar), or none
-				const Layer = ( el ) => {
-					for ( let p = el; p; p = p.parentElement ) if ( getComputedStyle( p ).position === "fixed" ) return p;
-					return null;
+				// the fixed layer a box is in (the bottom bar, the title bar), or none; each box's
+				// parent asked once per look (layers: Texts' memo), not once per box under it
+				const Layer = ( el, layers ) => {
+					if ( !el ) return null;
+					if ( !layers.has( el ) ) layers.set( el, getComputedStyle( el ).position === "fixed" ? el : Layer( el.parentElement, layers ) );
+					return layers.get( el );
 				};
 				// a box's words where they are drawn: an ellipsis or a clipped box cuts them to it
 				const Words = ( el ) => {
@@ -165,14 +171,17 @@
 						.filter( ( q ) => q.width > 1 && q.height > 1 );
 				};
 				// each box's layer found once: asked per pair, the walk up was millions of style reads
-				const Texts = () => [ ...document.querySelectorAll( "body *" ) ].filter( ( el ) => OwnText( el ) && Shown( el ) ).map( ( el ) => ( { el, rects: Words( el ), sheet: el.closest( "[role='dialog']" ), layer: Layer( el ) } ) ).filter( ( t ) => t.rects.length );
+				const Texts = () => {
+					const layers = new Map();
+					return [ ...document.querySelectorAll( "body *" ) ].filter( ( el ) => OwnText( el ) && Shown( el ) ).map( ( el ) => ( { el, rects: Words( el ), sheet: el.closest( "[role='dialog']" ), layer: Layer( el, layers ) } ) ).filter( ( t ) => t.rects.length );
+				};
 
 				// no words drawn over other words in the same layer ("99.6%" over "Public" on
 				// every phone; a sheet over the page and the bottom bar over the list are layers)
-				const Overlaps = () => {
+				const Overlaps = ( all ) => {
 					const out = [];
 					// top to bottom: a box is held only against those that start above its end
-					const texts = Texts().map( ( t ) => ( { ...t, top: Math.min( ...t.rects.map( ( q ) => q.top ) ), bottom: Math.max( ...t.rects.map( ( q ) => q.bottom ) ) } ) ).sort( ( p, q ) => p.top - q.top );
+					const texts = all.map( ( t ) => ( { ...t, top: Math.min( ...t.rects.map( ( q ) => q.top ) ), bottom: Math.max( ...t.rects.map( ( q ) => q.bottom ) ) } ) ).sort( ( p, q ) => p.top - q.top );
 					for ( let i = 0; i < texts.length; i++ ) {
 						for ( let j = i + 1; j < texts.length && texts[j].top < texts[i].bottom - 2; j++ ) {
 							const a = texts[i], b = texts[j];
@@ -187,10 +196,10 @@
 
 				// no word broken in two ("Receiv/e", "Mov/es"): one word's letters on two lines.
 				// An address breaks anywhere on purpose (monospace)
-				const BrokenWords = () => {
+				const BrokenWords = ( texts ) => {
 					const out = [];
 					// only a box on more than one line can have broken one
-					for ( const { el, rects } of Texts() ) {
+					for ( const { el, rects } of texts ) {
 						if ( new Set( rects.map( ( q ) => Math.round( q.top ) ) ).size < 2 || /mono/i.test( getComputedStyle( el ).fontFamily ) ) continue;
 						for ( const n of el.childNodes ) {
 							if ( n.nodeType !== 3 ) continue;
@@ -248,7 +257,6 @@
 					}
 					return out;
 				};
-				const Sleep = ( ms ) => new Promise( ( ok ) => setTimeout( ok, ms ) );
 				// in the pseudo-locale (&locale=en-XA) every sentence Laurel says is ⟦ between ⟧:
 				// words on screen outside them came from somewhere else. That is the sample data
 				// (names, memos, addresses), or a sentence a translation would never reach
@@ -266,11 +274,10 @@
 				// where every sheet and popover is: a popover follows a resize a frame or more after
 				// it (Radix places it from a resize listener), and measured before it had, one stuck
 				// out of a narrow window that it never sticks out of
-				const Frame = () => new Promise( ( ok ) => requestAnimationFrame( () => ok() ) );
 				const Placed = () => [ ...document.querySelectorAll( "[role='dialog']" ) ].map( ( d ) => { const r = d.getBoundingClientRect(); return `${r.left},${r.top},${r.width},${r.height}`; } ).join( "|" );
 				window.__layout = async () => {
 					while ( !Drawn() ) await Sleep( 50 );
-					await Sleep( settled ? 50 : SETTLE_MS );		// after a resize: its re-layout, a frame or two
+					await ( settled ? Frame().then( Frame ) : Sleep( SETTLE_MS ) );		// after a resize: its re-layout, two frames
 					settled = true;
 					// a sheet still opening: its animations over first (a spinner's never are, so
 					// only those that end), or 2 s, a sheet that never stops moving measured anyway.
@@ -306,6 +313,30 @@
 			if ( pane ) {
 				setTimeout( () => useStore.getState().Go( "settings", pane ), 1500 );
 			}
+			// ?still: no animations at all, from the first draw (scripts/ui_kit.mjs: a picture
+			// waits on none, and none is caught mid-way)
+			// (?click too: a headless capture stops advancing animations once loaded)
+			const click = QUERY.get( "click" );
+			const still = Flag( "still" );
+			if ( still || click ) {
+				MotionGlobalConfig.skipAnimations = true;
+			}
+			if ( still ) {
+				// and css's: a text size set started transitions __layout then waited out, ~300ms a
+				// look (a profile, 11-26); a spinner drawn at rest
+				const css = document.createElement( "style" );
+				css.textContent = "*, *::before, *::after { transition: none !important; animation-duration: 0s !important; animation-delay: 0s !important; }";
+				document.head.append( css );
+			}
+			// press each of a|b|c once it's there: on a clock instead, a busy machine's late draw
+			// lost the press, and the screen it opens never came (check_layout.mjs: "took over 30s")
+			const Press = async ( click ) => {
+				for ( const sel of click.split( "|" ) ) {
+					while ( !document.querySelector( sel ) ) await Sleep( 50 );
+					await Sleep( still ? 0 : 150 );		// the last press's screen, settled into place (no motion: at once)
+					document.querySelector( sel ).click();
+				}
+			};
 			// ?fresh: the layout a computer's first wallet starts with (ui_store.ts, St_ApplyList): no pool list
 			if ( Flag( "fresh" ) ) {
 				useStore.getState().SetHome( { ...HOME_DEFAULT, hidden: [ "pools" ] } );
@@ -314,17 +345,25 @@
 			// several, apart by |, one after another, each once it's there. Pressed on a clock
 			// instead, a busy machine's late draw lost the press, and the screen it opens
 			// never came (check_layout.mjs: "took over 30s")
-			const click = QUERY.get( "click" );
 			if ( click ) {
-				MotionGlobalConfig.skipAnimations = true;		// a headless capture stops advancing animations once loaded
-				const Sleep = ( ms ) => new Promise( ( ok ) => setTimeout( ok, ms ) );
-				( async () => {
-					for ( const sel of click.split( "|" ) ) {
-						while ( !document.querySelector( sel ) ) await Sleep( 50 );
-						await Sleep( 150 );		// the last press's screen, settled into place
-						document.querySelector( sel ).click();
+				Press( click );
+			}
+			// ?check: window.__screen( { pane, click, drawn } ) opens another screen in place
+			// (scripts/ui_screens.mjs's): what's open closed (Escape, as Back closes it), Home or
+			// the pane, then the presses; resolved once drawn. A page loaded for each screen took
+			// most of ui_kit's time (11-26)
+			if ( Flag( "check" ) ) {
+				window.__screen = async ( screen ) => {
+					const Open = () => document.querySelector( "[role='dialog'][data-state='open'], [role='menu'][data-state='open'], [data-radix-popper-content-wrapper]" );
+					for ( let i = 0; i < 5 && Open(); i++ ) {
+						( document.activeElement ?? document.body ).dispatchEvent( new KeyboardEvent( "keydown", { key: "Escape", code: "Escape", bubbles: true, cancelable: true } ) );
+						await Frame();
 					}
-				} )();
+					window.__drawn = screen.drawn;
+					useStore.getState().Go( screen.pane ? "settings" : "home", screen.pane || undefined );
+					if ( screen.click ) await Press( screen.click );
+					while ( !document.querySelector( screen.drawn ) ) await Sleep( 20 );
+				};
 			}
 		</script>
 		<script type="module" src="/src/main.tsx"></script>

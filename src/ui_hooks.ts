@@ -250,8 +250,11 @@ window, and Ctrl +, Ctrl − and Ctrl 0 stepping through the same choices
 and saving them: the keys and the setting are one number, never two.
 How is rust's to say (constants.textZoom, textZoom_t): the webview's own
 zoom on a computer; css zoom on Android, whose webview zooms nothing
-(touch targets grow too); WebKit's text size on the iPhone, where the
-page zoom changed nothing and css zoom squeezed the sheets to a strip
+(touch targets grow too); on the iPhone the text alone, --text-scale
+(every px font size times it: scripts/text_scale.mjs), where the page zoom
+changed nothing and css zoom squeezed the sheets to a strip. A browser
+draws --text-scale as the iPhone does, so it is tested as it is seen
+(scripts/ui_kit.mjs); WebKit's own text size reaches only an iPhone
 ==================
 */
 export function useTextScale( scales: number[] ) {
@@ -262,8 +265,8 @@ export function useTextScale( scales: number[] ) {
 	useEffect( () => {
 		const root = document.documentElement;
 		if ( scale && zoom === "text" ) {
-			root.style.setProperty( "-webkit-text-size-adjust", `${scale}%` );
-			return () => root.style.removeProperty( "-webkit-text-size-adjust" );
+			root.style.setProperty( "--text-scale", String( scale / 100 ) );
+			return () => root.style.removeProperty( "--text-scale" );
 		} else if ( scale && zoom === "css" ) {
 			document.documentElement.style.zoom = String( scale / 100 );
 			document.documentElement.style.setProperty( "--app-zoom", String( scale / 100 ) );

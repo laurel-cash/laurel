@@ -32,3 +32,6 @@ temp/
 
 # the pinned upstream zingolib, fetched by scripts/engine.mjs to check the fork against
 vendor/.upstream/
+
+# the ui kit's pictures (scripts/ui_kit.mjs) and CI's: made, never kept
+out/

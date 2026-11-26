@@ -38,10 +38,19 @@ same on both phones and is checked by the Android gate first.
   twin: `w_ios.rs` keeps both covers, the backup exclusion, the background task and its
   own notification delegate (Ios_Notices: the plugin's crashed on a tap after iOS ended
   Laurel), and project.yml the data protection.
-- The text size is WebKit's text size on the iPhone (`constants.textZoom` "text":
-  `-webkit-text-size-adjust`, as Safari's aA), never css zoom (WebKit lays it out
-  differently and squeezed the sheets to a strip) nor WKWebView's page zoom (taken,
-  and changed nothing on a phone, 11-26). ios.yml's Simulator job pictures 100% and 150%.
+- The text size on the iPhone grows the text alone (`constants.textZoom` "text"):
+  every px font size in ui.css is drawn times `--text-scale` (scripts/text_scale.mjs,
+  run by vite.config.ts). Never css zoom (WebKit lays it out differently and squeezed
+  the sheets to a strip), nor WKWebView's page zoom (taken, and changed nothing on a
+  phone, 11-26). ios.yml's Simulator job pictures the real app at 100% and 150%.
+- The phone's notch and home bar are `--safe-top` / `--safe-bottom` (ui.css :root), so
+  a browser can be given an iPhone's.
+- Look before shipping a layout: `npm run kit` (scripts/ui_kit.mjs) pictures every
+  screen and sheet (scripts/ui_screens.mjs) on three iPhones at 100/130/175%, at its
+  top and scrolled to its end, with check_layout's faults beside each:
+  out/kit/index.html and one sheet-<phone>-<size>.jpg each (about 30s a phone; the
+  phones side by side). `--only=`, `--phones=`,
+  `--scales=` narrow it.
 - On a phone, Back is top left (`UI_PhoneBack`, the screen's own `nav-back`) and at the
   top of every sheet: an iPhone has no Back key.
 - Check for Updates (Settings > About, off by default) asks the App Store once a day
