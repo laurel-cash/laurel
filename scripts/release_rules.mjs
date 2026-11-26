@@ -147,7 +147,8 @@ Com_IosProblems
 The iPhone's twin of Com_ActivityProblems (docs/IOS.md). iOS can't refuse
 a screenshot, so w_ios.rs covers the page while Laurel isn't the active
 app (the app switcher's picture) and while the screen is captured; it
-keeps the data folders out of backups and saves in a background task.
+keeps the data folders out of backups, saves in a background task, and
+answers for its own notifications.
 project.yml closes the app's files while the phone is locked. Code in
 comments doesn't count
 ==================
@@ -157,6 +158,7 @@ const IOS_NEEDS = [
 	[ /UIScreenCapturedDidChangeNotification/,		"doesn't cover the page while the screen is recorded or mirrored" ],
 	[ /NSURLIsExcludedFromBackupKey/,				"doesn't keep the data folders out of iCloud backups: the vault would leave the phone" ],
 	[ /beginBackgroundTask/,						"doesn't ask for time to save in the background: iOS may end Laurel mid-write" ],
+	[ /UNUserNotificationCenterDelegate/,			"leaves its notifications to the plugin: a tap after iOS ended Laurel stops the app (Ios_Notices)" ],
 ];
 
 export function Com_IosProblems( ios, project ) {
@@ -193,6 +195,31 @@ export function Com_IosIconProblems( png, sha256 ) {
 	const RGB = 2;		// IHDR colour type: 6 is RGBA
 	if ( png[ 25 ] !== RGB ) {
 		problems.push( "AppIcon-512@2x.png has an alpha channel: App Store Connect refuses it" );
+	}
+	return problems;
+}
+
+/*
+==================
+Com_ViewportProblems
+
+index.html's viewport: the page to the screen's edges (viewport-fit, the
+safe areas), and no zoom of its own (maximum-scale): iOS zooms into a
+field under 16px as it takes focus and stays zoomed. Laurel's text size
+is its setting (useTextScale)
+==================
+*/
+export function Com_ViewportProblems( html ) {
+	const viewport = html.match( /<meta\s+name="viewport"\s+content="([^"]*)"/ )?.[ 1 ];
+	if ( viewport === undefined ) {
+		return [ "index.html has no viewport" ];
+	}
+	const problems = [];
+	if ( !/\bmaximum-scale=1(\.0)?\b/.test( viewport ) ) {
+		problems.push( "index.html's viewport lets the page zoom: iOS zooms into a small field when it takes focus" );
+	}
+	if ( !/\bviewport-fit=cover\b/.test( viewport ) ) {
+		problems.push( "index.html's viewport doesn't reach the screen's edges (viewport-fit=cover): the safe areas go unpadded" );
 	}
 	return problems;
 }

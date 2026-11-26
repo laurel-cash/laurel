@@ -2,7 +2,10 @@
 <html lang="en">
 	<head>
 		<meta charset="UTF-8" />
-		<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
+		<!-- maximum-scale: iOS zooms into a field under 16px when it takes focus (Send's
+		     address, 12px), and never back out. The text size is Laurel's own setting
+		     (useTextScale); Com_ViewportProblems keeps this -->
+		<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, viewport-fit=cover" />
 		<title>Laurel</title>
 		<!-- before the page's script: a web view older than Laurel's floor (vite.config.ts,
 		     WEBVIEW_FLOOR) can't read it, and would show nothing. Old syntax on purpose -->

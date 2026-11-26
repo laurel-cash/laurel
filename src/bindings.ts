@@ -191,6 +191,7 @@ export type closingEvent_t = Record<string, never>;
 
 export type constants_t = {
 	mobile: boolean,
+	pageZoom: boolean,
 	phraseLengths: number[],
 	maxAccounts: number,
 	maxNameLen: number,

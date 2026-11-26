@@ -81,6 +81,7 @@ W_Constants
 pub fn W_Constants() -> constants_t {
 	constants_t {
 		mobile:				cfg!( mobile ),
+		pageZoom:			!cfg!( target_os = "android" ),
 		phraseLengths:		PHRASE_LENGTHS.to_vec(),
 		maxAccounts:		MAX_ACCOUNTS,
 		maxNameLen:			MAX_NAME_LEN,

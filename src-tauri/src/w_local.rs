@@ -1343,6 +1343,7 @@ pub struct blockEra_t {
 #[derive( Clone, Debug, Serialize, Type )]
 pub struct constants_t {
 	pub mobile:			bool,		// the compiled target, never guessed from the viewport
+	pub pageZoom:		bool,		// the webview zooms the page itself (a computer's, WKWebView's pageZoom); Android's can't, and css zoom stands in (useTextScale)
 	pub phraseLengths:		Vec< u32 >,
 	pub maxAccounts:		u32,
 	pub maxNameLen:			u32,

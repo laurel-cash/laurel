@@ -21,7 +21,7 @@ See the LICENSE file for details.
 import { createHash } from "node:crypto";
 import { createRequire } from "node:module";
 import { readFileSync, readdirSync } from "node:fs";
-import { Com_ActivityProblems, Com_CargoProblems, Com_IosIconProblems, Com_IosProblems, Com_Uncommented } from "./release_rules.mjs";
+import { Com_ActivityProblems, Com_CargoProblems, Com_IosIconProblems, Com_IosProblems, Com_Uncommented, Com_ViewportProblems } from "./release_rules.mjs";
 
 // Cargo.toml's [profile.release], as it must be
 const RELEASE = {
@@ -113,6 +113,9 @@ for ( const file of readdirSync( "src-tauri/src" ).filter( ( f ) => f.endsWith( 
 // vite.config.ts): its script is ES5, and its CSS has nothing Chrome 83 drops (inset is
 // 87, flex gap 84): Test Lab's Pixel 5 has WebView 83
 const html = readFileSync( "index.html", "utf8" );
+for ( const problem of Com_ViewportProblems( html ) ) {
+	Fail( problem );
+}
 const acorn = createRequire( import.meta.url )( "acorn" );
 for ( const [ , script ] of html.matchAll( /<script>([\s\S]*?)<\/script>/g ) ) {
 	try {

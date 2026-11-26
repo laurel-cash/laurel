@@ -131,7 +131,7 @@ the eleven by hand
 */
 export function Test_Constants( patch: Partial< constants_t > = {} ): constants_t {
 	return {
-		mobile: false, phraseLengths: [ 12, 15, 18, 21, 24 ], maxAccounts: 20, maxNameLen: 40, defaultWalletName: "My Wallet", defaultAccountName: "Main",
+		mobile: false, pageZoom: true, phraseLengths: [ 12, 15, 18, 21, 24 ], maxAccounts: 20, maxNameLen: 40, defaultWalletName: "My Wallet", defaultAccountName: "Main",
 		blockEras: [ { network: "testnet", from: 0, secs: 150 }, { network: "testnet", from: 584000, secs: 75 }, { network: "testnet", from: 4465026, secs: 25 } ], autoLockChoices: [ 5, 15, 60 ], lockAwayChoices: [ 0, 60, 300 ], memoMaxBytes: 512, categories: [], textScales: [ 100, 115, 130 ], maxPayments: 50, dustZats: 5000, noteMaxChars: 200, networks: [ "testnet", "mainnet" ], ...patch,
 	};
 }

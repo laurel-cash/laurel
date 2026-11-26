@@ -80,6 +80,7 @@ objc2 = "0.6"
 block2 = "0.6"
 objc2-foundation = { version = "0.3", features = [ "NSNotification", "NSOperation", "NSString", "NSURL", "NSValue", "NSError", "NSObject", "block2" ] }
 objc2-ui-kit = { version = "0.3", features = [ "UIApplication", "UIResponder", "UIView", "UIScrollView", "UIColor", "UIWindow", "UIScreen", "block2", "objc2-core-foundation" ] }
+objc2-user-notifications = { version = "0.3", features = [ "UNUserNotificationCenter", "UNNotification", "UNNotificationResponse", "block2" ] }		# Ios_Notices
 
 [patch.crates-io]
 time = { git = "https://github.com/time-rs/time", tag = "v0.3.47" }

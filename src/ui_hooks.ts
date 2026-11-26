@@ -247,27 +247,30 @@ useTextScale
 
 The chosen text size (w_settings.rs, TEXT_SCALES) applied to the whole
 window, and Ctrl +, Ctrl − and Ctrl 0 stepping through the same choices
-and saving them: the keys and the setting are one number, never two
+and saving them: the keys and the setting are one number, never two.
+The webview's own zoom where it has one (constants.pageZoom: a computer,
+the iPhone); Android's is a no-op, so css zoom stands in there, which
+scales touch targets too. WebKit lays css zoom out its own way: on the
+iPhone the size changed nothing but the sheets, squeezed to a strip
 ==================
 */
 export function useTextScale( scales: number[] ) {
 	const { settings, save } = useAppSettings();
 	const scale = settings?.textScale;
-	const mobile = useStore( ( s ) => s.constants?.mobile );
+	const pageZoom = useStore( ( s ) => s.constants?.pageZoom );
 
 	useEffect( () => {
-		if ( scale && mobile ) {
-			// wry's android zoom method is a no-op; css zoom also scales touch targets
+		if ( scale && pageZoom === false ) {
 			document.documentElement.style.zoom = String( scale / 100 );
 			document.documentElement.style.setProperty( "--app-zoom", String( scale / 100 ) );
 			return () => {
 				document.documentElement.style.zoom = "";
 				document.documentElement.style.removeProperty( "--app-zoom" );
 			};
-		} else if ( scale && mobile === false ) {
+		} else if ( scale && pageZoom ) {
 			getCurrentWebview().setZoom( scale / 100 ).catch( ( e: unknown ) => console.error( "useTextScale", e ) );
 		}
-	}, [ scale, mobile ] );
+	}, [ scale, pageZoom ] );
 
 	useEffect( () => {
 		function Key( e: KeyboardEvent ) {

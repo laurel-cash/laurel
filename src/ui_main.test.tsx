@@ -23,6 +23,7 @@ import type { documentResult_t, vaultStatus_t, walletList_t } from "./bindings";
 const engine = vi.hoisted( () => ( {
 	vault:		null as vaultStatus_t | null,
 	mobile:		false,
+	pageZoom:	true,
 	document:	null as documentResult_t | null,
 	textScale:	100,
 	vaultChanged: null as ( () => void ) | null,
@@ -37,7 +38,7 @@ const engine = vi.hoisted( () => ( {
 
 vi.mock( "./bindings", async () => ( {
 	commands: {
-		wConstantsF: async () => ( await import( "./test_engine" ) ).Test_Constants( { mobile: engine.mobile } ),
+		wConstantsF: async () => ( await import( "./test_engine" ) ).Test_Constants( { mobile: engine.mobile, pageZoom: engine.pageZoom } ),
 		sGetF: async () => ( await import( "./test_engine" ) ).Test_Settings( { textScale: engine.textScale } ),
 		vOpenF: async () => {
 			if ( engine.vaultError ) {
@@ -90,6 +91,7 @@ async function Start() {
 
 beforeEach( () => {
 	engine.mobile = false;
+	engine.pageZoom = true;
 	engine.document = null;
 	engine.textScale = 100;
 	engine.vaultChanged = null;
@@ -268,6 +270,7 @@ describe( "mobile", () => {
 	} );
 	it( "applies text scaling without the unsupported Android webview zoom call", async () => {
 		engine.mobile = true;
+		engine.pageZoom = false;
 		engine.textScale = 175;
 		engine.list = { firstRun: true, wallets: [], failed: [] };
 		await Start();
@@ -275,6 +278,16 @@ describe( "mobile", () => {
 		expect( document.documentElement.style.zoom ).toBe( "1.75" );
 		cleanup();
 		expect( document.documentElement.style.zoom ).toBe( "" );
+	} );
+
+	it( "zooms an iPhone's page with WebKit's own zoom, never css zoom (the sheets squeezed to a strip)", async () => {
+		engine.mobile = true;
+		engine.textScale = 175;
+		engine.list = { firstRun: true, wallets: [], failed: [] };
+		await Start();
+		await screen.findByText( T.welcome.title );
+		expect( document.documentElement.style.zoom ).toBe( "" );
+		expect( document.documentElement.style.getPropertyValue( "--app-zoom" ) ).toBe( "" );
 	} );
 
 	it( "keeps desktop window controls off the phone", async () => {

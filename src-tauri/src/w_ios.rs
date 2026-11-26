@@ -10,8 +10,9 @@ See the LICENSE file for details.
 */
 // w_ios.rs -- what iOS asks of an app that holds money: the page out to the
 // screen's edges, a blank card in the app switcher, its folders kept out of
-// iCloud backups, and time to finish saving once it's out of sight. Sys_Run
-// calls Ios_KeepLocal and Ios_Prepare once; nothing else knows it's on an iPhone
+// iCloud backups, time to finish saving once it's out of sight, and a tapped
+// notification that opens Laurel. Sys_Run calls Ios_KeepLocal, Ios_Notices
+// and Ios_Prepare once; nothing else knows it's on an iPhone
 use std::cell::Cell;
 use std::path::Path;
 use std::ptr::NonNull;
@@ -19,11 +20,12 @@ use std::rc::Rc;
 use std::sync::atomic::{ AtomicUsize, Ordering };
 use std::sync::Arc;
 
-use block2::RcBlock;
+use block2::{ DynBlock, RcBlock };
 use objc2::rc::Retained;
-use objc2::runtime::AnyObject;
-use objc2::MainThreadMarker;
+use objc2::runtime::{ AnyObject, NSObject, NSObjectProtocol, ProtocolObject };
+use objc2::{ define_class, msg_send, ClassType, MainThreadMarker };
 use objc2_foundation::{ NSNotification, NSNotificationCenter, NSNotificationName, NSNumber, NSOperationQueue, NSString, NSURL, NSURLIsExcludedFromBackupKey };
+use objc2_user_notifications::{ UNNotification, UNNotificationPresentationOptions, UNNotificationResponse, UNUserNotificationCenter, UNUserNotificationCenterDelegate };
 use objc2_ui_kit::{
 	UIApplication, UIApplicationDidBecomeActiveNotification, UIApplicationDidEnterBackgroundNotification,
 	UIApplicationWillResignActiveNotification, UIBackgroundTaskIdentifier, UIBackgroundTaskInvalid, UIColor,
@@ -87,6 +89,47 @@ fn Ios_KeepFolder( folder: &Path ) {
 		log::warn!( "Ios_KeepLocal: {}", e.localizedDescription() );
 	}
 }
+
+/*
+==================
+Ios_Notices
+
+Laurel answers for its notifications, not the notification plugin: the
+plugin keeps the ones it showed in memory only, and a tap on one after
+iOS had ended Laurel found none there and stopped the app (TestFlight
+0.3.3 (8): "crashed after idle and reopening"). Laurel only shows them
+(N_Show): one while it's open shows as a banner, a tap opens it. Once,
+in setup, after the plugin has made itself the delegate and before iOS
+hands over the tap that launched the app
+==================
+*/
+pub fn Ios_Notices() {
+	// SAFETY: +new on an NSObject subclass with no ivars
+	let notices: Retained< Ios_Notices_t > = unsafe { msg_send![ Ios_Notices_t::class(), new ] };
+	UNUserNotificationCenter::currentNotificationCenter().setDelegate( Some( ProtocolObject::from_ref( &*notices ) ) );
+	std::mem::forget( notices );		// the center holds its delegate weakly: Laurel's, for the life of the process
+}
+
+define_class!(
+	// SAFETY: NSObject has no subclassing requirements, and this adds no ivars and no Drop
+	#[unsafe( super( NSObject ) )]
+	#[name = "LaurelNotices"]
+	struct Ios_Notices_t;
+
+	unsafe impl NSObjectProtocol for Ios_Notices_t {}
+
+	unsafe impl UNUserNotificationCenterDelegate for Ios_Notices_t {
+		#[unsafe( method( userNotificationCenter:willPresentNotification:withCompletionHandler: ) )]
+		fn Present( &self, _center: &UNUserNotificationCenter, _notice: &UNNotification, done: &DynBlock< dyn Fn( UNNotificationPresentationOptions ) > ) {
+			done.call( ( UNNotificationPresentationOptions::Banner | UNNotificationPresentationOptions::List | UNNotificationPresentationOptions::Sound, ) );
+		}
+
+		#[unsafe( method( userNotificationCenter:didReceiveNotificationResponse:withCompletionHandler: ) )]
+		fn Tapped( &self, _center: &UNUserNotificationCenter, _response: &UNNotificationResponse, done: &DynBlock< dyn Fn() > ) {
+			done.call( () );		// iOS has opened Laurel; nothing more to do
+		}
+	}
+);
 
 /*
 ==================

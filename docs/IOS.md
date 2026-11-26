@@ -35,8 +35,13 @@ same on both phones and is checked by the Android gate first.
   library carries `laurel-networks:v1`, no module marks, the probe off, no
   `coingecko.com`.
 - `Com_IosProblems` (release_rules.mjs, in check_release.mjs) is `Com_ActivityProblems`'s
-  twin: `w_ios.rs` keeps both covers, the backup exclusion and the background task, and
-  project.yml the data protection.
+  twin: `w_ios.rs` keeps both covers, the backup exclusion, the background task and its
+  own notification delegate (Ios_Notices: the plugin's crashed on a tap after iOS ended
+  Laurel), and project.yml the data protection.
+- The text size is WebKit's own page zoom on the iPhone (`constants.pageZoom`), never
+  css zoom: WebKit lays css zoom out differently and squeezed the sheets to a strip.
+- `Com_ViewportProblems`: index.html's viewport has `maximum-scale=1`, or iOS zooms into
+  a field under 16px (Send's address) as it takes focus.
 - `Com_IosIconProblems` (same place): the home screen icon is Laurel's, not Tauri's
   placeholder, and opaque. Made from app-icon.png cropped to full bleed (80 px in, so
   no rounded corner is left), then `tauri icon -o` to a scratch folder and only `ios/`

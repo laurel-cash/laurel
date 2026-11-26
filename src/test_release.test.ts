@@ -15,7 +15,7 @@ See the LICENSE file for details.
 import { describe, expect, it } from "vitest";
 
 // @ts-expect-error: a plain node module of the release scripts, without types
-import { Com_ActivityProblems, Com_CargoProblems, Com_IosIconProblems, Com_IosProblems, Com_Features, Com_LibraryProblems, Com_LineProblems, Com_ModuleMark, Com_ModuleProblems, Com_PublicPath, Com_WordProblems, Com_WordRules, EXPORT_SETTINGS, MODULES } from "../scripts/release_rules.mjs";
+import { Com_ActivityProblems, Com_CargoProblems, Com_IosIconProblems, Com_IosProblems, Com_ViewportProblems, Com_Features, Com_LibraryProblems, Com_LineProblems, Com_ModuleMark, Com_ModuleProblems, Com_PublicPath, Com_WordProblems, Com_WordRules, EXPORT_SETTINGS, MODULES } from "../scripts/release_rules.mjs";
 import MAIN_ACTIVITY from "../src-tauri/gen/android/app/src/main/java/com/rptxsoftware/wallet/MainActivity.kt?raw";
 import W_IOS from "../src-tauri/src/w_ios.rs?raw";
 import IOS_PROJECT from "../src-tauri/gen/apple/project.yml?raw";
@@ -172,18 +172,26 @@ describe( "the Android activity", () => {
 // docs/IOS.md: what iOS can't refuse (a screenshot) is covered instead, and the vault
 // stays on the phone, saved before iOS ends Laurel, closed while the phone is locked
 describe( "the iPhone's own side", () => {
-	it( "covers, keeps out of backups, saves in the background and closes the files", () => {
+	it( "covers, keeps out of backups, saves in the background, answers for its notifications and closes the files", () => {
 		expect( Com_IosProblems( W_IOS, IOS_PROJECT ) ).toEqual( [] );
 	} );
 
 	it( "refuses one missing any of them, or with one commented out", () => {
-		const ios = "UIApplicationWillResignActiveNotification\nUIScreenCapturedDidChangeNotification\nNSURLIsExcludedFromBackupKey\nbeginBackgroundTask\n";
+		const ios = "UIApplicationWillResignActiveNotification\nUIScreenCapturedDidChangeNotification\nNSURLIsExcludedFromBackupKey\nbeginBackgroundTask\nUNUserNotificationCenterDelegate\n";
 		const project = "      properties:\n        com.apple.developer.default-data-protection: NSFileProtectionCompleteUnlessOpen\n";
 		expect( Com_IosProblems( ios, project ) ).toEqual( [] );
 		expect( Com_IosProblems( ios.replace( "NSURLIsExcludedFromBackupKey", "" ), project ) ).toHaveLength( 1 );
 		expect( Com_IosProblems( ios.replace( "\nNSURL", "\n// NSURL" ), project ) ).toHaveLength( 1 );
 		expect( Com_IosProblems( ios, "" ) ).toHaveLength( 1 );
 		expect( Com_IosProblems( ios, project.replace( "        com", "        # com" ) ) ).toHaveLength( 1 );
+	} );
+
+	it( "keeps the page from zooming into a field, out to the screen's edges", () => {
+		const tag = ( content: string ) => `<meta name="viewport" content="${content}" />`;
+		expect( Com_ViewportProblems( tag( "width=device-width, initial-scale=1.0, maximum-scale=1.0, viewport-fit=cover" ) ) ).toEqual( [] );
+		expect( Com_ViewportProblems( tag( "width=device-width, initial-scale=1.0, viewport-fit=cover" ) ) ).toHaveLength( 1 );
+		expect( Com_ViewportProblems( tag( "width=device-width, maximum-scale=1" ) ) ).toHaveLength( 1 );
+		expect( Com_ViewportProblems( "<title>Laurel</title>" ) ).toHaveLength( 1 );
 	} );
 
 	it( "takes only Laurel's opaque home screen icon", () => {

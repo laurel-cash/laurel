@@ -360,6 +360,8 @@ pub fn Sys_Run() {
 			let data = Sys_MoveOld( app.path().app_data_dir()?, true );
 			#[cfg( target_os = "ios" )]
 			w_ios::Ios_KeepLocal( &[ &data, &app.path().app_log_dir()? ] );
+			#[cfg( target_os = "ios" )]
+			w_ios::Ios_Notices();		// before iOS hands over the tap that launched Laurel
 			let _ = Sys_MoveOld( app.path().app_local_data_dir()?, false );
 			w_storage::Sto_Init( data.clone(), app.path().app_local_data_dir()?.join( "EBWebView" ), app.path().app_log_dir()? );
 			w_main::W_Init( data );
