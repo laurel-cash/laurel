@@ -149,6 +149,11 @@ fn S_Offered( read: appSettings_t ) -> appSettings_t {
 
 static s_settings: LazyLock< Mutex< Option< appSettings_t > > > = LazyLock::new( || Mutex::new( None ) );
 
+// Start Over (W_ForgetAll): read again, from a file that's gone: the defaults
+pub fn S_Forget() {
+	*s_settings.lock().unwrap() = None;
+}
+
 fn S_Path() -> Option< PathBuf > {
 	Com_DataPath( SETTINGS_FILE_NAME )
 }

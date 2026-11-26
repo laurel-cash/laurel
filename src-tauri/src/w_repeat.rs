@@ -104,6 +104,12 @@ static rp_writing: LazyLock< tokio::sync::Mutex< () > > = LazyLock::new( || toki
 #[cfg( feature = "repeat-payments" )]
 static rp_announced: LazyLock< Mutex< HashSet< String > > > = LazyLock::new( || Mutex::new( HashSet::new() ) );
 
+// Start Over (W_ForgetAll): none of the erased reminders was announced
+#[cfg( feature = "repeat-payments" )]
+pub fn Rp_Forget() {
+	rp_announced.lock().unwrap().clear();
+}
+
 #[cfg( feature = "repeat-payments" )]
 fn Rp_Path( net: network_t ) -> PathBuf {
 	W_NetworkDir( net ).join( REPEATS_FILE_NAME )
@@ -312,6 +318,9 @@ pub async fn Rp_ForgetWallet( _walletId: &str ) -> wresult_t< () > {
 
 #[cfg( not( feature = "repeat-payments" ) )]
 pub fn Rp_Watch( _app: AppHandle ) {}
+
+#[cfg( not( feature = "repeat-payments" ) )]
+pub fn Rp_Forget() {}
 
 
 #[cfg( all( test, feature = "repeat-payments" ) )]

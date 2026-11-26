@@ -8,7 +8,7 @@ Laurel source code is free software, released under the MIT License.
 See the LICENSE file for details.
 ===========================================================================
 */
-// w_mobile.rs -- lock when Android hides the app for longer than the person
+// w_mobile.rs -- lock when the phone hides the app for longer than the person
 // allows, not when a permission dialog pauses it
 use std::sync::Mutex;
 use std::time::Duration;
@@ -30,7 +30,7 @@ static m_hidden: Mutex< ( Option< u64 >, u64 ) > = Mutex::new( ( None, 0 ) );		/
 M_Hidden
 
 The phone reports the app no longer visible (Android: LifecyclePlugin;
-iOS: the window suspended). At once, if the person chose
+iOS: Ios_Background, gone to the background). At once, if the person chose
 so; otherwise when the time they allow runs out. Android may freeze a
 hidden app and its timers, so M_Shown checks the clock again on return.
 ==================
@@ -40,10 +40,6 @@ pub fn M_Hidden( app: tauri::AppHandle ) {
 	if ( !crate::w_vault::V_IsUnlocked() ) {
 		return;
 	}
-	// iOS may end a hidden app without a word (Sys_Close never runs there): every
-	// wallet is written now, whatever the lock does next
-	#[cfg( target_os = "ios" )]
-	tauri::async_runtime::spawn( crate::w_persist::W_SaveAll() );
 	let away = crate::w_settings::S_Get().lockAwaySecs;
 	if ( away == 0 ) {
 		tauri::async_runtime::spawn( async move { M_Lock( &app ).await } );
@@ -95,6 +91,7 @@ async fn M_Lock( app: &tauri::AppHandle ) {
 	}
 }
 
+#[cfg( target_os = "android" )]
 const RESUME_WAIT: std::time::Duration = std::time::Duration::from_secs( 300 );
 
 /*

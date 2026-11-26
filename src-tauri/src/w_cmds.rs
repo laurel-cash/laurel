@@ -658,9 +658,11 @@ commands! {
 	}
 
 	// Everything on this device erased, then Laurel opens again as on its
-	// first run: a new process, so nothing kept in memory outlives the files.
-	// Android can't restart a process (app.restart spawns the binary, then
-	// exits as Sys_End explains): M_Restart asks the system to
+	// first run: a new process where there can be one, so nothing kept in
+	// memory outlives the files. Android can't restart a process
+	// (app.restart spawns the binary, then exits as Sys_End explains):
+	// M_Restart asks the system to. iOS allows neither: this process has
+	// forgotten what it held (W_ForgetAll) and the page loads again
 	async fn W_StartOver_f( app: AppHandle ) -> wresult_t< () > {
 		W_StartOver().await?;
 		#[cfg( target_os = "android" )]
@@ -668,7 +670,12 @@ commands! {
 			let _ = app;		// the system opens Laurel again, not this process
 			crate::w_mobile::M_Restart()
 		}
-		#[cfg( not( target_os = "android" ) )]
+		#[cfg( target_os = "ios" )]
+		{
+			let window = tauri::Manager::get_webview_window( &app, crate::MAIN_WINDOW ).ok_or_else( || werr_t::WERR_ENGINE( "no window to load again".to_string() ) )?;
+			window.reload().map_err( |e| werr_t::WERR_ENGINE( e.to_string() ) )
+		}
+		#[cfg( not( any( target_os = "android", target_os = "ios" ) ) )]
 		app.restart();
 	}
 

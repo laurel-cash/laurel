@@ -20,7 +20,7 @@ See the LICENSE file for details.
 
 import { createRequire } from "node:module";
 import { readFileSync, readdirSync } from "node:fs";
-import { Com_ActivityProblems, Com_CargoProblems } from "./release_rules.mjs";
+import { Com_ActivityProblems, Com_CargoProblems, Com_IosProblems, Com_Uncommented } from "./release_rules.mjs";
 
 // Cargo.toml's [profile.release], as it must be
 const RELEASE = {
@@ -84,6 +84,11 @@ if ( /^\s*packaging\s*\{[^}]*keepDebugSymbols/m.test( gradle ) ) {
 for ( const problem of Com_ActivityProblems( readFileSync( "src-tauri/gen/android/app/src/main/java/com/rptxsoftware/wallet/MainActivity.kt", "utf8" ) ) ) {
 	Fail( problem );
 }
+// and the iPhone's twin: covered when it isn't the active app or the screen is captured,
+// out of backups, saved in the background, its files closed while locked (release_rules.mjs)
+for ( const problem of Com_IosProblems( readFileSync( "src-tauri/src/w_ios.rs", "utf8" ), readFileSync( "src-tauri/gen/apple/project.yml", "utf8" ) ) ) {
+	Fail( problem );
+}
 // a phone app: Tauri's template offers Laurel to Android TV (leanback), which Play then
 // lists it for and its pre-launch lab can't test
 if ( /leanback|LEANBACK/.test( readFileSync( "src-tauri/gen/android/app/src/main/AndroidManifest.xml", "utf8" ) ) ) {
@@ -92,7 +97,7 @@ if ( /leanback|LEANBACK/.test( readFileSync( "src-tauri/gen/android/app/src/main
 // the engine ends its process in one place (lib.rs Sys_Close, Sys_End on Android) and
 // restarts it in one (W_StartOver_f): on Android a normal exit aborts in the render threads
 for ( const file of readdirSync( "src-tauri/src" ).filter( ( f ) => f.endsWith( ".rs" ) ) ) {
-	const code = readFileSync( `src-tauri/src/${file}`, "utf8" ).split( "\n" ).filter( ( l ) => !/^\s*\/\//.test( l ) ).join( "\n" );
+	const code = Com_Uncommented( readFileSync( `src-tauri/src/${file}`, "utf8" ) );
 	const ends = ( code.match( /\.exit\(|\.restart\(|\.request_restart\(|process::exit\(/g ) ?? [] ).length;
 	const allowed = { "lib.rs": 1, "w_cmds.rs": 1 }[file] ?? 0;
 	if ( ends > allowed ) {

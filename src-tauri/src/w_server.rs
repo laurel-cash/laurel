@@ -100,6 +100,11 @@ struct netServer_t {
 // one per network, by Com_NetIndex
 static w_servers: LazyLock< Mutex< [ netServer_t; 2 ] > > = LazyLock::new( Default::default );
 
+// Start Over (W_ForgetAll): the person's own server went with its file
+pub fn W_ServerForget() {
+	*w_servers.lock().unwrap() = Default::default();
+}
+
 fn Com_NetIndex( net: network_t ) -> usize {
 	match net {
 		network_t::NET_MAINNET => 0,

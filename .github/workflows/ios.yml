@@ -1,11 +1,17 @@
 # The iPhone build (docs/IOS.md): GitHub's macOS runners do what this tree can't do
-# on Windows. Runs on the `ios` branch and by hand; nothing here signs or uploads yet.
+# on Windows. Runs on the `ios` branch and by hand; only a run by hand with `testflight`
+# signs and uploads, with the App Store Connect key held as the repository's secrets.
 name: iOS
 
 on:
   push:
     branches: [ ios ]
   workflow_dispatch:
+    inputs:
+      testflight:
+        description: Also sign the device build and upload it to TestFlight
+        type: boolean
+        default: false
 
 permissions:
   contents: read
@@ -74,3 +80,20 @@ jobs:
           path: out
           if-no-files-found: warn
           retention-days: 14
+      # the device build, signed by Xcode with the API key (automatic signing), its build
+      # number this run's, then uploaded; the key file exists only for these two commands
+      - name: TestFlight
+        if: inputs.testflight
+        env:
+          APPLE_API_KEY: ${{ secrets.ASC_KEY_ID }}
+          APPLE_API_ISSUER: ${{ secrets.ASC_ISSUER_ID }}
+          ASC_KEY_P8: ${{ secrets.ASC_KEY_P8 }}
+        run: |
+          mkdir -p ~/.appstoreconnect/private_keys
+          export APPLE_API_KEY_PATH=~/.appstoreconnect/private_keys/AuthKey_$APPLE_API_KEY.p8
+          trap 'rm -f "$APPLE_API_KEY_PATH"' EXIT
+          printf '%s\n' "$ASC_KEY_P8" > "$APPLE_API_KEY_PATH"
+          npx tauri ios build --export-method app-store-connect --build-number ${{ github.run_number }} --ci --features v1
+          IPA=$( find src-tauri/gen/apple/build -name '*.ipa' | head -n 1 )
+          echo "uploading $IPA"
+          xcrun altool --upload-app --type ios --file "$IPA" --apiKey "$APPLE_API_KEY" --apiIssuer "$APPLE_API_ISSUER"

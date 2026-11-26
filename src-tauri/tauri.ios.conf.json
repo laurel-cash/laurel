@@ -5,5 +5,5 @@
 			"label": "main", "create": false, "title": "Laurel"
 		} ]
 	},
-	"bundle": { "iOS": { "minimumSystemVersion": "15.0" } }
+	"bundle": { "iOS": { "minimumSystemVersion": "15.0", "developmentTeam": "5BK89M84HL" } }
 }

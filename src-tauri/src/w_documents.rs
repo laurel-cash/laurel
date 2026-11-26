@@ -58,8 +58,13 @@ pub fn Doc_Result() -> wresult_t< Option< documentResult_t > > {
 
 pub fn Doc_Clear( app: &tauri::AppHandle ) {
 	use tauri_specta::Event;
-	*d_result.lock().unwrap() = None;
+	Doc_Forget();
 	let _ = documentChangedEvent_t {}.emit( app );
+}
+
+// also Start Over's (W_ForgetAll): a file picked for an erased wallet
+pub fn Doc_Forget() {
+	*d_result.lock().unwrap() = None;
 }
 
 pub fn Doc_Saved( path: &str, signed: bool ) -> documentResult_t {

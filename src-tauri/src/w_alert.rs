@@ -68,6 +68,12 @@ static al_writing: LazyLock< tokio::sync::Mutex< () > > = LazyLock::new( || toki
 #[cfg( feature = "prices" )]
 static al_last: LazyLock< Mutex< Option< f64 > > > = LazyLock::new( || Mutex::new( None ) );
 
+// Start Over (W_ForgetAll): a new set of alerts starts from the next look
+#[cfg( feature = "prices" )]
+pub fn Al_Forget() {
+	*al_last.lock().unwrap() = None;
+}
+
 #[cfg( feature = "prices" )]
 fn Al_Path() -> wresult_t< PathBuf > {
 	Com_DataPath( ALERTS_FILE_NAME ).ok_or_else( Com_NoDataFolder )
@@ -221,6 +227,9 @@ pub async fn Al_Remove( _id: &str ) -> wresult_t< () > {
 
 #[cfg( not( feature = "prices" ) )]
 pub fn Al_Watch( _app: AppHandle ) {}
+
+#[cfg( not( feature = "prices" ) )]
+pub fn Al_Forget() {}
 
 
 #[cfg( all( test, feature = "prices" ) )]

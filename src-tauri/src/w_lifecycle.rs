@@ -95,7 +95,33 @@ pub async fn W_StartOver() -> wresult_t< () > {
 	V_MayStartOver()?;
 	W_CloseAll().await;
 	let base = Com_DataPath( "" ).expect( "W_Init not called" );
-	W_EraseAll( &base, &crate::w_storage::Sto_Paths().1 )
+	let erased = W_EraseAll( &base, &crate::w_storage::Sto_Paths().1 );
+	W_ForgetAll().await;
+	erased
+}
+
+/*
+==================
+W_ForgetAll
+
+After the erase, what this process still holds of the erased files, so a
+Laurel that keeps running (iOS can't open itself again: W_StartOver_f)
+answers as a new one would. Each module forgets its own. Every static is
+named in check_statics below, forgotten here or kept for a reason, so a
+new one fails the test until someone decides which
+==================
+*/
+async fn W_ForgetAll() {
+	crate::w_registry::W_Forget().await;
+	V_Forget();
+	crate::w_settings::S_Forget();
+	crate::w_server::W_ServerForget();
+	E_ForgetAll();
+	crate::w_repeat::Rp_Forget();
+	crate::w_alert::Al_Forget();
+	crate::w_folder::F_ForgetStatus();
+	crate::w_offline::O_Close();
+	crate::w_documents::Doc_Forget();
 }
 
 /*
@@ -180,4 +206,76 @@ pub async fn W_RemoveWallet( id: &str, _present: &present_t ) -> wresult_t< () >
 		log::warn!( "W_RemoveWallet: kept the repeating payments of {id}: {}", e.Info().message );
 	}
 	Ok( () )
+}
+
+
+/*
+=========================================================================
+
+TESTS
+
+=========================================================================
+*/
+
+#[cfg( test )]
+mod tests {
+	// what W_ForgetAll clears: each holds something of the erased files
+	const FORGOTTEN: &[ &str ] = &[
+		"w_registry", "w_failed", "v_key", "s_settings", "w_servers", "e_intents", "e_taken",
+		"rp_announced", "al_last", "f_status", "o_open", "d_result",
+	];
+
+	// what stays: nothing of a wallet's, or the process's own
+	const KEPT: &[ ( &str, &str ) ] = &[
+		( "PHRASE_WORDS", "the word list, fixed" ),
+		( "w_words", "the ui's own words" ),
+		( "p_cache", "public prices" ),
+		( "p_client", "an http client" ),
+		( "sto_paths", "folders, set once" ),
+		( "w_baseDir", "a folder, set once" ),
+		( "d_native", "the native side's handle" ),
+		( "m_native", "the native side's handle" ),
+		( "m_hidden", "when Laurel was last hidden" ),
+		( "com_made", "a counter: ids stay unique" ),
+		( "w_seq", "a counter: snapshots stay ordered" ),
+		( "sto_cleaned", "a counter" ),
+		( "sync_generations", "ids and counters: an old pump must still see it's been passed" ),
+		( "sync_trying", "a retry loop takes its own out as it ends" ),
+		( "sys_exiting", "a flag of the process" ),
+		( "w_shuttingDown", "a flag of the process" ),
+		( "w_adding", "a flag, cleared by its own add" ),
+		( "v_locking", "a flag, cleared by its own lock" ),
+		( "v_usable", "a bell" ),
+		( "al_writing", "a lock" ), ( "ct_writing", "a lock" ), ( "f_running", "a lock" ),
+		( "nt_writing", "a lock" ), ( "o_account", "a lock" ), ( "o_writing", "a lock" ),
+		( "rp_writing", "a lock" ), ( "sk_fetching", "a lock" ), ( "v_fileLock", "a lock" ),
+		( "w_loadLock", "a lock" ),
+	];
+
+	/*
+	==================
+	check_statics
+
+	Every static at the top of a file in src, named once: in FORGOTTEN or
+	in KEPT. Start Over in place (iOS) is only as good as this list
+	==================
+	*/
+	#[test]
+	fn check_statics() {
+		let src = std::path::Path::new( env!( "CARGO_MANIFEST_DIR" ) ).join( "src" );
+		let mut found = vec![];
+		for file in std::fs::read_dir( &src ).unwrap().flatten() {
+			let text = std::fs::read_to_string( file.path() ).unwrap_or_default();
+			for line in text.lines() {
+				let Some( rest ) = line.strip_prefix( "pub static " ).or_else( || line.strip_prefix( "static " ) ) else {
+					continue;
+				};
+				found.push( rest.split( [ ':', ' ' ] ).next().unwrap().to_string() );
+			}
+		}
+		found.sort();
+		let mut named: Vec< String > = FORGOTTEN.iter().chain( KEPT.iter().map( |( n, _ )| n ) ).map( |n| n.to_string() ).collect();
+		named.sort();
+		assert_eq!( found, named, "a static is new or gone: name it in FORGOTTEN (and clear it in W_ForgetAll) or in KEPT" );
+	}
 }

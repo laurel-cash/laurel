@@ -1402,13 +1402,16 @@ pub struct wallets_t {
 	pub slots:			BTreeMap< String, slotRef_t >,	// by wallet id
 }
 
-pub static w_registry: LazyLock< RwLock< wallets_t > > = LazyLock::new( || {
-	RwLock::new( wallets_t {
+pub static w_registry: LazyLock< RwLock< wallets_t > > = LazyLock::new( || RwLock::new( W_NoWallets() ) );
+
+// as at start, and after Start Over (W_Forget): nothing opened yet
+pub fn W_NoWallets() -> wallets_t {
+	wallets_t {
 		network:	network_t::NET_TESTNET,
 		loaded:		false,
 		slots:		BTreeMap::new(),
-	} )
-} );
+	}
+}
 
 // Laurel's data folder: set once by W_Init, read only by Com_DataPath
 pub static w_baseDir: OnceLock< PathBuf > = OnceLock::new();

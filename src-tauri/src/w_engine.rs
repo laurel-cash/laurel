@@ -814,6 +814,12 @@ pub fn E_ForgetIntents( wallet: &str ) {
 	e_intents.lock().unwrap().retain( |_, i| i.wallet != wallet );
 }
 
+// Start Over (W_ForgetAll): every wallet's, the payments tried among them
+pub fn E_ForgetAll() {
+	e_intents.lock().unwrap().clear();
+	e_taken.lock().unwrap().clear();
+}
+
 /*
 =========================================================================
 

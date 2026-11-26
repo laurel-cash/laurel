@@ -55,6 +55,9 @@ targets:
         CFBundleVersion: "0.3.3"
     entitlements:
       path: laurel_iOS/laurel_iOS.entitlements
+      properties:
+        # files can't be read while the phone is locked; a save that starts as it locks still finishes
+        com.apple.developer.default-data-protection: NSFileProtectionCompleteUnlessOpen
     scheme:
       environmentVariables:
         RUST_BACKTRACE: full

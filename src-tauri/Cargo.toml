@@ -74,6 +74,13 @@ tauri-plugin-log = "2"
 tauri-plugin-notification = "2"
 tauri-plugin-dialog = "2"		# the sync folder's picker (w_folder.rs), from Rust: the ui gets no file access
 
+# iOS's own side (w_ios.rs), through the bindings tao and wry already build
+[target.'cfg(target_os = "ios")'.dependencies]
+objc2 = "0.6"
+block2 = "0.6"
+objc2-foundation = { version = "0.3", features = [ "NSNotification", "NSOperation", "NSString", "NSURL", "NSValue", "NSError", "NSObject", "block2" ] }
+objc2-ui-kit = { version = "0.3", features = [ "UIApplication", "UIResponder", "UIView", "UIScrollView", "UIColor", "UIWindow", "UIScreen", "block2", "objc2-core-foundation" ] }
+
 [patch.crates-io]
 time = { git = "https://github.com/time-rs/time", tag = "v0.3.47" }
 lightwallet-protocol = { git = "https://github.com/zingolabs/lightwallet-protocol-rust", rev = "02211904910a50218f8b15f6136b5b127f98e4cc" }

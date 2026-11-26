@@ -150,7 +150,7 @@ W_SaveAll
 
 Every open wallet, now, its engine left running. iOS never says it's
 ending an app: one it has suspended is killed without notice, so going
-out of sight is the last sure moment to write (M_Hidden). Every wallet at
+out of sight is the last sure moment to write (Ios_Background). Every wallet at
 once, as in W_Shutdown: the system gives a hidden app only seconds. A
 failure stays on the wallet (saveError), as from the saver
 ==================

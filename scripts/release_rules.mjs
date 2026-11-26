@@ -123,7 +123,7 @@ doesn't count, and the mark must sit behind its API check
 ==================
 */
 export function Com_ActivityProblems( activity ) {
-	const code = activity.split( "\n" ).filter( ( l ) => !/^\s*\/\//.test( l ) ).join( "\n" );
+	const code = Com_Uncommented( activity );
 	const problems = [];
 	if ( !/addFlags\(\s*WindowManager\.LayoutParams\.FLAG_SECURE\s*\)/.test( code ) ) {
 		problems.push( "MainActivity.kt doesn't set FLAG_SECURE: screenshots and the task switcher would show recovery phrases and balances" );
@@ -131,6 +131,39 @@ export function Com_ActivityProblems( activity ) {
 	const guarded = /SDK_INT\s*>=\s*(Build\.VERSION_CODES\.UPSIDE_DOWN_CAKE|34)\b[^}]*?(setAccessibilityDataSensitive\(\s*View\.ACCESSIBILITY_DATA_SENSITIVE_YES\s*\)|accessibilityDataSensitive\s*=\s*View\.ACCESSIBILITY_DATA_SENSITIVE_YES)/;
 	if ( !guarded.test( code ) ) {
 		problems.push( "MainActivity.kt doesn't mark the web view accessibility-data-sensitive behind SDK_INT >= UPSIDE_DOWN_CAKE (T-055): any accessibility app could read what's typed in Laurel" );
+	}
+	return problems;
+}
+
+// source without its // comment lines: a rule never counts code that's commented out
+export function Com_Uncommented( text ) {
+	return text.split( "\n" ).filter( ( l ) => !/^\s*\/\//.test( l ) ).join( "\n" );
+}
+
+/*
+==================
+Com_IosProblems
+
+The iPhone's twin of Com_ActivityProblems (docs/IOS.md). iOS can't refuse
+a screenshot, so w_ios.rs covers the page while Laurel isn't the active
+app (the app switcher's picture) and while the screen is captured; it
+keeps the data folders out of backups and saves in a background task.
+project.yml closes the app's files while the phone is locked. Code in
+comments doesn't count
+==================
+*/
+const IOS_NEEDS = [
+	[ /UIApplicationWillResignActiveNotification/,	"doesn't cover the page when Laurel leaves the foreground: the app switcher's picture would show balances and phrases" ],
+	[ /UIScreenCapturedDidChangeNotification/,		"doesn't cover the page while the screen is recorded or mirrored" ],
+	[ /NSURLIsExcludedFromBackupKey/,				"doesn't keep the data folders out of iCloud backups: the vault would leave the phone" ],
+	[ /beginBackgroundTask/,						"doesn't ask for time to save in the background: iOS may end Laurel mid-write" ],
+];
+
+export function Com_IosProblems( ios, project ) {
+	const code = Com_Uncommented( ios );
+	const problems = IOS_NEEDS.filter( ( [ shape ] ) => !shape.test( code ) ).map( ( [ , why ] ) => `w_ios.rs ${why}` );
+	if ( !/^\s*com\.apple\.developer\.default-data-protection:\s*NSFileProtectionComplete(UnlessOpen)?\s*$/m.test( project ) ) {
+		problems.push( "project.yml doesn't protect the app's files (default-data-protection): they'd be readable while the phone is locked" );
 	}
 	return problems;
 }

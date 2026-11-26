@@ -172,6 +172,12 @@ static f_running: LazyLock< tokio::sync::Mutex< () > > = LazyLock::new( || tokio
 #[cfg( feature = "folder-sync" )]
 static f_status: LazyLock< Mutex< Option< syncStatus_t > > > = LazyLock::new( || Mutex::new( None ) );
 
+// stopped, or Start Over (W_ForgetAll): no sync has happened
+#[cfg( feature = "folder-sync" )]
+pub fn F_ForgetStatus() {
+	*f_status.lock().unwrap() = None;
+}
+
 
 /*
 =========================================================================
@@ -658,7 +664,7 @@ pub async fn F_Stop() -> wresult_t< () > {
 		let _ = Doc_RemoveChild( &state.folder, &Com_FileName( &state.device ) );		// a folder gone: nothing to take out
 	}
 	crate::w_disk::Com_Shred( &F_StatePath()? );
-	*f_status.lock().unwrap() = None;
+	F_ForgetStatus();
 	Ok( () )
 }
 
@@ -765,6 +771,9 @@ pub async fn F_Stop() -> wresult_t< () > {
 pub async fn F_Forget( _device: &str ) -> wresult_t< () > {
 	Err( werr_t::WERR_NOT_IN_BUILD )
 }
+
+#[cfg( not( feature = "folder-sync" ) )]
+pub fn F_ForgetStatus() {}
 
 #[cfg( not( feature = "folder-sync" ) )]
 pub fn F_Status() -> wresult_t< syncStatus_t > {
@@ -984,7 +993,7 @@ mod tests {
 		let gone = &state.known.nets["testnet"].contacts["cfar"];
 		assert!( gone.value.is_none() && gone.stamp.version > 5, "a delete here beats what it deleted" );
 
-		*f_status.lock().unwrap() = None;		// as after a restart, before any sync
+		F_ForgetStatus();		// as after a restart, before any sync
 		assert!( F_Status().unwrap().on, "a computer that is syncing never reads as off" );
 
 		F_Stop().await.unwrap();

@@ -544,7 +544,7 @@ pub async fn O_Sign( app: &AppHandle, requestId: &str, seen: sendQuote_t ) -> wr
 		return Ok( None );
 	};
 	crate::w_documents::Doc_Write( &path, &Com_Wrap( SIGNED_KIND, &out )? )?;
-	*o_open.lock().unwrap() = None;
+	O_Close();
 	Ok( Some( path.display().to_string() ) )
 }
 

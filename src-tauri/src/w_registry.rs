@@ -52,6 +52,19 @@ pub async fn W_Slots() -> Vec< ( String, slotRef_t ) > {
 
 /*
 ==================
+W_Forget
+
+Start Over (W_ForgetAll): every wallet is closed by now; the registry as
+at start, network and all, and the ones that couldn't be opened
+==================
+*/
+pub async fn W_Forget() {
+	*w_registry.write().await = W_NoWallets();
+	w_failed.lock().unwrap().clear();
+}
+
+/*
+==================
 W_Ids
 
 Every open wallet, oldest first

@@ -779,7 +779,7 @@ Returns once the vault is usable, or WERR_LOCKED after wait. The wake is
 armed before the check, so an unlock between the two is never missed.
 ==================
 */
-#[cfg_attr( desktop, allow( dead_code ) )]		// only a mobile picker leaves Laurel
+#[cfg_attr( not( target_os = "android" ), allow( dead_code ) )]		// only Android's picker leaves Laurel (iOS has none in v1: w_dialog.rs)
 pub async fn V_WhenUsable( wait: std::time::Duration ) -> wresult_t< () > {
 	let deadline = tokio::time::Instant::now() + wait;
 	loop {

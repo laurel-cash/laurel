@@ -15,7 +15,7 @@ See the LICENSE file for details.
 #![allow( non_snake_case, non_camel_case_types, non_upper_case_globals, unused_parens )]
 // the gate's clippy builds for the computer: on a phone, the build itself refuses a warning
 // (an exit made unreachable by Sys_End once went out unseen)
-#![cfg_attr( target_os = "android", deny( warnings ) )]
+#![cfg_attr( mobile, deny( warnings ) )]
 
 // the real-money build (v1, D-033) has no module until its own audit, and isn't the beta:
 // one place, so allowing a module after its audit is one line a reviewer sees. prices
@@ -60,6 +60,8 @@ mod w_export;
 mod w_folder;
 mod w_history;
 mod w_import;
+#[cfg( target_os = "ios" )]
+mod w_ios;
 mod w_lifecycle;
 mod w_local;
 mod w_log;
@@ -206,7 +208,8 @@ fn Sys_Logger() -> tauri::plugin::TauriPlugin< tauri::Wry > {
 Sys_MainWindow
 
 Made here, not from tauri.conf.json directly, so it opens after the
-janitor and with the browser settings that keep its caches off disk
+janitor and with the browser settings that keep its caches off disk; on
+iOS, ready for the phone (Ios_Prepare)
 ==================
 */
 // the identifier before com.rptxsoftware.wallet (2026-10-03, for Google Play:
@@ -256,7 +259,10 @@ fn Sys_MainWindow( app: &tauri::App ) -> tauri::Result< () > {
 	let builder = tauri::WebviewWindowBuilder::from_config( app.handle(), &config )?;
 	#[cfg( windows )]
 	let builder = builder.additional_browser_args( w_storage::STO_BROWSER_ARGS );
+	#[cfg( not( target_os = "ios" ) )]
 	builder.build()?;
+	#[cfg( target_os = "ios" )]
+	w_ios::Ios_Prepare( app.handle(), &builder.build()? );
 	Ok( () )
 }
 
@@ -352,6 +358,8 @@ pub fn Sys_Run() {
 			log::info!( "Sys_Run: Laurel {} ({}, {})", env!( "CARGO_PKG_VERSION" ), w_local::NETWORKS_MARK, w_probe::PROBE_MARK );
 			// before anything reads them: the folders an older Laurel kept under its old identifier
 			let data = Sys_MoveOld( app.path().app_data_dir()?, true );
+			#[cfg( target_os = "ios" )]
+			w_ios::Ios_KeepLocal( &[ &data, &app.path().app_log_dir()? ] );
 			let _ = Sys_MoveOld( app.path().app_local_data_dir()?, false );
 			w_storage::Sto_Init( data.clone(), app.path().app_local_data_dir()?.join( "EBWebView" ), app.path().app_log_dir()? );
 			w_main::W_Init( data );
@@ -379,10 +387,6 @@ pub fn Sys_Run() {
 						api.prevent_exit();
 						Sys_Close( app, code.unwrap_or( 0 ) );
 					}
-				}
-				#[cfg( target_os = "ios" )]
-				tauri::RunEvent::WindowEvent { event: tauri::WindowEvent::Suspended, .. } => {
-					w_mobile::M_Hidden( app.clone() );
 				}
 				_ => {}
 			}

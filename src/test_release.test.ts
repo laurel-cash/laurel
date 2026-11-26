@@ -15,8 +15,10 @@ See the LICENSE file for details.
 import { describe, expect, it } from "vitest";
 
 // @ts-expect-error: a plain node module of the release scripts, without types
-import { Com_ActivityProblems, Com_CargoProblems, Com_Features, Com_LibraryProblems, Com_LineProblems, Com_ModuleMark, Com_ModuleProblems, Com_PublicPath, Com_WordProblems, Com_WordRules, EXPORT_SETTINGS, MODULES } from "../scripts/release_rules.mjs";
+import { Com_ActivityProblems, Com_CargoProblems, Com_IosProblems, Com_Features, Com_LibraryProblems, Com_LineProblems, Com_ModuleMark, Com_ModuleProblems, Com_PublicPath, Com_WordProblems, Com_WordRules, EXPORT_SETTINGS, MODULES } from "../scripts/release_rules.mjs";
 import MAIN_ACTIVITY from "../src-tauri/gen/android/app/src/main/java/com/rptxsoftware/wallet/MainActivity.kt?raw";
+import W_IOS from "../src-tauri/src/w_ios.rs?raw";
+import IOS_PROJECT from "../src-tauri/gen/apple/project.yml?raw";
 
 const CARGO = "[features]\ntestnet-only = []\nkdf-probe = []\n";
 const ALL_MARKS = ( MODULES as string[] ).map( ( m ) => Com_ModuleMark( m ) ).join( "…" );
@@ -164,5 +166,23 @@ describe( "the Android activity", () => {
 		expect( Com_ActivityProblems( marked ) ).toHaveLength( 1 );
 		expect( Com_ActivityProblems( secure + marked.split( "\n" ).map( ( l ) => `// ${l}` ).join( "\n" ) ) ).toHaveLength( 1 );
 		expect( Com_ActivityProblems( secure + "webView.setAccessibilityDataSensitive(View.ACCESSIBILITY_DATA_SENSITIVE_YES)\n" ) ).toHaveLength( 1 );
+	} );
+} );
+
+// docs/IOS.md: what iOS can't refuse (a screenshot) is covered instead, and the vault
+// stays on the phone, saved before iOS ends Laurel, closed while the phone is locked
+describe( "the iPhone's own side", () => {
+	it( "covers, keeps out of backups, saves in the background and closes the files", () => {
+		expect( Com_IosProblems( W_IOS, IOS_PROJECT ) ).toEqual( [] );
+	} );
+
+	it( "refuses one missing any of them, or with one commented out", () => {
+		const ios = "UIApplicationWillResignActiveNotification\nUIScreenCapturedDidChangeNotification\nNSURLIsExcludedFromBackupKey\nbeginBackgroundTask\n";
+		const project = "      properties:\n        com.apple.developer.default-data-protection: NSFileProtectionCompleteUnlessOpen\n";
+		expect( Com_IosProblems( ios, project ) ).toEqual( [] );
+		expect( Com_IosProblems( ios.replace( "NSURLIsExcludedFromBackupKey", "" ), project ) ).toHaveLength( 1 );
+		expect( Com_IosProblems( ios.replace( "\nNSURL", "\n// NSURL" ), project ) ).toHaveLength( 1 );
+		expect( Com_IosProblems( ios, "" ) ).toHaveLength( 1 );
+		expect( Com_IosProblems( ios, project.replace( "        com", "        # com" ) ) ).toHaveLength( 1 );
 	} );
 } );
