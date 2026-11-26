@@ -31,10 +31,17 @@ TOKENS
 	   175% "Settings" broke in two and the taller bar hid each page's end (ui_kit, 11-26).
 	   Not px, so text_scale.mjs leaves it be */
 	--tab-text:		var( --text-min );
+	/* the text size's own choices grow only so far: the way back from too large is always in
+	   one row ("100 / %" broke under each number at 175% on an iPhone SE, 11-27) */
+	--steady-text:	min( calc( 13px * var( --text-scale, 1 ) ), 16px );		/* grows, to what five fit in */
 	/* a phone's notch and home bar, named once: scripts/ui_kit.mjs gives them an iPhone's
 	   sizes in a browser, which has neither */
 	--safe-top:		env( safe-area-inset-top, 0px );
 	--safe-bottom:	env( safe-area-inset-bottom, 0px );
+	/* under a phone's tab bar: the home bar's line is ~13px from the screen's bottom, so the
+	   buttons may come down to just above it. The whole 34px left empty read as a wasted
+	   band under the bar (Operator, builds 17 and 18); a phone with a home button: 4px */
+	--tab-under:	max( 4px, var( --safe-bottom ) - 20px );
 
 	--titlebar-h:	40px;
 
@@ -2854,6 +2861,11 @@ SEGMENTED CONTROL
 	position: relative;		/* above the thumb */
 }
 
+#text-size button {
+	font-size: var( --steady-text );
+	white-space: nowrap;
+}
+
 .segmented.small button {
 	height: 22px;
 	padding: 0 10px;
@@ -5124,8 +5136,12 @@ SHIELD AND SCAN SHEETS
 	object-fit: cover;
 }
 
+/* unseen until it runs, but never display: none: Safari stops a hidden video's playback, the
+   camera never started, and an iPhone showed nothing after the permission (11-27). qr-scanner
+   undoes such a style only when it's on the element itself */
 .scan-view:not( .on ) .scan-video {
-	display: none;
+	position: absolute;
+	opacity: 0;
 }
 
 .scan-frame {
@@ -5175,6 +5191,12 @@ SHIELD AND SCAN SHEETS
 .field.mono {
 	font-family: var( --font-mono );
 	font-size: 12px;
+}
+
+/* the hint in words, not code: in the address's font "scan" broke into "sca / n" at a large size */
+.field.mono::placeholder {
+	font-family: var( --font );
+	word-break: normal;		/* an address breaks anywhere (.send-to .field), the hint's words don't */
 }
 
 .scan-result {
@@ -7062,12 +7084,16 @@ HISTORY
 	color: var( --text-2 );
 }
 
+/* a name on two lines before it's cut: "Private s…" and "Your wal…" said neither pool
+   nor wallet at a large text size (11-27) */
 .tx-route-name,
 .tx-route-sub {
+	display: -webkit-box;
 	max-width: 100%;
 	overflow: hidden;
-	text-overflow: ellipsis;
-	white-space: nowrap;
+	overflow-wrap: normal;		/* whole words: "Priv / ate" broke at 320px and 175% */
+	-webkit-box-orient: vertical;
+	-webkit-line-clamp: 2;
 }
 
 .tx-route-name {
@@ -7076,9 +7102,11 @@ HISTORY
 }
 
 .tx-route-name.address {
+	display: block;		/* whole, broken anywhere: an address is never cut short */
 	font-family: var( --font-mono );
 	font-size: 12px;
-	white-space: normal;
+	overflow-wrap: anywhere;
+	-webkit-line-clamp: none;
 }
 
 .tx-route-sub {
@@ -8706,7 +8734,7 @@ ZEC PRICE
 		right: 0;
 		z-index: var( --z-titlebar );
 		display: flex;
-		padding: 0 6px var( --safe-bottom );		/* the buttons on the home bar's band, as an iPhone's tab bar: no band of its own under them */
+		padding: 0 6px var( --tab-under );
 		background: var( --sidebar );
 		border-top: 1px solid var( --line );
 		container: phone-nav / inline-size;
@@ -8987,7 +9015,7 @@ ZEC PRICE
 		min-height: 0;
 		min-width: 0;
 		margin-top: 0;
-		padding: 16px 12px calc( 65px + var( --safe-bottom ) );		/* the tab bar's 49px, and room past it */
+		padding: 16px 12px calc( 65px + var( --tab-under ) );		/* the tab bar's 49px, and room past it */
 	}
 	/* a step starts at the top, under the bar, not centred: the 24 words and "I've
 	   Written It Down" fit one screen without scrolling */
@@ -9012,6 +9040,16 @@ ZEC PRICE
 	}
 	.settings-pane {
 		container: phone-settings / inline-size;
+	}
+	/* in a sheet, one scroll: the sheet's. A box scrolling in a scrolling sheet took the
+	   finger on an iPhone and the rest never came (Laurel's License, the licenses, 11-26) */
+	.license-list, .license-text pre, .sheet-notes .release-items {
+		max-height: none;
+		overflow: visible;
+		mask-image: none;
+	}
+	.license-text pre {
+		white-space: pre-wrap;		/* the lines fold to the screen, not scrolled sideways */
 	}
 	.home {
 		container: phone-home / inline-size;

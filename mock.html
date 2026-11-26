@@ -137,6 +137,9 @@
 							}
 						}
 					}
+					// drawn in Laurel's own font: in another every width measured is another's (the
+					// kit's pictures were in Segoe UI, narrower than Inter, and missed what overflowed)
+					if ( ![ ...document.fonts ].some( ( f ) => f.family === "Inter Variable" && f.status === "loaded" ) ) faults.push( "Inter never loaded: measured in a stand-in font" );
 					// the page never scrolls sideways
 					if ( document.documentElement.scrollWidth > innerWidth + 1 ) faults.push( `the page is ${document.documentElement.scrollWidth}px wide in a ${innerWidth}px window` );
 					const texts = Texts();		// once: both read every box's words, the costliest look
@@ -277,6 +280,7 @@
 				const Placed = () => [ ...document.querySelectorAll( "[role='dialog']" ) ].map( ( d ) => { const r = d.getBoundingClientRect(); return `${r.left},${r.top},${r.width},${r.height}`; } ).join( "|" );
 				window.__layout = async () => {
 					while ( !Drawn() ) await Sleep( 50 );
+					await document.fonts.ready;
 					await ( settled ? Frame().then( Frame ) : Sleep( SETTLE_MS ) );		// after a resize: its re-layout, two frames
 					settled = true;
 					// a sheet still opening: its animations over first (a spinner's never are, so

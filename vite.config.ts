@@ -10,7 +10,8 @@ See the LICENSE file for details.
 */
 // vite.config.ts -- dev server and bundler setup for the ui
 
-import { defineConfig } from "vite";
+import { realpathSync } from "node:fs";
+import { defineConfig, searchForWorkspaceRoot } from "vite";
 import react from "@vitejs/plugin-react";
 
 // @ts-expect-error: a plain node module of the release scripts, without types
@@ -90,6 +91,12 @@ export default defineConfig( () => ( {
 		host:		DEV_HOST,
 		port:		DEV_PORT,
 		strictPort:	true,		// tauri expects this exact port
+		// node_modules may be a link to another checkout's: vite asks for its files by their
+		// real path, outside this folder, and refused them. Inter never loaded in a dev page,
+		// so every layout check measured the system's narrower font (11-27)
+		fs: {
+			allow: [ searchForWorkspaceRoot( process.cwd() ), realpathSync( "node_modules" ) ],
+		},
 		watch: {
 			ignored: [ "**/src-tauri/**" ],		// cargo handles rust changes
 		},

@@ -24,3 +24,15 @@ describe( "the web view's own field controls", () => {
 		expect( rule.test( css ), "ui.css lost the rule that hides WebView2's own eye" ).toBe( true );
 	} );
 } );
+
+describe( "the web view's own video", () => {
+	// Safari stops a hidden video's playback: the camera never started on an iPhone after
+	// the permission (11-27). qr-scanner undoes such a style only on the element itself
+	it( "keeps the camera's video playing while it starts: never display: none", () => {
+		const rules = [ ...css.matchAll( /([^{}]*\.scan-video[^{}]*)\{([^}]*)\}/g ) ];
+		expect( rules.length ).toBeGreaterThan( 0 );
+		for ( const [ , selector, body ] of rules ) {
+			expect( body, selector.trim() ).not.toMatch( /display:\s*none|visibility:\s*hidden/ );
+		}
+	} );
+} );
