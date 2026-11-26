@@ -20,7 +20,7 @@ See the LICENSE file for details.
 import { ReactNode, useEffect, useMemo, useState } from "react";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { encode as QR_Encode } from "uqr";
-import { Lock, Moon, Sun } from "lucide-react";
+import { ChevronLeft, Lock, Moon, Sun } from "lucide-react";
 import { Com_FormatDate, Com_Unreachable, syncProgress_t, syncState_t } from "./ui_local";
 import { T } from "./ui_text";
 import { useStore } from "./ui_store";
@@ -65,8 +65,8 @@ export function Com_Back(): boolean {
 		( document.activeElement ?? document.body ).dispatchEvent( new KeyboardEvent( "keydown", { key: "Escape", code: "Escape", bubbles: true, cancelable: true } ) );
 		return true;
 	}
-	const back = [ ...document.querySelectorAll< HTMLButtonElement >( "button.nav-back" ) ].find( ( b ) => !b.disabled && !b.closest( "[hidden], [aria-hidden='true'], [inert]" ) );
-	if ( back ) {
+	const back = Com_NavBack();
+	if ( back && !back.disabled ) {
 		back.click();
 		return true;
 	}
@@ -76,6 +76,59 @@ export function Com_Back(): boolean {
 		return true;
 	}
 	return false;
+}
+
+/*
+==================
+Com_NavBack
+
+The screen's own way back (a step's, a settings pane's): the one Back
+Android's key presses and a phone's bar shows (UI_PhoneBack). One in a
+sheet is the sheet's, not the screen's
+==================
+*/
+export function Com_NavBack(): HTMLButtonElement | undefined {
+	return [ ...document.querySelectorAll< HTMLButtonElement >( "button.nav-back" ) ].find( ( b ) => !b.closest( "[hidden], [aria-hidden='true'], [inert], [role='dialog']" ) );
+}
+
+/*
+==================
+UI_PhoneBack
+
+A phone's way back where an iPhone's is: top left, in the bar, in place of
+the account, with the screen's own Back's words ("< Settings"). Only on a
+screen gone into (Com_NavBack): the tabs at the bottom are each a top, as
+an iPhone's are. The screen's Back stays its own, pressed from here, and
+isn't drawn twice (ui.css)
+==================
+*/
+type phoneBack_t = { label: string; disabled: boolean } | null;
+
+function UI_PhoneBack() {
+	const [ back, setBack ] = useState< phoneBack_t >( null );
+	useEffect( () => {
+		function Look() {
+			const b = Com_NavBack();
+			const now: phoneBack_t = b ? { label: b.textContent ?? "", disabled: b.disabled } : null;
+			setBack( ( was ) => ( was?.label === now?.label && was?.disabled === now?.disabled ? was : now ) );
+		}
+		Look();
+		const watch = new MutationObserver( Look );
+		watch.observe( document.body, { childList: true, subtree: true, characterData: true, attributes: true, attributeFilter: [ "disabled", "hidden", "aria-hidden", "inert" ] } );
+		return () => watch.disconnect();
+	}, [] );
+	useEffect( () => {
+		document.documentElement.dataset.back = String( !!back );
+		return () => { delete document.documentElement.dataset.back; };
+	}, [ back ] );
+	if ( !back ) {
+		return null;
+	}
+	return (
+		<button className="titlebar-back" disabled={back.disabled} onClick={() => Com_NavBack()?.click()}>
+			<ChevronLeft aria-hidden="true" />{back.label}
+		</button>
+	);
 }
 
 /*
@@ -136,6 +189,7 @@ export function UI_TitleBar() {
 		<>
 			<div className={"titlebar" + ( focused ? "" : " blurred" ) + ( IS_WINDOWS ? " windows" : "" )} data-tauri-drag-region={!mobile || undefined}>
 				{!mobile && !IS_WINDOWS && UI_Lights( win )}
+				{mobile && <UI_PhoneBack />}
 				{brand}
 				<div className="titlebar-tools">
 					<UI_LockButton />

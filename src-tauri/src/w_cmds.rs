@@ -590,6 +590,12 @@ commands! {
 		crate::w_spendkey::Sk_Here().await
 	}
 
+	// A newer Laurel and its store page, only once the person turned update
+	// checks on and one is out (at most one ask a day)
+	async fn U_Newer_f() -> Option< crate::w_update::update_t > {
+		crate::w_update::U_Newer().await
+	}
+
 	// The ZEC price over a range, only once the person turned prices on
 	async fn P_Series_f( range: priceRange_t ) -> wresult_t< priceSeries_t > {
 		P_Series( range ).await

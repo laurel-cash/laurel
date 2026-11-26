@@ -231,6 +231,7 @@ mod tests {
 		( "w_words", "the ui's own words" ),
 		( "p_cache", "public prices" ),
 		( "p_client", "an http client" ),
+		( "u_last", "whether a newer Laurel is out: of the app, not a wallet (w_update.rs)" ),
 		( "sto_paths", "folders, set once" ),
 		( "w_baseDir", "a folder, set once" ),
 		( "d_native", "the native side's handle" ),

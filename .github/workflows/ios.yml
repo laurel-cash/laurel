@@ -82,11 +82,13 @@ jobs:
           D=$( find "$C/Library" -maxdepth 3 -type d -name cash.laurel.wallet | head -n 1 )
           echo "data folder: ${D:-none}"
           ls -la "$D" || true
-          echo '{"textScale":150}' > "$D/laurel-settings.json"
-          xcrun simctl terminate "$UDID" cash.laurel.wallet || true
-          xcrun simctl launch "$UDID" cash.laurel.wallet
-          sleep 25
-          xcrun simctl io "$UDID" screenshot out/text-150.png
+          for SIZE in 100 150; do
+            echo "{\"textScale\":$SIZE}" > "$D/laurel-settings.json"
+            xcrun simctl terminate "$UDID" cash.laurel.wallet || true
+            xcrun simctl launch "$UDID" cash.laurel.wallet
+            sleep 25
+            xcrun simctl io "$UDID" screenshot out/text-$SIZE.png
+          done
       - name: Keep the screenshot and logs
         if: always()
         uses: actions/upload-artifact@v4
@@ -129,6 +131,21 @@ jobs:
         run: |
           npm ci
           sudo safaridriver --enable
+      # booted before safaridriver asks for it: started cold by the driver, Safari took
+      # longer than its wait (the first run, 11-26)
+      - name: Simulator
+        run: |
+          UDID=$( xcrun simctl list devices available -j | python3 -c '
+          import json, sys
+          d = json.load( sys.stdin )[ "devices" ]
+          print( next( x[ "udid" ] for k, v in sorted( d.items(), reverse = True ) if "iOS" in k for x in v if x[ "name" ].startswith( "iPhone" ) ) )' )
+          echo "IOS_UDID=$UDID" >> "$GITHUB_ENV"
+          xcrun simctl boot "$UDID"
+          xcrun simctl bootstatus "$UDID" -b
+          xcrun simctl spawn "$UDID" defaults write com.apple.mobilesafari RemoteAutomationEnabled -bool YES
+          xcrun simctl spawn "$UDID" defaults write com.apple.WebInspector RemoteAutomationEnabled -bool YES
+          xcrun simctl launch "$UDID" com.apple.mobilesafari
+          sleep 15
       - name: Layout
         run: node scripts/check_layout_ios.mjs
       - name: Keep the pictures

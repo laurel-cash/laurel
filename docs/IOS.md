@@ -38,8 +38,14 @@ same on both phones and is checked by the Android gate first.
   twin: `w_ios.rs` keeps both covers, the backup exclusion, the background task and its
   own notification delegate (Ios_Notices: the plugin's crashed on a tap after iOS ended
   Laurel), and project.yml the data protection.
-- The text size is WebKit's own page zoom on the iPhone (`constants.pageZoom`), never
-  css zoom: WebKit lays css zoom out differently and squeezed the sheets to a strip.
+- The text size is WebKit's text size on the iPhone (`constants.textZoom` "text":
+  `-webkit-text-size-adjust`, as Safari's aA), never css zoom (WebKit lays it out
+  differently and squeezed the sheets to a strip) nor WKWebView's page zoom (taken,
+  and changed nothing on a phone, 11-26). ios.yml's Simulator job pictures 100% and 150%.
+- On a phone, Back is top left (`UI_PhoneBack`, the screen's own `nav-back`) and at the
+  top of every sheet: an iPhone has no Back key.
+- Check for Updates (Settings > About, off by default) asks the App Store once a day
+  (`w_update.rs`). Before the App Store release, add it to laurel.cash/privacy's list.
 - `Com_ViewportProblems`: index.html's viewport has `maximum-scale=1`, or iOS zooms into
   a field under 16px (Send's address) as it takes focus.
 - `Com_IosIconProblems` (same place): the home screen icon is Laurel's, not Tauri's

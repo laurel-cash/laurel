@@ -113,7 +113,8 @@ try {
 	driver = spawn( "safaridriver", [ "-p", String( DRIVER ) ], { stdio: "inherit" } );
 	await Sleep( 2000 );
 	( { sessionId: session } = await Wd( "POST", "/session", { capabilities: { alwaysMatch: {
-		browserName: "safari", platformName: "iOS", "safari:useSimulator": true, "safari:deviceType": "iPhone" } } } ) );
+		browserName: "safari", platformName: "iOS", "safari:useSimulator": true, "safari:deviceType": "iPhone",
+		...( process.env.IOS_UDID ? { "safari:deviceUDID": process.env.IOS_UDID } : {} ) } } } ) );		// the one booted for it (ios.yml)
 
 	const Open = async ( pane ) => {
 		await Wd( "POST", `/session/${session}/url`, { url: `http://localhost:${PORT}/mock.html?check&phone&pane=${pane}` } );

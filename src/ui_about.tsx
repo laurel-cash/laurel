@@ -20,6 +20,7 @@ import { APP_VERSION, Com_ErrorOf } from "./ui_local";
 import { T } from "./ui_text";
 import { sheetProps_t, UI_Alert, UI_Sheet, UI_SheetClose, UI_Spinner } from "./ui_widgets";
 import { UI_AppIcon } from "./ui_chrome";
+import { UI_UpdateSetting } from "./ui_update";
 import { UI_ReleaseNotesSheet } from "./ui_notes";
 import { TERMS_URL } from "./ui_terms";
 import LAUREL_LICENSE from "../LICENSE?raw";
@@ -119,6 +120,7 @@ export function UI_AboutSection() {
 	const [ open, setOpen ] = useState< "none" | "licenses" | "laurel" | "notes" >( "none" );
 
 	return (
+		<>
 		<section className="settings-section">
 			<div className="about">
 				<UI_AppIcon size={56} />
@@ -166,5 +168,7 @@ export function UI_AboutSection() {
 			<UI_LaurelLicenseSheet open={open === "laurel"} onOpenChange={( o ) => setOpen( o ? "laurel" : "none" )} />
 			<UI_ReleaseNotesSheet open={open === "notes"} onOpenChange={( o ) => setOpen( o ? "notes" : "none" )} />
 		</section>
+		<UI_UpdateSetting />
+		</>
 	);
 }

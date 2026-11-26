@@ -67,6 +67,7 @@ export const KEYS = {
 	offline:		() => [ "offline" ] as const,		// signing requests waiting for their signed payment (w_offline.rs)
 	document:		() => [ "document" ] as const,		// a native picker action completed after unlocking
 	spendKey:		() => [ "spendKey" ] as const,		// Sapling's spend proving key is here (w_spendkey.rs)
+	update:			( on: boolean ) => [ "update", on ] as const,		// a newer Laurel (w_update.rs); asked again once checks are on
 };
 
 // module state (see scripts/check_owners.mjs): a hot update would make a

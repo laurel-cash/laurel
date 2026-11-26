@@ -92,6 +92,7 @@ mod w_sweep;
 #[cfg( test )]
 mod w_test;
 mod w_sync;
+mod w_update;
 mod w_vault;
 
 use std::sync::atomic::{ AtomicBool, Ordering };

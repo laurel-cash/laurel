@@ -13,7 +13,7 @@ See the LICENSE file for details.
 
 import { Fragment, ReactNode, useEffect, useLayoutEffect, useRef, useState } from "react";
 import { AnimatePresence, motion } from "motion/react";
-import { ArrowDownLeft, ArrowUpRight, Check, ChevronRight, Clock, Eye, EyeOff, FileKey, History, House, Lock, MapPin, Pause, Pencil, Plus, ScanLine, Settings, ShieldAlert, ShieldCheck, SlidersHorizontal, WifiOff, ArrowRightLeft } from "lucide-react";
+import { ArrowDownLeft, ArrowUpRight, Check, ChevronRight, Clock, Eye, EyeOff, FileKey, History, House, Lock, MapPin, Pause, Pencil, Plus, RefreshCw, ScanLine, Settings, ShieldAlert, ShieldCheck, SlidersHorizontal, WifiOff, ArrowRightLeft } from "lucide-react";
 import type { LucideIcon } from "lucide-react";
 import { KINDS, UI_FailedWallets, UI_SaveFailed } from "./ui_wallets";
 
@@ -38,6 +38,7 @@ import { UI_MigrateSheet } from "./ui_migrate";
 import { UI_PoolBadge, UI_PoolGuide, UI_PoolSheet, UI_PublicAddressesSheet } from "./ui_pool";
 import { Com_DraftFrom, Com_DraftFromScan, EMPTY_DRAFT, sendDraft_t, UI_SendSheet } from "./ui_send";
 import { UI_LowSpaceAlert } from "./ui_storage";
+import { Com_OpenStore, useNewerLaurel } from "./ui_update";
 import { UI_Repeats, useRepeats } from "./ui_repeat";
 import LEAF_SINGLE_SRC from "./assets/leaf-single-320.webp";
 import { UI_NameSheet } from "./ui_sheets";
@@ -803,10 +804,15 @@ function UI_HomePage( props: {
 	const { wallet, account, onSheet } = props;
 	const home		= useStore( ( s ) => s.home );
 	const repeatDue	= useRepeatsHere().data?.some( ( r ) => r.due ) ?? false;
+	const newer		= useNewerLaurel();
 
 	return (
 		<div className="home">
 			<UI_LowSpaceAlert />
+			{/* asked for in Settings > About: a newer Laurel is out */}
+			{newer && (
+				<UI_Banner icon={<RefreshCw aria-hidden="true" />} title={T.update.bannerTitle( newer.version )} body={T.update.banner} action={T.update.bannerAction} onAction={() => Com_OpenStore( newer )} />
+			)}
 			{/* a phrase nobody backed up is one broken disk from gone */}
 			{wallet?.kind === "seed" && !wallet.backedUp && (
 				<UI_Banner icon={<ShieldAlert aria-hidden="true" />} title={T.backup.bannerTitle} body={T.backup.banner} action={T.backup.bannerAction} onAction={() => props.onBackup( wallet.id )} />

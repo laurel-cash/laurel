@@ -17,13 +17,13 @@ import { act, cleanup, fireEvent, render, screen } from "@testing-library/react"
 
 import { T } from "./ui_text";
 import { Com_A11y } from "./test_a11y";
-import type { documentResult_t, vaultStatus_t, walletList_t } from "./bindings";
+import type { documentResult_t, textZoom_t, vaultStatus_t, walletList_t } from "./bindings";
 
 // what the mocked engine answers; set per test before the app starts
 const engine = vi.hoisted( () => ( {
 	vault:		null as vaultStatus_t | null,
 	mobile:		false,
-	pageZoom:	true,
+	textZoom:	"page" as textZoom_t,
 	document:	null as documentResult_t | null,
 	textScale:	100,
 	vaultChanged: null as ( () => void ) | null,
@@ -38,7 +38,7 @@ const engine = vi.hoisted( () => ( {
 
 vi.mock( "./bindings", async () => ( {
 	commands: {
-		wConstantsF: async () => ( await import( "./test_engine" ) ).Test_Constants( { mobile: engine.mobile, pageZoom: engine.pageZoom } ),
+		wConstantsF: async () => ( await import( "./test_engine" ) ).Test_Constants( { mobile: engine.mobile, textZoom: engine.textZoom } ),
 		sGetF: async () => ( await import( "./test_engine" ) ).Test_Settings( { textScale: engine.textScale } ),
 		vOpenF: async () => {
 			if ( engine.vaultError ) {
@@ -91,7 +91,7 @@ async function Start() {
 
 beforeEach( () => {
 	engine.mobile = false;
-	engine.pageZoom = true;
+	engine.textZoom = "page";
 	engine.document = null;
 	engine.textScale = 100;
 	engine.vaultChanged = null;
@@ -270,7 +270,7 @@ describe( "mobile", () => {
 	} );
 	it( "applies text scaling without the unsupported Android webview zoom call", async () => {
 		engine.mobile = true;
-		engine.pageZoom = false;
+		engine.textZoom = "css";
 		engine.textScale = 175;
 		engine.list = { firstRun: true, wallets: [], failed: [] };
 		await Start();
@@ -280,14 +280,19 @@ describe( "mobile", () => {
 		expect( document.documentElement.style.zoom ).toBe( "" );
 	} );
 
-	it( "zooms an iPhone's page with WebKit's own zoom, never css zoom (the sheets squeezed to a strip)", async () => {
+	it( "grows an iPhone's text with WebKit's text size, never css zoom (the sheets squeezed to a strip) or the page zoom (it changed nothing)", async () => {
 		engine.mobile = true;
+		engine.textZoom = "text";
 		engine.textScale = 175;
 		engine.list = { firstRun: true, wallets: [], failed: [] };
 		await Start();
 		await screen.findByText( T.welcome.title );
-		expect( document.documentElement.style.zoom ).toBe( "" );
-		expect( document.documentElement.style.getPropertyValue( "--app-zoom" ) ).toBe( "" );
+		const root = document.documentElement.style;
+		expect( root.getPropertyValue( "-webkit-text-size-adjust" ) ).toBe( "175%" );
+		expect( root.zoom ).toBe( "" );
+		expect( root.getPropertyValue( "--app-zoom" ) ).toBe( "" );
+		cleanup();
+		expect( root.getPropertyValue( "-webkit-text-size-adjust" ) ).toBe( "" );
 	} );
 
 	it( "keeps desktop window controls off the phone", async () => {

@@ -17,7 +17,7 @@ See the LICENSE file for details.
 
 import { ReactNode, useEffect, useLayoutEffect, useRef, useState } from "react";
 import { AnimatePresence, motion } from "motion/react";
-import { Check, CircleAlert, Copy as CopyIcon, Info, Lightbulb, TriangleAlert, type LucideIcon } from "lucide-react";
+import { Check, ChevronLeft, CircleAlert, Copy as CopyIcon, Info, Lightbulb, TriangleAlert, type LucideIcon } from "lucide-react";
 import * as Tooltip from "@radix-ui/react-tooltip";
 import * as Popover from "@radix-ui/react-popover";
 import * as Dialog from "@radix-ui/react-dialog";
@@ -611,6 +611,7 @@ export function UI_Sheet( props: {
 	className?:		string;			// a kind of sheet with its own look
 	children:		ReactNode;
 } ) {
+	const mobile = useStore( ( s ) => s.constants?.mobile );
 	function Change( open: boolean ) {
 		if ( !open && props.busy ) {
 			return;
@@ -642,6 +643,13 @@ export function UI_Sheet( props: {
 								exit={{ opacity: 0, y: 12, scale: 0.98 }}
 								transition={SPRING}
 							>
+								{/* a phone's way back, at the top as an iPhone's is: a long sheet's
+								    Close was a long swipe down (What's New, 11-26). The one at the bottom stays */}
+								{mobile && (
+									<button className="sheet-back" disabled={props.busy} onClick={() => Change( false )}>
+										<ChevronLeft aria-hidden="true" />{T.common.back}
+									</button>
+								)}
 								{props.hero}
 								<Dialog.Title className="sheet-title">{props.title}</Dialog.Title>
 								{props.description

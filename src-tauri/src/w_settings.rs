@@ -76,6 +76,7 @@ pub struct appSettings_t {
 	pub termsAccepted:		Option< termsAccepted_t >,	// v1's terms agreed to on this device (T-049); none: not yet
 	pub sendFromPublic:		bool,				// Advanced: public money may be sent as it is, not shielded first (w_send.rs)
 	pub priceYesRealMoney:	bool,				// showPrice's yes was given in a real-money build (D-035): a beta's isn't carried into v1
+	pub checkUpdates:		bool,				// the person said yes to asking the store, once a day, whether a newer Laurel is out (w_update.rs)
 }
 
 impl Default for appSettings_t {
@@ -92,6 +93,7 @@ impl Default for appSettings_t {
 			termsAccepted:		None,
 			sendFromPublic:		false,			// public money is shielded first unless the person turns this on
 			priceYesRealMoney:	false,
+			checkUpdates:		false,			// nothing is asked of a store without a yes
 		}
 	}
 }
@@ -474,6 +476,7 @@ mod tests {
 			termsAccepted:		Some( termsAccepted_t { version: TERMS_VERSION.to_string(), at: 1_793_000_000 } ),
 			sendFromPublic:		true,
 			priceYesRealMoney:	true,
+			checkUpdates:		true,
 		};
 		assert_eq!( S_FromFile( serde_json::to_value( &chosen ).unwrap() ).unwrap(), chosen );
 		let first = appSettings_t::default();

@@ -97,6 +97,10 @@ export const commands = {
 	wValueHistoryF: (id: string, account: number, range: priceRange_t) => __TAURI_INVOKE<accountValue_t>("W_ValueHistory_f", { id, account, range }),
 	wSetWordsF: (words: uiWords_t) => __TAURI_INVOKE<void>("W_SetWords_f", { words }),
 	skHereF: () => __TAURI_INVOKE<boolean>("Sk_Here_f"),
+	uNewerF: () => __TAURI_INVOKE<{
+	version: string,
+	page: string,
+} | null>("U_Newer_f"),
 	pSeriesF: (range: priceRange_t) => __TAURI_INVOKE<priceSeries_t>("P_Series_f", { range }),
 	sTestNoticeF: () => __TAURI_INVOKE<null>("S_TestNotice_f"),
 	ctListF: () => __TAURI_INVOKE<contact_t[]>("Ct_List_f"),
@@ -157,6 +161,7 @@ export type appSettings_t = {
 	termsAccepted: termsAccepted_t | null,
 	sendFromPublic: boolean,
 	priceYesRealMoney: boolean,
+	checkUpdates: boolean,
 };
 
 export type autoLockResult_t = { kind: "saved"; settings: appSettings_t } | { kind: "askPassword" };
@@ -191,7 +196,8 @@ export type closingEvent_t = Record<string, never>;
 
 export type constants_t = {
 	mobile: boolean,
-	pageZoom: boolean,
+	updateCheck: boolean,
+	textZoom: textZoom_t,
 	phraseLengths: number[],
 	maxAccounts: number,
 	maxNameLen: number,
@@ -595,6 +601,8 @@ export type termsAccepted_t = {
 	at: number,
 };
 
+export type textZoom_t = "page" | "css" | "text";
+
 export type txCategory_t = "income" | "housing" | "food" | "transport" | "shopping" | "bills" | "business" | "gifts" | "savings" | "taxes" | "other";
 
 export type txKind_t = "received" | "sent" | "shield" | "move";
@@ -610,6 +618,11 @@ export type uiWords_t = {
 export type unsureSend_t = {
 	txid: string,
 	expiry: number,
+};
+
+export type update_t = {
+	version: string,
+	page: string,
 };
 
 export type vaultChangedEvent_t = Record<string, never>;

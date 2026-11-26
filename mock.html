@@ -34,7 +34,7 @@
 				V_Open_f:		Flag( "locked" ) ? { state: "locked", protection: "password", osProtectionAvailable: true, minPasswordLen: 8 } : { state: "unlocked", protection: "os", osProtectionAvailable: true, minPasswordLen: 8 },
 				V_Unlock_f:		{ state: "unlocked", protection: "password", osProtectionAvailable: true, minPasswordLen: 8 },
 				V_Status_f:		{ state: "unlocked", protection: "os", osProtectionAvailable: true, minPasswordLen: 8 },
-				W_Constants_f:	{ mobile: Flag( "phone" ), pageZoom: !Flag( "phone" ), phraseLengths: [ 12, 24 ], maxAccounts: 20, maxNameLen: 40, defaultWalletName: "My Wallet", defaultAccountName: "Main", blockSecs: 75, autoLockChoices: [ 1, 5, 10, 15, 30, 60 ], lockAwayChoices: [ 0, 60, 300 ], memoMaxBytes: 512, categories: [ "income", "food" ], textScales: [ 100, 115, 130, 150, 175 ], dustZats: 5000 },
+				W_Constants_f:	{ mobile: Flag( "phone" ), updateCheck: Flag( "phone" ), textZoom: Flag( "phone" ) ? "css" : "page", phraseLengths: [ 12, 24 ], maxAccounts: 20, maxNameLen: 40, defaultWalletName: "My Wallet", defaultAccountName: "Main", blockSecs: 75, autoLockChoices: [ 1, 5, 10, 15, 30, 60 ], lockAwayChoices: [ 0, 60, 300 ], memoMaxBytes: 512, categories: [ "income", "food" ], textScales: [ 100, 115, 130, 150, 175 ], dustZats: 5000 },
 				// &scale=175: the text size, set as the app sets it (useTextScale: css zoom on a phone)
 				S_Get_f:		{ autoLockMinutes: null, lockAwaySecs: 60, notifyInApp: true, notifySystem: true, network: "testnet", showPrice: false, textScale: Number( QUERY.get( "scale" ) ?? 100 ) },
 				// ?sapling: some money in Sapling, to move (W_QuoteMove_f)
@@ -297,7 +297,7 @@
 			// ?check: window.__phone( true ) makes this page a phone's in place (the engine's
 			// constants say mobile, and an Android one's: no page zoom of its own), so check_layout measures both without loading it twice
 			if ( Flag( "check" ) ) {
-				window.__phone = ( on ) => useStore.setState( ( s ) => ( { constants: s.constants && { ...s.constants, mobile: on, pageZoom: !on } } ) );
+				window.__phone = ( on ) => useStore.setState( ( s ) => ( { constants: s.constants && { ...s.constants, mobile: on, textZoom: on ? "css" : "page" } } ) );
 			}
 			const pane = QUERY.get( "pane" );
 			if ( pane !== null ) {

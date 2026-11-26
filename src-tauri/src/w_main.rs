@@ -81,7 +81,8 @@ W_Constants
 pub fn W_Constants() -> constants_t {
 	constants_t {
 		mobile:				cfg!( mobile ),
-		pageZoom:			!cfg!( target_os = "android" ),
+		textZoom:			if cfg!( target_os = "android" ) { textZoom_t::ZOOM_CSS } else if cfg!( target_os = "ios" ) { textZoom_t::ZOOM_TEXT } else { textZoom_t::ZOOM_PAGE },
+		updateCheck:		crate::w_update::UPDATE_SOURCE,
 		phraseLengths:		PHRASE_LENGTHS.to_vec(),
 		maxAccounts:		MAX_ACCOUNTS,
 		maxNameLen:			MAX_NAME_LEN,

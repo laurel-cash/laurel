@@ -1339,11 +1339,25 @@ pub struct blockEra_t {
 	pub secs:		u32,
 }
 
+// how a webview grows the text to the chosen size (useTextScale), by what it
+// does on that platform, not by what it says it does:
+//   page: its own zoom (a computer's WebView2 and WKWebView)
+//   css: css zoom on the root, touch targets too (Android's webview zooms nothing)
+//   text: WebKit's text size, as Safari's aA (an iPhone: WKWebView's page zoom is
+//         taken and changes nothing, 11-26, and css zoom squeezed its sheets)
+#[derive( Clone, Copy, PartialEq, Eq, Debug, Serialize, Type )]
+pub enum textZoom_t {
+	#[serde( rename = "page" )]	ZOOM_PAGE,
+	#[serde( rename = "css" )]	ZOOM_CSS,
+	#[serde( rename = "text" )]	ZOOM_TEXT,
+}
+
 // the numbers the ui needs to agree with, from their one owner
 #[derive( Clone, Debug, Serialize, Type )]
 pub struct constants_t {
 	pub mobile:			bool,		// the compiled target, never guessed from the viewport
-	pub pageZoom:		bool,		// the webview zooms the page itself (a computer's, WKWebView's pageZoom); Android's can't, and css zoom stands in (useTextScale)
+	pub updateCheck:	bool,		// a store this build can ask for a newer Laurel (w_update.rs): the setting is offered only then
+	pub textZoom:		textZoom_t,	// how this webview grows the text size (useTextScale)
 	pub phraseLengths:		Vec< u32 >,
 	pub maxAccounts:		u32,
 	pub maxNameLen:			u32,

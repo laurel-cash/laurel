@@ -3809,6 +3809,37 @@ SHEETS
 	outline: none;
 }
 
+/* a phone's Back at a sheet's top (UI_Sheet), staying there as the sheet scrolls under it */
+.sheet-back {
+	position: sticky;
+	top: -18px;		/* the sheet's top padding on a phone: it sticks at the sheet's edge */
+	z-index: 1;
+	display: flex;
+	align-items: center;
+	gap: 2px;
+	width: calc( 100% + 32px );
+	min-height: 44px;
+	margin: -18px -16px 6px;
+	padding: 0 16px 0 8px;
+	border: none;
+	background: var( --elevated );
+	color: var( --accent );
+	font-size: 17px;
+	text-align: left;
+}
+.sheet-back svg {
+	width: 24px;
+	height: 24px;
+	fill: none;
+	stroke: currentColor;
+	stroke-width: 2.25;
+	stroke-linecap: round;
+	stroke-linejoin: round;
+}
+.sheet-back:disabled {
+	opacity: 0.4;
+}
+
 .sheet-title {
 	margin: 0;
 	font-size: 17px;
@@ -8587,6 +8618,39 @@ ZEC PRICE
 }
 :root[data-mobile="true"] .titlebar {
 	padding-top: env( safe-area-inset-top, 0px );
+}
+/* a phone's way back, top left in the bar (UI_PhoneBack), over where the account is:
+   the screen's own Back isn't drawn a second time, but is what it presses. One in a
+   sheet stays the sheet's */
+.titlebar-back {
+	display: inline-flex;
+	align-items: center;
+	gap: 2px;
+	min-height: 44px;
+	padding: 0 10px 0 0;
+	border: none;
+	background: none;
+	color: var( --accent );
+	font-size: 17px;
+	pointer-events: auto;
+}
+.titlebar-back svg {
+	width: 24px;
+	height: 24px;
+	fill: none;
+	stroke: currentColor;
+	stroke-width: 2.25;
+	stroke-linecap: round;
+	stroke-linejoin: round;
+}
+.titlebar-back:disabled {
+	opacity: 0.4;
+}
+:root[data-mobile="true"] .nav-back:not( [role="dialog"] .nav-back ) {
+	display: none;
+}
+:root[data-back="true"] .sidebar .switcher {
+	visibility: hidden;
 }
 @media ( max-width: 480px ) {
 	.app {

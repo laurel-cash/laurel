@@ -115,6 +115,14 @@ const EN = {
 		open:				"Open",
 	},
 
+	update: {
+		settingLabel:		"Check for Updates",
+		settingHint:		"Once a day, Laurel asks the App Store whether a newer version is out. Apple sees your IP address, nothing of your wallets.",
+		bannerTitle:		( v: string ) => `Laurel ${v} Is Out`,
+		banner:				"Update Laurel in the App Store to get the newest fixes.",
+		bannerAction:		"Update",
+	},
+
 	notes: {
 		title:				"What's New",
 		whatsNew:			( v: string ) => `What's New in Laurel ${v}`,
