@@ -4,5 +4,9 @@
 <dict>
 	<key>NSCameraUsageDescription</key>
 	<string>Laurel uses the camera only to scan payment QR codes. Nothing is recorded or sent.</string>
+	<!-- export compliance, answered in App Store Connect 2026-11-26: standard algorithms only
+	(ChaCha20-Poly1305, Argon2, TLS), not offered in France: exempt, so uploads skip the question -->
+	<key>ITSAppUsesNonExemptEncryption</key>
+	<false/>
 </dict>
 </plist>
