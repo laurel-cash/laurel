@@ -28,6 +28,7 @@ const PORT		= 1434;
 const DRIVER	= 4444;
 const OUT		= "out/web";
 const WAIT_MS	= 120_000;		// a cold dev server and a simulator booting
+const HOST		= "127.0.0.1";	// never "localhost": node took it for IPv6, and safaridriver listens on IPv4 alone (11-26)
 
 // the screens: a pane (?pane=), or a sheet a pane's button opens. last: the thing that
 // must end above the bottom bar once swiped to the end
@@ -46,7 +47,7 @@ const Sleep = ( ms ) => new Promise( ( ok ) => setTimeout( ok, ms ) );
 
 // the W3C WebDriver protocol, one session
 async function Wd( method, path, body ) {
-	const r = await fetch( `http://localhost:${DRIVER}${path}`, { method, headers: { "content-type": "application/json" }, body: body && JSON.stringify( body ) } );
+	const r = await fetch( `http://${HOST}:${DRIVER}${path}`, { method, headers: { "content-type": "application/json" }, body: body && JSON.stringify( body ) } );
 	const j = await r.json();
 	if ( j.value?.error ) {
 		throw new Error( `${method} ${path}: ${j.value.error}: ${j.value.message}` );
@@ -109,15 +110,20 @@ let driver = null;
 let session = null;
 const faults = [];
 try {
-	server = await Com_DevServer( PORT, WAIT_MS );
+	server = await Com_DevServer( PORT, WAIT_MS, HOST );
 	driver = spawn( "safaridriver", [ "-p", String( DRIVER ) ], { stdio: "inherit" } );
-	await Sleep( 2000 );
+	for ( let i = 0; i < 40; i++ ) {		// until it answers, not a guessed wait
+		if ( await fetch( `http://${HOST}:${DRIVER}/status` ).then( ( r ) => r.ok, () => false ) ) {
+			break;
+		}
+		await Sleep( 500 );
+	}
 	( { sessionId: session } = await Wd( "POST", "/session", { capabilities: { alwaysMatch: {
 		browserName: "safari", platformName: "iOS", "safari:useSimulator": true, "safari:deviceType": "iPhone",
 		...( process.env.IOS_UDID ? { "safari:deviceUDID": process.env.IOS_UDID } : {} ) } } } ) );		// the one booted for it (ios.yml)
 
 	const Open = async ( pane ) => {
-		await Wd( "POST", `/session/${session}/url`, { url: `http://localhost:${PORT}/mock.html?check&phone&pane=${pane}` } );
+		await Wd( "POST", `/session/${session}/url`, { url: `http://${HOST}:${PORT}/mock.html?check&phone&pane=${pane}` } );
 		await Sleep( 5000 );		// the pane, opened 1.5s after the dashboard draws
 	};
 

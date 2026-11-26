@@ -36,11 +36,12 @@ Com_DevServer
 
 The page with every module a build may leave out (D-031), as the testnet
 line ships it, unless the run names its own (LAUREL_FEATURES), on port.
-Resolves once it serves; kill() ends it
+On host when said (vite's own choice may be IPv6 alone). Resolves once it
+serves; kill() ends it
 ==================
 */
-export async function Com_DevServer( port, ms ) {
-	const server = spawn( process.execPath, [ "node_modules/vite/bin/vite.js", "--port", String( port ), "--strictPort" ], { stdio: "pipe", windowsHide: true, env: { ...process.env, LAUREL_FEATURES: process.env.LAUREL_FEATURES ?? "full" } } );
+export async function Com_DevServer( port, ms, host ) {
+	const server = spawn( process.execPath, [ "node_modules/vite/bin/vite.js", "--port", String( port ), "--strictPort", ...( host ? [ "--host", host ] : [] ) ], { stdio: "pipe", windowsHide: true, env: { ...process.env, LAUREL_FEATURES: process.env.LAUREL_FEATURES ?? "full" } } );
 	await Com_Within( "the dev server", Com_Line( server.stdout, /Local/ ), ms );
 	return server;
 }
