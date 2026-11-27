@@ -102,15 +102,16 @@ an iPhone's are. The screen's Back stays its own, pressed from here, and
 isn't drawn twice (ui.css)
 ==================
 */
-type phoneBack_t = { label: string; disabled: boolean } | null;
+type phoneBack_t = { label: string; title: string; disabled: boolean } | null;
 
 function UI_PhoneBack() {
 	const [ back, setBack ] = useState< phoneBack_t >( null );
 	useEffect( () => {
 		function Look() {
 			const b = Com_NavBack();
-			const now: phoneBack_t = b ? { label: b.textContent ?? "", disabled: b.disabled } : null;
-			setBack( ( was ) => ( was?.label === now?.label && was?.disabled === now?.disabled ? was : now ) );
+			// title: the screen's name, which its Back says (data-title): the bar centres it
+			const now: phoneBack_t = b ? { label: b.textContent ?? "", title: b.dataset.title ?? "", disabled: b.disabled } : null;
+			setBack( ( was ) => ( was?.label === now?.label && was?.title === now?.title && was?.disabled === now?.disabled ? was : now ) );
 		}
 		Look();
 		const watch = new MutationObserver( Look );
@@ -125,9 +126,12 @@ function UI_PhoneBack() {
 		return null;
 	}
 	return (
-		<button className="titlebar-back" disabled={back.disabled} onClick={() => Com_NavBack()?.click()}>
-			<ChevronLeft aria-hidden="true" />{back.label}
-		</button>
+		<>
+			<button className="titlebar-back" disabled={back.disabled} onClick={() => Com_NavBack()?.click()}>
+				<ChevronLeft aria-hidden="true" />{back.label}
+			</button>
+			{back.title && <h1 className="titlebar-title">{back.title}</h1>}
+		</>
 	);
 }
 

@@ -19,16 +19,18 @@ import { readFileSync } from "node:fs";
 
 const CSS = readFileSync( "src/ui.css", "utf8" );
 const START = CSS.indexOf( "A PHONE'S FRAME" );
-const END = CSS.indexOf( "--frame-tab:", START );
-// the bars: their words keep their size at any text size, so never px (text_scale.mjs grows px)
-const BARS = /\.sidebar \.(switcher|nav)[^{]*\{[^}]*\}/g;
+const END = CSS.indexOf( "--frame-tool:", START );
+// the bars' rules: the account, the tabs, and the title bar's own (Back, the screen's name,
+// the lock). Their words keep their size at any text size, so never px (text_scale.mjs grows
+// px); Back's 17px grew to 30 at 175% while only the account's was looked at (11-27)
+const BARS = /^[^{}]*(\.sidebar \.(switcher|nav)|\.titlebar-(back|title|tools|btn))[^{]*\{[^}]*\}/gm;
 
 let bad = 0;
 const Say = ( text ) => { console.error( `check_frame: ${text}` ); bad++; };
 const Line = ( at ) => CSS.slice( 0, at ).split( "\n" ).length;
 
 if ( START < 0 || END < 0 ) {
-	Say( "ui.css has no frame block (A PHONE'S FRAME ... --frame-tab)" );
+	Say( "ui.css has no frame block (A PHONE'S FRAME ... --frame-tool)" );
 } else {
 	// the device's own lengths, read once: elsewhere a rule uses --safe-top / --safe-bottom
 	for ( const m of CSS.matchAll( /env\(/g ) ) {

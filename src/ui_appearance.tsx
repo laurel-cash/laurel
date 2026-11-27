@@ -56,6 +56,7 @@ export function UI_AppearanceSection() {
 			{settings && (
 				<UI_Segmented
 					id="text-size"
+					full
 					value={settings.textScale}
 					onChange={( textScale ) => void save.run( { textScale } )}
 					options={( constants?.textScales ?? [] ).map( ( s ) => ( { value: s, label: T.appearance.scale( s ) } ) )}

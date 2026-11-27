@@ -54,6 +54,7 @@ pub fn Ios_Prepare( app: &tauri::AppHandle, window: &tauri::WebviewWindow ) {
 			return;
 		};
 		Ios_EdgeToEdge( &page );
+		Ios_LogFrame( &page );
 		Ios_Watch( app, page, mtm );
 	} );
 	if let Err( e ) = prepared {
@@ -144,6 +145,36 @@ fn Ios_EdgeToEdge( page: &UIView ) {
 	// SAFETY: a WKWebView answers scrollView with its UIScrollView
 	let scroll: Retained< UIScrollView > = unsafe { objc2::msg_send![ page, scrollView ] };
 	scroll.setContentInsetAdjustmentBehavior( UIScrollViewContentInsetAdjustmentBehavior::Never );
+}
+
+/*
+==================
+Ios_LogFrame
+
+The page's room as UIKit gives it, said in the log each time Laurel is
+active again: the window, the webview in it, the safe areas, and how tall
+the page is drawn. A layout no other browser draws the same (a page that
+wouldn't scroll on an iPhone alone, 11-27) is read from these, in a
+device's or the simulator's log (ios.yml)
+==================
+*/
+fn Ios_LogFrame( page: &Retained< UIView > ) {
+	let page = page.clone();
+	// SAFETY: UIKit's own name, there for the life of the process
+	let active = unsafe { UIApplicationDidBecomeActiveNotification };
+	Ios_On( active, move || {
+		let Some( window ) = page.window() else {
+			return;
+		};
+		// SAFETY: a WKWebView answers scrollView with its UIScrollView
+		let scroll: Retained< UIScrollView > = unsafe { msg_send![ &*page, scrollView ] };
+		let ( w, v, s ) = ( window.bounds(), page.frame(), page.safeAreaInsets() );
+		log::info!(
+			"Ios_LogFrame: window {}x{}, webview {}x{} at {},{}, safe top {} bottom {}, page drawn {}x{}, scrolled {}",
+			w.size.width, w.size.height, v.size.width, v.size.height, v.origin.x, v.origin.y,
+			s.top, s.bottom, scroll.contentSize().width, scroll.contentSize().height, scroll.contentOffset().y
+		);
+	} );
 }
 
 /*

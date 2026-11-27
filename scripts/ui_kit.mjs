@@ -55,9 +55,8 @@ const SET = ( p, scale ) => `{
 	const root = document.documentElement.style;
 	root.setProperty( "--safe-top", "${p.top}px" );
 	root.setProperty( "--safe-bottom", "${p.bottom}px" );
-	root.setProperty( "--text-scale", "${scale / 100}" );
 	${PHONE_SELF( p )}
-}`;
+}; await window.__setting( { textScale: ${scale} } )`;		// as Settings sets it: the Text Size control shows it
 
 // what the phone draws over the page itself, drawn into each picture so the bars' room is
 // seen as on the phone (an empty band hid how much there was, 11-27): the status bar's
@@ -76,12 +75,13 @@ const PHONE_SELF = ( p ) => `
 	\`;
 	document.body.append( self );
 `;
+// what a finger scrolls: an open sheet, else the page (the document, on a phone)
 const SCROLLER = `
 	( () => {
 		const sheet = document.querySelector( ".sheet" );
 		if ( sheet ) return sheet;
-		const all = [ ...document.querySelectorAll( "*" ) ].filter( ( e ) => /auto|scroll/.test( getComputedStyle( e ).overflowY ) && e.scrollHeight > e.clientHeight + 1 );
-		return all.sort( ( a, b ) => b.clientHeight - a.clientHeight )[0] ?? null;
+		const page = document.scrollingElement;
+		return page.scrollHeight > page.clientHeight + 1 ? page : null;
 	} )()
 `;
 const Sleep = ( ms ) => new Promise( ( ok ) => setTimeout( ok, ms ) );
@@ -128,7 +128,7 @@ try {
 		await Send( "Emulation.setTouchEmulationEnabled", { enabled: true, maxTouchPoints: 5 } );
 		await Send( "Emulation.setDeviceMetricsOverride", { width: p.w, height: p.h, deviceScaleFactor: SCALE, mobile: true } );
 		await Timed( "load", ( async () => {
-			await Send( "Page.navigate", { url: Com_ScreenUrl( PORT, SCREENS[0], [ "check", "phone", "ios", "still" ] ) } );
+			await Send( "Page.navigate", { url: Com_ScreenUrl( PORT, SCREENS[0], [ "check", "phone", "ios", "still", "password" ] ) } );
 			const Ask = ( expression ) => Eval( expression, POLL_MS ).catch( () => false );
 			// asked again until it's ready, each ask on its own short clock: one sent as the page
 			// loads may never be answered
@@ -138,12 +138,13 @@ try {
 			await Timed( "screen", Eval( `window.__screen( ${JSON.stringify( s )} )` ) );
 			for ( const scale of scales ) {
 				// at its top before it's looked at, or what scrolls under the bar reads as drawn over it
-				const top = await Timed( "set", Eval( `${SET( p, scale )}; ( () => { const e = ${SCROLLER}; e?.scrollTo( { top: 0, behavior: "instant" } ); return e ? e.scrollTop : 0; } )()` ) );
+				const top = await Timed( "set", Eval( `( async () => { ${SET( p, scale )}; const e = ${SCROLLER}; e?.scrollTo( { top: 0, behavior: "instant" } ); return e ? e.scrollTop : 0; } )()` ) );
 				if ( top !== 0 ) {
 					throw new Error( `${p.name}: ${s.id} at ${scale}%: didn't go back to its top (${top})` );
 				}
 				const look = await Timed( "faults", Eval( "window.__layout()" ) );
 				const base = `${p.id}-${scale}-${s.id}`;
+				await Timed( "frames", Eval( FRAMES ) );		// the fixed bars drawn again after the scroll back up (one picture lost its tab bar, 11-27)
 				await Timed( "shot", Shot( `${base}-top.jpg` ) );
 				if ( s.id === FRAME_SCREEN ) {
 					await Timed( "shot", Bars( Picture, p, `${p.id}-${scale}` ) );

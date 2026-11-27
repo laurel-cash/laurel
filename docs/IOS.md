@@ -48,7 +48,13 @@ same on both phones and is checked by the Android gate first.
   given an iPhone's), the top bar (`--bar-h`, 44) and the tab bar (`--tab-h`, 49), and
   their words (`--frame-*`). As an iPhone's own, the bars keep their size at any text
   size; only the page between them grows. check_frame.mjs keeps it so, and the kit
-  measures every picture's bars against these.
+  measures every picture's bars against these: their size, each item centred in the
+  top bar, and none covered.
+- The top bar is an iPhone's navigation bar: Back on the left, the screen's name
+  centred (its Back's `data-title`), the lock on the right. A phone's page scrolls as
+  the document (the webview's own scroll view), never a box of its own: a box that
+  scrolled in a page that didn't took no finger at 175% (11-27). The kit sets the text
+  size as Settings does (`__setting`) and draws the lock (`?password`).
 - Look before shipping a layout: `npm run kit` (scripts/ui_kit.mjs) pictures every
   screen and sheet (scripts/ui_screens.mjs) on three iPhones at 100/130/175%, at its
   top and scrolled to its end, with check_layout's faults beside each and the phone's own status bar

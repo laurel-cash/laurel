@@ -145,7 +145,7 @@ export function UI_Settings( props: { actions: walletActions_t } ) {
 			{one !== "list" && (
 				<div className="settings-pane" key={pane}>
 					{one === "pane" && (
-						<button className="nav-back" onClick={() => go( "settings" )}>
+						<button className="nav-back" data-title={PANES.flat().find( ( p ) => p.pane === pane )?.label} onClick={() => go( "settings" )}>
 							<ChevronLeft aria-hidden="true" />{T.settings.title}
 						</button>
 					)}

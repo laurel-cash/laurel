@@ -46,6 +46,8 @@ TOKENS
 	--frame-title:	15px;		/* the account in the top bar */
 	--frame-sub:	12px;		/* the wallet under it */
 	--frame-tab:	10px;		/* a tab's word */
+	--frame-back:	17px;		/* the way back, top left: an iPhone's back button */
+	--frame-tool:	var( --bar-h );		/* a button in the top bar (the lock): a finger's 44pt, centred in it */
 
 	--titlebar-h:	40px;
 
@@ -118,6 +120,7 @@ TOKENS
 	--ease:			cubic-bezier( 0.2, 0.8, 0.2, 1 );
 
 	/* stacking order, bottom to top, the one place it is decided */
+	--z-bar:		99;		/* a phone's top bar (the account), under the title bar's Back and lock */
 	--z-titlebar:	100;
 	--z-sheet:		300;		/* overlay; the sheet itself is +1 */
 	--z-menu:		400;		/* menus can open from sheets */
@@ -4310,6 +4313,7 @@ RECEIVE AND FUND
 
 .history-head {
 	display: flex;
+	flex-wrap: wrap;		/* Export under the title when both don't fit (175% on 320) */
 	align-items: center;
 	justify-content: space-between;
 	gap: 12px;
@@ -5979,6 +5983,7 @@ HOME LAYOUT: FILL THE WINDOW
 	}
 	.chart-controls {
 		flex-basis: 100%;
+		flex-wrap: wrap;		/* the periods under By Pool when both don't fit (175% on 320) */
 		justify-content: space-between;
 	}
 }
@@ -8674,7 +8679,20 @@ ZEC PRICE
 	--titlebar-h: calc( var( --bar-h ) + var( --safe-top ) );
 }
 :root[data-mobile="true"] .titlebar {
+	/* an iPhone's navigation bar: Back | the screen's name | the lock. The name has the
+	   middle and gives way, cut short, to a long Back; centred by position, it lay under
+	   Back at 175% on a 320px phone (check_layout, 11-27) */
+	display: grid;
+	grid-template-columns: 1fr minmax( 0, max-content ) 1fr;
 	padding-top: var( --safe-top );
+}
+:root[data-mobile="true"] .titlebar-back {
+	grid-column: 1;
+	justify-self: start;
+}
+:root[data-mobile="true"] .titlebar-tools {
+	grid-column: 3;
+	justify-self: end;
 }
 /* a phone's way back, top left in the bar (UI_PhoneBack), over where the account is:
    the screen's own Back isn't drawn a second time, but is what it presses. One in a
@@ -8688,8 +8706,20 @@ ZEC PRICE
 	border: none;
 	background: none;
 	color: var( --accent );
-	font-size: 17px;
+	font-size: var( --frame-back );
 	pointer-events: auto;
+}
+/* the screen's name, in the bar's middle as an iPhone's navigation bar has it (UI_PhoneBack:
+   the screen's Back names it, data-title); the screen draws no name of its own under it */
+.titlebar-title {
+	grid-column: 2;
+	margin: 0;
+	overflow: hidden;
+	font-size: var( --frame-title );
+	font-weight: 600;
+	text-align: center;
+	text-overflow: ellipsis;
+	white-space: nowrap;
 }
 .titlebar-back svg {
 	width: 24px;
@@ -8712,10 +8742,15 @@ ZEC PRICE
 @media ( max-width: 480px ) {
 	.app {
 		flex-direction: column;
+		height: auto;		/* as tall as its page: the document scrolls it (below) */
+		min-height: calc( 100dvh / var( --app-zoom, 1 ) );		/* a short page still reaches the tab bar */
 	}
 	/* one bar on a phone: the account in it, the lock on its right. The title bar over
 	   a bar of its own for the account were 135px before any money showed */
 	.sidebar {
+		position: sticky;		/* stays as the page (the document) scrolls under it */
+		top: 0;
+		z-index: var( --z-bar );		/* under the title bar, whose Back and lock are over it */
 		width: 100%;
 		padding: var( --safe-top ) 52px 0 6px;
 		border-right: none;
@@ -8741,6 +8776,15 @@ ZEC PRICE
 	}
 	.titlebar-tools {
 		pointer-events: auto;
+	}
+	.titlebar-tools .titlebar-btn {
+		width: var( --frame-tool );
+		height: var( --frame-tool );
+	}
+	/* a pane named in the bar: its own head keeps only what it's for */
+	.settings-window.phone-pane .pane-head-icon,
+	.settings-window.phone-pane .pane-title {
+		display: none;
 	}
 	.sidebar .switcher-text, .sidebar .switcher-chevron {
 		position: static;
@@ -8792,8 +8836,8 @@ ZEC PRICE
 	.settings-window.phone-list .settings-nav-item.on {
 		position: relative;
 		gap: 12px;
-		height: 52px;
-		padding: 0 34px 0 12px;
+		min-height: 52px;		/* and taller as the words grow, as an iPhone's own rows */
+		padding: 8px 34px 8px 12px;
 		border-radius: 0;
 		background: none;
 		font-size: 15px;
@@ -9033,25 +9077,24 @@ ZEC PRICE
 	.sidebar-foot {
 		display: none;
 	}
+	/* a phone's page scrolls as the document: the webview's own scroll view, as a
+	   phone's browser and its own lists do (bounce, a tap on the status bar to go up). A
+	   box scrolling inside a page that didn't was what took no finger on an iPhone
+	   (Settings at 175%, 11-27); the bars stay, fixed and sticky, over it */
+	html, body, #root {
+		height: auto;
+	}
+	body {
+		overflow: visible;		/* hidden, it left no scroll a finger could move (a script's still could) */
+	}
 	.content {
-		min-height: 0;
+		flex: none;
 		min-width: 0;
 		margin-top: 0;
-		position: relative;		/* holds its ::after */
+		overflow: visible;
 		padding: 16px 12px calc( var( --tab-h ) + 16px + var( --tab-under ) );		/* the tab bar, and room past it */
 	}
-	/* a page always scrolls, if only by 1px, as an iPhone's own lists always do: iOS let
-	   no finger scroll a page that fit when it was laid out and grew past the screen after
-	   (Settings at a large text size, 11-27) */
-	.content::after {
-		content: "";
-		position: absolute;
-		top: 0;
-		left: 0;
-		width: 1px;
-		height: calc( 100% + 1px );
-		pointer-events: none;
-	}
+
 	/* a step starts at the top, under the bar, not centred: the 24 words and "I've
 	   Written It Down" fit one screen without scrolling */
 	.onboard {
@@ -9317,19 +9360,12 @@ ZEC PRICE
 }
 
 /* a settings pane under 240px (the largest text size on a 320px phone): the security
-   card's badge goes above its words, and the pane's title gives up its icon and some
-   size, so no word of either breaks in two ("Notifi/cations") */
+   card's badge goes above its words, so none breaks in two ("Notifi/cations") */
 @container phone-settings ( max-width: 240px ) {
 	.sec-hero {
 		flex-wrap: wrap;
 	}
 	.sec-text {
 		flex-basis: 100%;
-	}
-	.pane-head-icon {
-		display: none;
-	}
-	.pane-title {
-		font-size: 19px;
 	}
 }

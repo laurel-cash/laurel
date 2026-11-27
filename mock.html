@@ -34,9 +34,10 @@
 			const TO = "utest1qqpxw4r9aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa7kd2";
 			const FIX = {
 				// ?locked: a password is set and Laurel starts locked (the lock screen; any password opens it)
-				V_Open_f:		Flag( "locked" ) ? { state: "locked", protection: "password", osProtectionAvailable: true, minPasswordLen: 8 } : { state: "unlocked", protection: "os", osProtectionAvailable: true, minPasswordLen: 8 },
+				// ?password: one is set, Laurel open (the lock in the bar); ?locked: and it starts locked
+				V_Open_f:		Flag( "locked" ) ? { state: "locked", protection: "password", osProtectionAvailable: true, minPasswordLen: 8 } : { state: "unlocked", protection: Flag( "password" ) ? "password" : "os", osProtectionAvailable: true, minPasswordLen: 8 },
 				V_Unlock_f:		{ state: "unlocked", protection: "password", osProtectionAvailable: true, minPasswordLen: 8 },
-				V_Status_f:		{ state: "unlocked", protection: "os", osProtectionAvailable: true, minPasswordLen: 8 },
+				V_Status_f:		{ state: "unlocked", protection: Flag( "password" ) || Flag( "locked" ) ? "password" : "os", osProtectionAvailable: true, minPasswordLen: 8 },
 				W_Constants_f:	{ mobile: Flag( "phone" ), updateCheck: Flag( "phone" ), textZoom: Flag( "ios" ) ? "text" : Flag( "phone" ) ? "css" : "page", phraseLengths: [ 12, 24 ], maxAccounts: 20, maxNameLen: 40, defaultWalletName: "My Wallet", defaultAccountName: "Main", blockSecs: 75, autoLockChoices: [ 1, 5, 10, 15, 30, 60 ], lockAwayChoices: [ 0, 60, 300 ], memoMaxBytes: 512, categories: [ "income", "food" ], textScales: [ 100, 115, 130, 150, 175 ], dustZats: 5000 },
 				// &scale=175: the text size, set as the app sets it (useTextScale: css zoom on a phone)
 				S_Get_f:		{ autoLockMinutes: null, lockAwaySecs: 60, notifyInApp: true, notifySystem: true, network: "testnet", showPrice: false, textScale: Number( QUERY.get( "scale" ) ?? 100 ) },
@@ -226,13 +227,15 @@
 				const PastTheEdge = () => {
 					const out = [];
 					const W = document.documentElement.clientWidth;
-					const Scrolls = ( el ) => {
-						for ( let p = el.parentElement; p; p = p.parentElement ) if ( /auto|scroll/.test( getComputedStyle( p ).overflowX ) ) return true;
+					// in a box that scrolls it or cuts it off (the balance card's leaf): never past the
+					// screen as seen. The page's own (body, html) is the edge measured, not one of these
+					const Held = ( el ) => {
+						for ( let p = el.parentElement; p && p !== document.body; p = p.parentElement ) if ( getComputedStyle( p ).overflowX !== "visible" ) return true;
 						return false;
 					};
 					const Past = ( el ) => { const r = el.getBoundingClientRect(); return r.width > 1 && ( r.right > W + 1 || r.left < -1 ); };
 					for ( const el of document.querySelectorAll( "body *" ) ) {
-						if ( !Shown( el ) || !Past( el ) || Scrolls( el ) || [ ...el.children ].some( Past ) ) continue;
+						if ( !Shown( el ) || !Past( el ) || Held( el ) || [ ...el.children ].some( Past ) ) continue;
 						const r = el.getBoundingClientRect();
 						out.push( `${Tag( el )} (${el.textContent.trim().slice( 0, 30 )}) is past the screen's edge: ${Math.round( r.left )}..${Math.round( r.right )}px of ${W}px` );
 					}
@@ -269,15 +272,29 @@
 					if ( !Near( bar, barWant ) ) out.push( `the top bar ends at ${Math.round( bar )}px, not ${Math.round( barWant )}px (--safe-top + --bar-h)` );
 					const tab = nav.clientHeight, tabWant = Px( "--tab-h" ) + Px( "--tab-under" );		// less its top line
 					if ( !Near( tab, tabWant ) ) out.push( `the tab bar is ${Math.round( tab )}px, not ${Math.round( tabWant )}px (--tab-h + --tab-under)` );
+					// what's in the top bar sits in its middle: the account, Back, the screen's name, the
+					// lock (Back and the lock rode high at 175%, 11-27)
+					const middle = Px( "--safe-top" ) + Px( "--bar-h" ) / 2;
+					for ( const el of document.querySelectorAll( ".sidebar .switcher, .titlebar-back, .titlebar-title, .titlebar-tools > *" ) ) {
+						const r = Shown( el );
+						// and seen: the account's bar, made sticky, once drew over Back and the lock (11-27)
+						// (a word no finger takes, the screen's name, is hit for the probe alone)
+						const was = el.style.pointerEvents;
+						el.style.pointerEvents = "auto";
+						const over = r && document.elementFromPoint( ( r.left + r.right ) / 2, ( r.top + r.bottom ) / 2 );
+						el.style.pointerEvents = was;
+						if ( r && over && !el.contains( over ) ) out.push( `${Tag( el )} is under ${Tag( over )}` );
+						if ( r && !Near( ( r.top + r.bottom ) / 2 / zoom, middle ) ) out.push( `${Tag( el )} is centred at ${Math.round( ( r.top + r.bottom ) / 2 / zoom )}px, not the top bar's middle, ${Math.round( middle )}px` );
+					}
 					return out;
 				};
 
-				// a phone's page always scrolls (ui.css, .content::after): iOS let no finger scroll
-				// one that fit when laid out and grew after (Settings at 175%, 11-27)
+				// a phone's page scrolls as the document, the webview's own scroll view (ui.css): a box
+				// scrolling in a page that didn't took no finger on an iPhone (Settings at 175%, 11-27)
 				const Unscrollable = () => {
-					const page = document.querySelector( "main.content" );
-					if ( !PhoneBar() || !page ) return [];
-					return page.scrollHeight > page.clientHeight ? [] : [ `${Tag( page )} can't be scrolled: ${page.scrollHeight} in ${page.clientHeight}px` ];
+					if ( !PhoneBar() ) return [];
+					const boxes = [ ...document.querySelectorAll( "body *" ) ].filter( ( e ) => !e.closest( "[role='dialog'], [data-radix-popper-content-wrapper]" ) && /auto|scroll/.test( getComputedStyle( e ).overflowY ) && e.clientHeight > innerHeight / 2 );
+					return boxes.map( ( e ) => `${Tag( e )} scrolls the page in a box of its own (${e.clientHeight}px tall); a phone's page is the document's` );
 				};
 
 				// a phone's bottom bar never hides the end of a page: scrolled all the way, the
@@ -294,6 +311,7 @@
 						sc.scrollTop = sc.scrollHeight;
 						let last = null;
 						for ( const el of sc.querySelectorAll( "*" ) ) {
+							if ( el.closest( ".sidebar, .titlebar, [role='dialog']" ) ) continue;		// the bars and a sheet: not the page's end
 							const r = OwnText( el ) && Shown( el );
 							if ( r && ( !last || r.bottom > last.r.bottom ) ) last = { el, r };
 						}
@@ -346,10 +364,18 @@
 			// run before the app decides
 			import { APP_VERSION, HOME_DEFAULT, PREF_NOTES_SEEN } from "/src/ui_local.ts";
 			import { useStore } from "/src/ui_store.ts";
+			import { KEYS, QUERY as CACHE } from "/src/ui_query.ts";
 			import { MotionGlobalConfig } from "motion/react";
 			// ?check: window.__phone( true ) makes this page a phone's in place (the engine's
 			// constants say mobile, and an Android one's: no page zoom of its own), so check_layout measures both without loading it twice
 			if ( Flag( "check" ) ) {
+				// a setting changed as Settings saves it (useAppSettings): what the app then draws is
+				// the app's, the Text Size control's choice with it. Resolved once drawn
+				window.__setting = async ( patch ) => {
+					CACHE.setQueryData( KEYS.settings(), ( s ) => ( { ...s, ...patch } ) );
+					await Sleep( 0 );
+					await Frame().then( Frame );
+				};
 				window.__phone = ( on ) => useStore.setState( ( s ) => ( { constants: s.constants && { ...s.constants, mobile: on, textZoom: on ? "css" : "page" } } ) );
 			}
 			const pane = QUERY.get( "pane" );
