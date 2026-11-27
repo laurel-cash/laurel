@@ -149,8 +149,9 @@ a screenshot, so w_ios.rs covers the page while Laurel isn't the active
 app (the app switcher's picture) and while the screen is captured; it
 keeps the data folders out of backups, saves in a background task, and
 answers for its own notifications.
-project.yml closes the app's files while the phone is locked. Code in
-comments doesn't count
+project.yml closes the app's files while the phone is locked, and makes
+an iPhone app (no iPad layout was ever looked at). Code in comments
+doesn't count
 ==================
 */
 const IOS_NEEDS = [
@@ -166,6 +167,9 @@ export function Com_IosProblems( ios, project ) {
 	const problems = IOS_NEEDS.filter( ( [ shape ] ) => !shape.test( code ) ).map( ( [ , why ] ) => `w_ios.rs ${why}` );
 	if ( !/^\s*com\.apple\.developer\.default-data-protection:\s*NSFileProtectionComplete(UnlessOpen)?\s*$/m.test( project ) ) {
 		problems.push( "project.yml doesn't protect the app's files (default-data-protection): they'd be readable while the phone is locked" );
+	}
+	if ( !/^\s*TARGETED_DEVICE_FAMILY:\s*"?1"?\s*$/m.test( project ) ) {
+		problems.push( "project.yml doesn't make an iPhone app (TARGETED_DEVICE_FAMILY: 1): App Review would test an iPad layout nobody has seen" );
 	}
 	return problems;
 }

@@ -46,11 +46,6 @@ targets:
           - UIInterfaceOrientationPortrait
           - UIInterfaceOrientationLandscapeLeft
           - UIInterfaceOrientationLandscapeRight
-        UISupportedInterfaceOrientations~ipad:
-          - UIInterfaceOrientationPortrait
-          - UIInterfaceOrientationPortraitUpsideDown
-          - UIInterfaceOrientationLandscapeLeft
-          - UIInterfaceOrientationLandscapeRight
         CFBundleShortVersionString: 0.3.3
         CFBundleVersion: "0.3.3"
     entitlements:
@@ -64,6 +59,9 @@ targets:
         RUST_LOG: info
     settings:
       base:
+        # an iPhone app: an iPad runs it as one. Its own layout was never looked at, and
+        # App Review would test it there (and ask for iPad screenshots)
+        TARGETED_DEVICE_FAMILY: 1
         ENABLE_BITCODE: false
         ARCHS: [arm64]
         VALID_ARCHS: arm64 

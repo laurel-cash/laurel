@@ -178,11 +178,12 @@ describe( "the iPhone's own side", () => {
 
 	it( "refuses one missing any of them, or with one commented out", () => {
 		const ios = "UIApplicationWillResignActiveNotification\nUIScreenCapturedDidChangeNotification\nNSURLIsExcludedFromBackupKey\nbeginBackgroundTask\nUNUserNotificationCenterDelegate\n";
-		const project = "      properties:\n        com.apple.developer.default-data-protection: NSFileProtectionCompleteUnlessOpen\n";
+		const project = "      properties:\n        com.apple.developer.default-data-protection: NSFileProtectionCompleteUnlessOpen\n      base:\n        TARGETED_DEVICE_FAMILY: 1\n";
 		expect( Com_IosProblems( ios, project ) ).toEqual( [] );
 		expect( Com_IosProblems( ios.replace( "NSURLIsExcludedFromBackupKey", "" ), project ) ).toHaveLength( 1 );
 		expect( Com_IosProblems( ios.replace( "\nNSURL", "\n// NSURL" ), project ) ).toHaveLength( 1 );
-		expect( Com_IosProblems( ios, "" ) ).toHaveLength( 1 );
+		expect( Com_IosProblems( ios, "" ) ).toHaveLength( 2 );
+		expect( Com_IosProblems( ios, project.replace( "TARGETED_DEVICE_FAMILY: 1", "TARGETED_DEVICE_FAMILY: \"1,2\"" ) ) ).toHaveLength( 1 );
 		expect( Com_IosProblems( ios, project.replace( "        com", "        # com" ) ) ).toHaveLength( 1 );
 	} );
 
