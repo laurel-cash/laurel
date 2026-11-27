@@ -399,7 +399,6 @@ const EN = {
 		public:				"Public",
 		legacy:				"Legacy",
 		pending:			"pending",
-		rename:				"Rename account",
 		somethingWrong:		"Something Went Wrong",
 		keyBannerTitle:		"Move this money to a wallet with a recovery phrase",
 		keyBanner:			"It's held by keys from zcashd, which back up nothing Laurel makes. Send it to one of your other wallets.",
@@ -409,6 +408,7 @@ const EN = {
 	switcher: {
 		addAccount:			"Add Account…",
 		renameWallet:		"Rename Wallet…",
+		renameAccount:		"Rename This Account…",
 		backUp:				"Back Up Recovery Phrase…",
 		notBackedUp:		"Back up",
 		walletOptions:		"Wallet options",

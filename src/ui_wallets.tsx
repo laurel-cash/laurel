@@ -21,7 +21,7 @@ import { useAction } from "./ui_hooks";
 import { useStore } from "./ui_store";
 import { KEYS, QUERY } from "./ui_query";
 import type { addWalletKind_t } from "./ui_switcher";
-import { UI_AddAccountSheet, UI_NameSheet } from "./ui_sheets";
+import { UI_AddAccountSheet, useRename } from "./ui_sheets";
 import { UI_AskPassword } from "./ui_security";
 import { sheetProps_t, UI_Alert, UI_Amount, UI_Callout, UI_Sheet, UI_SheetButtons, UI_SheetClose } from "./ui_widgets";
 
@@ -212,20 +212,13 @@ UI_WalletsSection
 export function UI_WalletsSection( props: { actions: walletActions_t } ) {
 	const wallets	= useStore( ( s ) => s.wallets );
 	const order		= useStore( ( s ) => s.order );
-	const refresh	= useStore( ( s ) => s.Refresh );
 	const [ removing, setRemoving ]	= useState< walletSummary_t | null >( null );
 	const [ open, setOpen ]			= useState( false );
-	const [ naming, setNaming ]		= useState< naming_t | null >( null );
-	const [ nameOpen, setNameOpen ]	= useState( false );
+	const rename					= useRename();
 	const [ adding, setAdding ]		= useState< walletSummary_t | null >( null );
 	const [ addOpen, setAddOpen ]	= useState( false );
 	const [ moving, setMoving ]		= useState< walletSummary_t | null >( null );
 	const [ moveOpen, setMoveOpen ]	= useState( false );
-
-	function Rename( n: naming_t ) {
-		setNaming( n );
-		setNameOpen( true );
-	}
 
 	return (
 		<section className="settings-section">
@@ -257,7 +250,7 @@ export function UI_WalletsSection( props: { actions: walletActions_t } ) {
 									<span className="wallet-account-amount"><UI_Amount zats={a.balance.total} unit /></span>
 									<button
 										className="link quiet"
-										onClick={() => Rename( { title: T.sheets.renameAccountTitle, initial: a.name, save: async ( name ) => { await commands.wRenameAccountF( w.id, a.index, name ); await refresh(); } } )}
+										onClick={() => rename.RenameAccount( w, a )}
 									>
 										{T.wallets.rename}
 									</button>
@@ -267,7 +260,7 @@ export function UI_WalletsSection( props: { actions: walletActions_t } ) {
 
 						<div className="wallet-actions">
 							{unsafe && <button className="btn primary small" onClick={() => props.actions.onBackup( w.id )}><KeyRound aria-hidden="true" />{T.wallets.backUpNow}</button>}
-							<button className="btn small" onClick={() => Rename( { title: T.sheets.renameWalletTitle, initial: w.name, save: async ( name ) => { await commands.wRenameWalletF( w.id, name ); await refresh(); } } )}>
+							<button className="btn small" onClick={() => rename.RenameWallet( w )}>
 								<Pencil aria-hidden="true" />{T.wallets.renameWallet}
 							</button>
 							{w.can.addAccount && <button className="btn small" onClick={() => { setAdding( w ); setAddOpen( true ); }}><Plus aria-hidden="true" />{T.wallets.addAccount}</button>}
@@ -282,14 +275,11 @@ export function UI_WalletsSection( props: { actions: walletActions_t } ) {
 			} )}
 			{removing && <UI_RemoveSheet open={open} onOpenChange={setOpen} wallet={removing} onBackup={() => props.actions.onBackup( removing.id )} />}
 			{moving && <UI_MoveSheet open={moveOpen} onOpenChange={setMoveOpen} wallet={wallets[moving.id] ?? moving} actions={props.actions} onRemove={() => { setRemoving( moving ); setOpen( true ); }} />}
-			{naming && <UI_NameSheet open={nameOpen} onOpenChange={setNameOpen} title={naming.title} initial={naming.initial} action={T.common.save} save={naming.save} />}
+			{rename.sheet}
 			{adding && <UI_AddAccountSheet open={addOpen} onOpenChange={setAddOpen} wallet={adding} onAdded={() => {}} />}
 		</section>
 	);
 }
-
-// what the one rename sheet renames: a wallet, or one of its accounts
-type naming_t = { title: string; initial: string; save: ( name: string ) => Promise< unknown > };
 
 /*
 ==================

@@ -12,7 +12,7 @@ See the LICENSE file for details.
 
 import { useEffect, useRef, useState } from "react";
 
-import { commands, walletSummary_t } from "./ui_local";
+import { accountSummary_t, commands, walletSummary_t } from "./ui_local";
 import { T } from "./ui_text";
 import { useAction } from "./ui_hooks";
 import { useStore } from "./ui_store";
@@ -94,6 +94,34 @@ export function UI_NameSheet( props: sheetProps_t & {
 			<UI_SheetButtons action={{ label: props.action, onRun: act.run }} busy={act.busy} onCancel={() => props.onOpenChange( false )} />
 		</UI_Sheet>
 	);
+}
+
+/*
+==================
+useRename
+
+The one way to rename a wallet or an account, wherever it's offered (the
+account menu, Settings' wallets): Rename* opens the sheet, which the
+caller places once. The sheet stays set after closing, to animate out.
+==================
+*/
+type naming_t = { title: string; initial: string; save: ( name: string ) => Promise< unknown > };
+
+export function useRename() {
+	const refresh					= useStore( ( s ) => s.Refresh );
+	const [ naming, setNaming ]		= useState< naming_t | null >( null );
+	const [ open, setOpen ]			= useState( false );
+
+	function Open( n: naming_t ) {
+		setNaming( n );
+		setOpen( true );
+	}
+
+	return {
+		RenameWallet: ( w: walletSummary_t ) => Open( { title: T.sheets.renameWalletTitle, initial: w.name, save: async ( name ) => { await commands.wRenameWalletF( w.id, name ); await refresh(); } } ),
+		RenameAccount: ( w: walletSummary_t, a: accountSummary_t ) => Open( { title: T.sheets.renameAccountTitle, initial: a.name, save: async ( name ) => { await commands.wRenameAccountF( w.id, a.index, name ); await refresh(); } } ),
+		sheet: naming && <UI_NameSheet open={open} onOpenChange={setOpen} title={naming.title} initial={naming.initial} action={T.common.save} save={naming.save} />,
+	};
 }
 
 /*

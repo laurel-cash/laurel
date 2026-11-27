@@ -15,12 +15,12 @@ import { useState } from "react";
 import * as Menu from "@radix-ui/react-dropdown-menu";
 import { Check, ChevronsUpDown, Ellipsis, Eye, FileKey, Key, KeyRound, Pencil, Plus, Settings2, ShieldAlert, Sparkles, UserPlus } from "lucide-react";
 
-import { commands, Com_SyncState, walletSummary_t } from "./ui_local";
+import { Com_SyncState, walletSummary_t } from "./ui_local";
 import { T } from "./ui_text";
 import { useCurrent, useStore } from "./ui_store";
 import { UI_Amount } from "./ui_widgets";
 import { Com_SyncLabel, UI_Logo, UI_SyncDot } from "./ui_chrome";
-import { UI_AddAccountSheet, UI_NameSheet } from "./ui_sheets";
+import { UI_AddAccountSheet, useRename } from "./ui_sheets";
 import { KINDS } from "./ui_wallets";
 
 export type addWalletKind_t = "create" | "restore" | "viewOnly" | "zcashd";
@@ -96,9 +96,10 @@ function UI_WalletGroup( props: {
 ==================
 UI_Switcher
 
-The trigger shows the account on screen. The menu lists everything.
-Sheets for renaming and adding accounts open from here and belong to
-the wallet they were opened for.
+The trigger shows the account on screen, the one place its name is
+shown, so renaming it is here too. The menu lists everything. Sheets
+for renaming and adding accounts open from here and belong to the
+wallet they were opened for.
 ==================
 */
 export function UI_Switcher( props: {
@@ -108,14 +109,12 @@ export function UI_Switcher( props: {
 } ) {
 	const wallets	= useStore( ( s ) => s.wallets );
 	const order		= useStore( ( s ) => s.order );
-	const refresh	= useStore( ( s ) => s.Refresh );
 	const select	= useStore( ( s ) => s.Select );
 	const go		= useStore( ( s ) => s.Go );
 	const current	= useCurrent();
 
+	const rename						= useRename();
 	// the wallet stays set after closing, so the sheet can animate out
-	const [ renaming, setRenaming ]		= useState< walletSummary_t | null >( null );
-	const [ renameOpen, setRenameOpen ]	= useState( false );
 	const [ adding, setAdding ]			= useState< walletSummary_t | null >( null );
 	const [ addOpen, setAddOpen ]		= useState( false );
 
@@ -138,7 +137,7 @@ export function UI_Switcher( props: {
 								{i > 0 && <Menu.Separator className="menu-sep" />}
 								<UI_WalletGroup
 									wallet={wallets[id]}
-									onRename={() => { setRenaming( wallets[id] ); setRenameOpen( true ); }}
+									onRename={() => rename.RenameWallet( wallets[id] )}
 									onAddAccount={() => { setAdding( wallets[id] ); setAddOpen( true ); }}
 									onBackup={() => props.onBackup( id )}
 								/>
@@ -146,6 +145,11 @@ export function UI_Switcher( props: {
 						) )}
 
 						<Menu.Separator className="menu-sep" />
+						{current.wallet && current.account && (
+							<Menu.Item className="menu-item" onSelect={() => current.wallet && current.account && rename.RenameAccount( current.wallet, current.account )}>
+								<Pencil /> {T.switcher.renameAccount}
+							</Menu.Item>
+						)}
 						<Menu.Sub>
 							<Menu.SubTrigger className="menu-item"><Plus /> {T.switcher.addWallet}</Menu.SubTrigger>
 							<Menu.Portal>
@@ -164,16 +168,7 @@ export function UI_Switcher( props: {
 				</Menu.Portal>
 			</Menu.Root>
 
-			{renaming && (
-				<UI_NameSheet
-					open={renameOpen}
-					onOpenChange={setRenameOpen}
-					title={T.sheets.renameWalletTitle}
-					initial={renaming.name}
-					action={T.common.save}
-					save={async ( name ) => { await commands.wRenameWalletF( renaming.id, name ); await refresh(); }}
-				/>
-			)}
+			{rename.sheet}
 			{adding && (
 				<UI_AddAccountSheet
 					open={addOpen}

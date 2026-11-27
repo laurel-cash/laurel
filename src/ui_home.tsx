@@ -13,7 +13,7 @@ See the LICENSE file for details.
 
 import { Fragment, ReactNode, useEffect, useLayoutEffect, useRef, useState } from "react";
 import { AnimatePresence, motion } from "motion/react";
-import { ArrowDownLeft, ArrowUpRight, Check, ChevronRight, Clock, Eye, EyeOff, FileKey, History, House, Lock, MapPin, Pause, Pencil, Plus, RefreshCw, ScanLine, Settings, ShieldAlert, ShieldCheck, SlidersHorizontal, WifiOff, ArrowRightLeft } from "lucide-react";
+import { ArrowDownLeft, ArrowUpRight, Check, ChevronRight, Clock, Eye, EyeOff, FileKey, History, House, Lock, MapPin, Pause, Plus, RefreshCw, ScanLine, Settings, ShieldAlert, ShieldCheck, SlidersHorizontal, WifiOff, ArrowRightLeft } from "lucide-react";
 import type { LucideIcon } from "lucide-react";
 import { KINDS, UI_FailedWallets, UI_SaveFailed } from "./ui_wallets";
 
@@ -41,7 +41,6 @@ import { UI_LowSpaceAlert } from "./ui_storage";
 import { Com_OpenStore, useNewerLaurel } from "./ui_update";
 import { UI_Repeats, useRepeats } from "./ui_repeat";
 import LEAF_SINGLE_SRC from "./assets/leaf-single-320.webp";
-import { UI_NameSheet } from "./ui_sheets";
 import { addWalletKind_t, UI_Switcher } from "./ui_switcher";
 import { UI_Settings } from "./ui_settings";
 import { UI_FundSheet, UI_ReceiveSheet } from "./ui_receive";
@@ -660,11 +659,12 @@ function UI_Banner( props: { icon: ReactNode; title: string; body: string; actio
 ==================
 UI_AccountCard
 
-The account at the top of home: its name (renamed here), its wallet, how
-sync is going, and what it holds, which the eye hides
+The account at the top of home: what it holds, which the eye hides, and
+how sync is going. Its name and wallet are the bar's (the switcher, which
+renames it); said again here they read as a stutter
 ==================
 */
-function UI_AccountCard( props: { wallet: walletSummary_t | undefined; account: accountSummary_t | undefined; onRename: () => void; onSync: () => void } ) {
+function UI_AccountCard( props: { wallet: walletSummary_t | undefined; account: accountSummary_t | undefined; onSync: () => void } ) {
 	const { wallet, account }	= props;
 	const hidden				= useStore( ( s ) => s.hideAmounts );
 	const toggleAmounts			= useStore( ( s ) => s.ToggleAmounts );
@@ -673,19 +673,9 @@ function UI_AccountCard( props: { wallet: walletSummary_t | undefined; account: 
 		<section className="card-hero">
 			<UI_Logo size={190} className="card-leaf" />
 			<div className="card-top">
-				<div className="card-who">
-					<div className="account-head">
-						<h1 className="account-name">{account?.name ?? "—"}</h1>
-						{account && (
-							<UI_Tip label={T.home.rename}>
-								<button className="icon-btn" aria-label={T.home.rename} onClick={props.onRename}>
-									<Pencil aria-hidden="true" />
-								</button>
-							</UI_Tip>
-						)}
-						{wallet && KINDS[wallet.kind].badge && <span className="pill">{KINDS[wallet.kind].badge}</span>}
-					</div>
-					<p className="card-wallet">{wallet?.name}</p>
+				<div className="card-label">
+					<h1>{T.home.totalBalance}</h1>
+					{wallet && KINDS[wallet.kind].badge && <span className="pill">{KINDS[wallet.kind].badge}</span>}
 				</div>
 				{wallet && <UI_SyncStatus walletId={wallet.id} progress={wallet.progress} onDetails={props.onSync} />}
 			</div>
@@ -720,14 +710,11 @@ function UI_HomeSheets( props: {
 	receiveSide:	addressKind_t;
 	shieldFrom:		string | null;		// one public address to shield (its row in the pool), or Laurel's pick
 	draft:			sendDraft_t;
-	renaming:		boolean;
 	onSheet:		( s: sheet_t ) => void;
 	onOpenChange:	( open: boolean ) => void;
 	onDraft:		( d: sendDraft_t ) => void;
-	onRenaming:		( open: boolean ) => void;
 	onShield:		( from?: string ) => void;		// Shield, of one public address or Laurel's pick
 } ) {
-	const refresh	= useStore( ( s ) => s.Refresh );
 	const { wallet, account, sheet, onSheet } = props;
 	const close		= props.onOpenChange;
 	const offline	= Com_SyncState( wallet.progress ) === "offline";
@@ -771,14 +758,6 @@ function UI_HomeSheets( props: {
 			/>
 			<UI_SyncSheet open={sheet === "sync"} onOpenChange={close} walletId={wallet.id} progress={wallet.progress} />
 			<UI_MigrateSheet open={sheet === "migrate"} onOpenChange={close} walletId={wallet.id} account={account.index} />
-			<UI_NameSheet
-				open={props.renaming}
-				onOpenChange={props.onRenaming}
-				title={T.sheets.renameAccountTitle}
-				initial={account.name}
-				action={T.common.save}
-				save={async ( name ) => { await commands.wRenameAccountF( wallet.id, account.index, name ); await refresh(); }}
-			/>
 		</>
 	);
 }
@@ -797,7 +776,6 @@ function UI_HomePage( props: {
 	account:		accountSummary_t | undefined;
 	card:			( c: homeCard_t ) => ReactNode;
 	onSheet:		( s: sheet_t ) => void;
-	onRename:		() => void;
 	onCustomize:	() => void;
 	onBackup:		( walletId: string ) => void;
 } ) {
@@ -824,7 +802,7 @@ function UI_HomePage( props: {
 			<AnimatePresence mode="wait" initial={false}>
 				<motion.div key={`${wallet?.id}:${account?.index}`} className="home-grid" initial={{ opacity: 0, x: 12 }} animate={{ opacity: 1, x: 0 }} exit={{ opacity: 0, x: -12 }} transition={SPRING}>
 					<div className="home-main">
-						<UI_AccountCard wallet={wallet} account={account} onRename={props.onRename} onSync={() => onSheet( "sync" )} />
+						<UI_AccountCard wallet={wallet} account={account} onSync={() => onSheet( "sync" )} />
 						{wallet && <UI_Actions onSheet={onSheet} split={account ? Com_Split( account.balance ) : undefined} />}
 						{wallet && account && home.chart && <UI_BalanceChart walletId={wallet.id} account={account.index} total={account.balance.total} progress={wallet.progress} />}
 					</div>
@@ -861,7 +839,6 @@ export function UI_Home( props: { onAddWallet: ( kind: addWalletKind_t ) => void
 	const page					= useStore( ( s ) => s.page );
 	const setPage				= useStore( ( s ) => s.Go );
 
-	const [ renaming, setRenaming ]	= useState( false );
 	const [ sheet, setSheet ]		= useState< sheet_t >( "none" );
 	const [ draft, setDraft ]		= useState< sendDraft_t >( EMPTY_DRAFT );		// survives a trip to Scan and back
 	const [ customizing, setCustomizing ] = useState( false );
@@ -931,7 +908,7 @@ export function UI_Home( props: { onAddWallet: ( kind: addWalletKind_t ) => void
 			: null;
 		break;
 	case "home":
-		body = <UI_HomePage wallet={wallet} account={account} card={Card} onSheet={setSheet} onRename={() => setRenaming( true )} onCustomize={() => setCustomizing( true )} onBackup={props.onBackup} />;
+		body = <UI_HomePage wallet={wallet} account={account} card={Card} onSheet={setSheet} onCustomize={() => setCustomizing( true )} onBackup={props.onBackup} />;
 		break;
 	default:
 		body = Com_Unreachable( page );
@@ -951,8 +928,8 @@ export function UI_Home( props: { onAddWallet: ( kind: addWalletKind_t ) => void
 
 			{wallet && account && (
 				<UI_HomeSheets
-					wallet={wallet} account={account} sheet={sheet} receiveSide={receiveSide} shieldFrom={shieldFrom} draft={draft} renaming={renaming}
-					onSheet={setSheet} onOpenChange={close} onDraft={setDraft} onRenaming={setRenaming}
+					wallet={wallet} account={account} sheet={sheet} receiveSide={receiveSide} shieldFrom={shieldFrom} draft={draft}
+					onSheet={setSheet} onOpenChange={close} onDraft={setDraft}
 					onShield={( from ) => { setShieldFrom( from ?? null ); setSheet( "shield" ); }}
 				/>
 			)}
