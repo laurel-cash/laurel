@@ -46,7 +46,7 @@ TOKENS
 	--frame-title:	15px;		/* the account in the top bar */
 	--frame-sub:	12px;		/* the wallet under it */
 	--frame-tab:	10px;		/* a tab's word */
-	--frame-back:	17px;		/* the way back, top left: an iPhone's back button */
+	--frame-back:	17px;		/* the way back, top left of the screen or a sheet: an iPhone's back button */
 	--frame-tool:	var( --bar-h );		/* a button in the top bar (the lock): a finger's 44pt, centred in it */
 
 	--titlebar-h:	40px;
@@ -355,7 +355,10 @@ select {
 	border-top: 1px solid var( --line );
 }
 
-.pay-main {
+.pay-main,
+.public-row-text,
+.choice-text,
+.contact-text {
 	display: flex;
 	flex: 1;
 	flex-direction: column;
@@ -467,6 +470,7 @@ select {
 	background: var( --accent-soft );
 	color: var( --accent );
 	font-size: 11px;
+	line-height: 1;		/* a badge keeps its shape: its glyph fits it at any text size */
 	font-weight: 700;
 	font-variant-numeric: tabular-nums;
 }
@@ -527,7 +531,10 @@ select {
 	height: 15px;
 }
 
-.repeat-text {
+.repeat-text,
+.switcher-text,
+.set-text,
+.tx-text {
 	display: flex;
 	flex: 1;
 	flex-direction: column;
@@ -749,7 +756,7 @@ CONTROLS
 
 .btn.large {
 	width: 100%;
-	height: 44px;
+	min-height: 44px;		/* and taller as its words grow (175%) */
 	border-radius: 999px;
 	font-size: 15px;
 }
@@ -1663,8 +1670,8 @@ on a bank card, texture rather than a picture behind the numbers
 	display: inline-flex;
 	align-items: center;
 	gap: 6px;
-	height: 26px;
-	padding: 0 11px;
+	min-height: 26px;		/* and taller as its words grow (175%) */
+	padding: 3px 11px;
 	border-radius: 999px;
 	background: color-mix( in srgb, var( --card-text ) 12%, transparent );
 	box-shadow: inset 0 0 0 0.5px color-mix( in srgb, var( --card-text ) 20%, transparent );
@@ -1718,8 +1725,8 @@ on a bank card, texture rather than a picture behind the numbers
 }
 
 .sync-status-btn {
-	height: 26px;
-	padding: 0 12px;
+	min-height: 26px;		/* and taller as its words grow (175%) */
+	padding: 3px 12px;
 	border: none;
 	border-radius: 999px;
 	background: #64d18a;
@@ -1893,7 +1900,9 @@ on a bank card, texture rather than a picture behind the numbers
 	transform: translateX( 2px );
 }
 
-.pool-list li + li .pool-row::before {
+.pool-list li + li .pool-row::before,
+.set-row + .set-row::before,
+.tx-list li + li::before {
 	content: "";
 	position: absolute;
 	top: 0;
@@ -1982,7 +1991,8 @@ on a bank card, texture rather than a picture behind the numbers
 	box-shadow: inset 0 0 0 1px var( --line );
 }
 
-.pool-sheet-total {
+.pool-sheet-total,
+.receipt-amount {
 	font-size: 28px;
 	font-weight: 700;
 	letter-spacing: -0.02em;
@@ -2281,14 +2291,6 @@ button.action-row:hover {
 
 .public-row-head:hover {
 	background: var( --accent-soft );
-}
-
-.public-row-text {
-	display: flex;
-	flex: 1;
-	flex-direction: column;
-	gap: 2px;
-	min-width: 0;
 }
 
 .public-row-zats {
@@ -2874,8 +2876,8 @@ SEGMENTED CONTROL
 }
 
 .segmented.small button {
-	height: 22px;
-	padding: 0 10px;
+	min-height: 22px;		/* and taller as its words grow (175%) */
+	padding: 1px 10px;
 	font-size: 12px;
 }
 
@@ -3610,13 +3612,6 @@ SIDEBAR: SWITCHER AND NAV
 	box-shadow: inset 0 0 0 0.5px color-mix( in srgb, var( --mint-pale ) 18%, transparent );
 }
 
-.switcher-text {
-	display: flex;
-	flex-direction: column;
-	flex: 1;
-	min-width: 0;
-}
-
 .switcher-account,
 .switcher-wallet {
 	overflow: hidden;
@@ -3726,7 +3721,8 @@ MENUS
 	flex-shrink: 0;
 }
 
-.menu-account {
+.menu-account,
+.menu-group-name {
 	flex: 1;
 	overflow: hidden;
 	text-overflow: ellipsis;
@@ -3747,20 +3743,13 @@ MENUS
 	display: flex;
 	align-items: center;
 	gap: 6px;
-	height: 26px;
-	padding: 0 4px 0 8px;
+	min-height: 26px;		/* and taller as its words grow (175%) */
+	padding: 3px 4px 3px 8px;
 	color: var( --text-2 );
 	font-size: 11px;
 	font-weight: 600;
 	letter-spacing: 0.02em;
 	text-transform: uppercase;
-}
-
-.menu-group-name {
-	flex: 1;
-	overflow: hidden;
-	text-overflow: ellipsis;
-	white-space: nowrap;
 }
 
 .menu-badge {
@@ -3849,26 +3838,14 @@ SHEETS
 	align-items: center;
 	gap: 2px;
 	width: calc( 100% + 32px );
-	min-height: 44px;
+	min-height: var( --bar-h );		/* a sheet's bar, as the screen's: its Back the frame's size (17px grew to 30 at 175%) */
 	margin: -18px -16px 6px;
 	padding: 0 16px 0 8px;
 	border: none;
 	background: var( --elevated );
 	color: var( --accent );
-	font-size: 17px;
+	font-size: var( --frame-back );
 	text-align: left;
-}
-.sheet-back svg {
-	width: 24px;
-	height: 24px;
-	fill: none;
-	stroke: currentColor;
-	stroke-width: 2.25;
-	stroke-linecap: round;
-	stroke-linejoin: round;
-}
-.sheet-back:disabled {
-	opacity: 0.4;
 }
 
 .sheet-title {
@@ -4524,8 +4501,8 @@ BALANCE HISTORY
 	align-items: center;
 	gap: 5px;
 	white-space: nowrap;
-	height: 26px;
-	padding: 0 10px;
+	min-height: 26px;		/* and taller as its words grow (175%) */
+	padding: 3px 10px;
 	border: none;
 	border-radius: 999px;
 	background: var( --fill );
@@ -4572,7 +4549,8 @@ BALANCE HISTORY
 	white-space: nowrap;
 }
 
-.chart-pool-dot {
+.chart-pool-dot,
+.from-dot {
 	width: 8px;
 	height: 8px;
 	border-radius: 50%;
@@ -4888,13 +4866,6 @@ SHIELD AND SCAN SHEETS
 	color: var( --text-2 );
 	font-size: 13px;
 	font-weight: 600;
-}
-
-.receipt-amount {
-	font-size: 28px;
-	font-weight: 700;
-	letter-spacing: -0.02em;
-	font-variant-numeric: tabular-nums;
 }
 
 .receipt-text {
@@ -5300,8 +5271,8 @@ SWITCHER: SYNC AND BACKUP
 	display: inline-flex;
 	align-items: center;
 	gap: 4px;
-	height: 20px;
-	padding: 0 8px;
+	min-height: 20px;		/* and taller as its words grow (175%) */
+	padding: 1px 8px;
 	border-radius: 999px;
 	outline: none;
 	font-size: 11px;
@@ -5643,16 +5614,6 @@ SETTINGS: APPEARANCE, SECURITY, STORAGE
 	padding: 12px 14px;
 }
 
-.set-row + .set-row::before {
-	content: "";
-	position: absolute;
-	top: 0;
-	left: 58px;
-	right: 0;
-	height: 1px;
-	background: var( --line );
-}
-
 .set-icon {
 	display: grid;
 	place-items: center;
@@ -5697,13 +5658,6 @@ SETTINGS: APPEARANCE, SECURITY, STORAGE
 .set-icon.sto-cache {
 	background: color-mix( in srgb, var( --sapling ) 16%, transparent );
 	color: var( --sapling );
-}
-
-.set-text {
-	display: flex;
-	flex: 1;
-	flex-direction: column;
-	min-width: 0;
 }
 
 .set-label {
@@ -6136,8 +6090,8 @@ SEND
 */
 
 .btn.small {
-	height: 26px;
-	padding: 0 11px;
+	min-height: 26px;		/* and taller as its words grow (175%) */
+	padding: 3px 11px;
 	gap: 5px;
 	font-size: 12px;
 }
@@ -6334,14 +6288,6 @@ SEND
 .tone-blue		{ background: linear-gradient( 135deg, #5aa9f0, #2f6fd0 ); }
 .tone-violet	{ background: linear-gradient( 135deg, #9a7cff, #5b3fd6 ); }
 
-.choice-text {
-	display: flex;
-	flex: 1;
-	flex-direction: column;
-	gap: 2px;
-	min-width: 0;
-}
-
 .choice-list .choice-name {
 	display: flex;
 	flex-wrap: wrap;
@@ -6384,13 +6330,6 @@ SEND
 .choice-more {
 	padding: 0 16px 14px 64px;
 	animation: rise 0.2s var( --ease );
-}
-
-.from-dot {
-	width: 8px;
-	height: 8px;
-	border-radius: 50%;
-	background: var( --pool );
 }
 
 /* the amount: large, with its unit and Max */
@@ -6625,12 +6564,13 @@ HISTORY
 	display: inline-grid;
 	place-items: center;
 	min-width: 18px;
-	height: 18px;
-	padding: 0 5px;
+	min-height: 18px;		/* and taller as its words grow (175%) */
+	padding: 1px 5px;
 	border-radius: 999px;
 	background: var( --accent-fill );
 	color: var( --on-accent );
 	font-size: 11px;
+	line-height: 1;		/* a badge keeps its shape: its glyph fits it at any text size */
 	font-weight: 700;
 }
 
@@ -6639,8 +6579,8 @@ HISTORY
 	display: inline-flex;
 	align-items: center;
 	gap: 5px;
-	height: 28px;
-	padding: 0 11px;
+	min-height: 28px;		/* and taller as its words grow (175%) */
+	padding: 3px 11px;
 	border: none;
 	border-radius: 999px;
 	background: var( --fill );
@@ -6719,16 +6659,6 @@ HISTORY
 	position: relative;
 }
 
-.tx-list li + li::before {
-	content: "";
-	position: absolute;
-	top: 0;
-	left: 58px;
-	right: 0;
-	height: 1px;
-	background: var( --line );
-}
-
 /* a whole row that opens something: a transaction, a contact */
 .tx-row,
 .contact-row {
@@ -6784,13 +6714,6 @@ HISTORY
 .tx-icon.failed {
 	background: var( --warn-soft );
 	color: var( --warn );
-}
-
-.tx-text {
-	display: flex;
-	flex: 1;
-	flex-direction: column;
-	min-width: 0;
 }
 
 .tx-title {
@@ -7965,6 +7888,7 @@ ADDRESS BOOK AND CHOOSING WHO TO PAY
 	background: var( --accent-soft );
 	color: var( --accent );
 	font-size: 12px;
+	line-height: 1;		/* a badge keeps its shape: its glyph fits it at any text size */
 	font-weight: 700;
 	letter-spacing: 0.02em;
 }
@@ -7973,14 +7897,6 @@ ADDRESS BOOK AND CHOOSING WHO TO PAY
 	width: 24px;
 	height: 24px;
 	font-size: var( --text-min );
-}
-
-.contact-text {
-	display: flex;
-	flex: 1;
-	flex-direction: column;
-	gap: 2px;
-	min-width: 0;
 }
 
 .contact-text .set-sub {
@@ -8362,8 +8278,8 @@ SWITCHES AND CHOICES
 
 /* a short list of choices in a settings row */
 .field-select {
-	height: 32px;
-	padding: 0 30px 0 12px;
+	min-height: 32px;		/* and taller as its words grow (175%) */
+	padding: 3px 30px 3px 12px;
 	border: 1px solid var( --line );
 	border-radius: 8px;
 	background: var( --surface );
@@ -8721,7 +8637,7 @@ ZEC PRICE
 	text-overflow: ellipsis;
 	white-space: nowrap;
 }
-.titlebar-back svg {
+.titlebar-back svg, .sheet-back svg {
 	width: 24px;
 	height: 24px;
 	fill: none;
@@ -8730,7 +8646,7 @@ ZEC PRICE
 	stroke-linecap: round;
 	stroke-linejoin: round;
 }
-.titlebar-back:disabled {
+.titlebar-back:disabled, .sheet-back:disabled {
 	opacity: 0.4;
 }
 :root[data-mobile="true"] .nav-back:not( [role="dialog"] .nav-back ) {
@@ -8908,7 +8824,7 @@ ZEC PRICE
 		grid-auto-flow: column;
 	}
 	.verify-choices .chip {
-		height: 48px;
+		min-height: 48px;		/* and taller as its words grow (175%) */
 		font-size: 15px;
 	}
 	/* Quick Actions on a phone: one row of round buttons, a word under each, as a

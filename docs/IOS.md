@@ -55,6 +55,10 @@ same on both phones and is checked by the Android gate first.
   the document (the webview's own scroll view), never a box of its own: a box that
   scrolled in a page that didn't took no finger at 175% (11-27). The kit sets the text
   size as Settings does (`__setting`) and draws the lock (`?password`).
+- A box with words grows with them: `min-height`, never a px `height`, beside a px
+  font size (it spills at 175%); a badge that keeps its shape says `line-height: 1`.
+  check_text_room.mjs keeps it so; the kit says words spilled from a box held to a
+  height, a second scroll inside a page or sheet, and a page wider than the phone.
 - Look before shipping a layout: `npm run kit` (scripts/ui_kit.mjs) pictures every
   screen and sheet (scripts/ui_screens.mjs) on three iPhones at 100/130/175%, at its
   top and scrolled to its end, with check_layout's faults beside each and the phone's own status bar

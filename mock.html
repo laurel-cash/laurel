@@ -145,7 +145,7 @@
 					// the page never scrolls sideways
 					if ( document.documentElement.scrollWidth > innerWidth + 1 ) faults.push( `the page is ${document.documentElement.scrollWidth}px wide in a ${innerWidth}px window` );
 					const texts = Texts();		// once: both read every box's words, the costliest look
-					return faults.concat( Overlaps( texts ), BrokenWords( texts ), PastTheEdge(), UnderTheBar(), Unscrollable(), BarSizes() );
+					return faults.concat( Overlaps( texts ), BrokenWords( texts ), PastTheEdge(), UnderTheBar(), InnerScroll(), Spilled( texts ), BarSizes() );
 				};
 
 				// what shows: a box of 1px or less is hidden for a screen reader (.sr-only, an
@@ -289,12 +289,33 @@
 					return out;
 				};
 
-				// a phone's page scrolls as the document, the webview's own scroll view (ui.css): a box
-				// scrolling in a page that didn't took no finger on an iPhone (Settings at 175%, 11-27)
-				const Unscrollable = () => {
+				// on a phone, one scroll for what a finger moves: the page (the document, the webview's
+				// own) or an open sheet, a popover. A box that scrolls up and down inside either took
+				// no finger on an iPhone (Settings at 175%, the licenses, 11-26/27)
+				const InnerScroll = () => {
 					if ( !PhoneBar() ) return [];
-					const boxes = [ ...document.querySelectorAll( "body *" ) ].filter( ( e ) => !e.closest( "[role='dialog'], [data-radix-popper-content-wrapper]" ) && /auto|scroll/.test( getComputedStyle( e ).overflowY ) && e.clientHeight > innerHeight / 2 );
-					return boxes.map( ( e ) => `${Tag( e )} scrolls the page in a box of its own (${e.clientHeight}px tall); a phone's page is the document's` );
+					const Own = ( e ) => e.matches( "[role='dialog'] .sheet, [role='dialog'].sheet, [data-radix-popper-content-wrapper] > *" );
+					return [ ...document.querySelectorAll( "body *" ) ]
+						.filter( ( e ) => !Own( e ) && /auto|scroll/.test( getComputedStyle( e ).overflowY ) && e.scrollHeight > e.clientHeight + 1 && Shown( e ) )
+						.map( ( e ) => `${Tag( e )} scrolls inside ${e.closest( "[role='dialog']" ) ? "its sheet" : "the page"} (${e.scrollHeight}px in ${e.clientHeight}): a phone's has one scroll` );
+				};
+				// words never spill out of their box: one given a height (a row of 52px) that its
+				// words, grown at 175%, no longer fit, draws them over what's next
+				const Spilled = ( texts ) => {
+					const out = [];
+					for ( const { el } of texts ) {
+						const cs = getComputedStyle( el );
+						if ( cs.overflowY !== "visible" || cs.display.startsWith( "inline" ) || el.scrollHeight <= el.clientHeight + 2 || !el.clientHeight ) continue;
+						// given a height, or only a tight line (a big number's 1.05): its own height
+						// freed, a box its words fit grows; one that doesn't was never held
+						const was = [ el.style.height, el.style.minHeight, el.style.maxHeight ];
+						Object.assign( el.style, { height: "auto", minHeight: "0", maxHeight: "none" } );
+						const free = el.offsetHeight;
+						[ el.style.height, el.style.minHeight, el.style.maxHeight ] = was;
+						if ( free <= el.offsetHeight + 1 ) continue;
+						out.push( `${Tag( el )} (${el.textContent.trim().slice( 0, 30 )}): its words take ${el.scrollHeight}px of its ${el.clientHeight}px` );
+					}
+					return out;
 				};
 
 				// a phone's bottom bar never hides the end of a page: scrolled all the way, the

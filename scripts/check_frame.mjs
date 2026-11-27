@@ -20,10 +20,10 @@ import { readFileSync } from "node:fs";
 const CSS = readFileSync( "src/ui.css", "utf8" );
 const START = CSS.indexOf( "A PHONE'S FRAME" );
 const END = CSS.indexOf( "--frame-tool:", START );
-// the bars' rules: the account, the tabs, and the title bar's own (Back, the screen's name,
-// the lock). Their words keep their size at any text size, so never px (text_scale.mjs grows
+// the bars' rules: the account, the tabs, the title bar's own (Back, the screen's name,
+// the lock), and a sheet's Back. Their words keep their size at any text size, so never px (text_scale.mjs grows
 // px); Back's 17px grew to 30 at 175% while only the account's was looked at (11-27)
-const BARS = /^[^{}]*(\.sidebar \.(switcher|nav)|\.titlebar-(back|title|tools|btn))[^{]*\{[^}]*\}/gm;
+const BARS = /^[^{}]*(\.sidebar \.(switcher|nav)|\.titlebar-(back|title|tools|btn)|\.sheet-back)[^{]*\{[^}]*\}/gm;
 
 let bad = 0;
 const Say = ( text ) => { console.error( `check_frame: ${text}` ); bad++; };
