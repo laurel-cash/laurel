@@ -332,7 +332,7 @@ export function Com_UsdAt( points: pricePoint_t[], time: number ): number | null
 
 export function UI_UsdThen( props: { zats: number; time: number } ) {
 	const points = usePricePoints( Com_RangeFor( Math.floor( Date.now() / 1000 ) - props.time ) );
-	return <UI_UsdSaid zats={props.zats} usd={points ? Com_UsdAt( points, props.time ) : null} say={T.price.then} className="usd usd-then" />;
+	return <UI_UsdSaid zats={props.zats} usd={points ? Com_UsdAt( points, props.time ) : null} say={T.price.then} className="usd" />;
 }
 
 /*

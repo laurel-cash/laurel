@@ -15,9 +15,9 @@ See the LICENSE file for details.
 // here, not in each of ui.css's two hundred: a new rule scales without a
 // thought. vite.config.ts runs it on the stylesheet
 
-const TEXT_SCALED = /^(\d+(\.\d+)?px|var\( --text-min \))$/;
+const TEXT_SCALED = /^(\d+(\.\d+)?px|var\( --type-[a-z0-9-]+ \))$/;
 
-// a font size as drawn: px (and the smallest, --text-min) times the text size; what
+// a font size as drawn: px (and a step of the type scale, --type-*) times the text size; what
 // already follows the text (em, %) or the screen (clamp of cqw) as it is
 export const Com_TextScaled = ( value ) => ( TEXT_SCALED.test( value.trim() ) ? `calc( ${value.trim()} * var( --text-scale, 1 ) )` : value );
 

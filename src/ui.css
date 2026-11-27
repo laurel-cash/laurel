@@ -23,13 +23,27 @@ TOKENS
 :root {
 	--font:			"Inter Variable", -apple-system, BlinkMacSystemFont, "Segoe UI Variable Text", system-ui, sans-serif;
 	--font-mono:	ui-monospace, "SF Mono", "Cascadia Mono", Consolas, monospace;
-	--text-min:	11px;		/* nothing is smaller: scripts/check_owners.mjs */
+	/* THE TYPE SCALE, named once: every font size is one of these steps (check_owners.mjs),
+	   as a phone's own text styles. Each place had picked its own (22 sizes, 12 beside
+	   12.5, 13 beside 13.5), and no two screens' titles agreed (11-27). Each grows with
+	   the text size (text_scale.mjs); the bars' --frame-* sizes don't */
+	--type-caption:		11px;		/* the smallest anything is: a unit beside a small amount, a hint */
+	--type-footnote:	12px;		/* what's under a name: a time, a pool, a field's help */
+	--type-body:		13px;		/* what's said */
+	--type-callout:		14px;		/* a card's title, a list row's name */
+	--type-headline:	15px;		/* a row that leads, a choice's name */
+	--type-title3:		17px;		/* a name that heads a sheet's part */
+	--type-title2:		20px;		/* a sheet's or a pane's title */
+	--type-title1:		26px;		/* a screen's own title: History, Settings */
+	--type-amount:		34px;		/* one payment's amount, atop its sheet */
+	--type-balance:		46px;		/* the account's balance */
+	--type-balance-small:	38px;		/* ... in a narrow window */
 	/* the text size where only text grows (an iPhone: useTextScale, textZoom "text"). Every
-	   font size written here in px is drawn times this: scripts/text_scale.mjs */
+	   font size written here in px or a --type-* step is drawn times this: scripts/text_scale.mjs */
 	--text-scale:	1;
 	/* the text size's own choices grow only so far: the way back from too large is always in
 	   one row ("100 / %" broke under each number at 175% on an iPhone SE, 11-27) */
-	--steady-text:	min( calc( 13px * var( --text-scale, 1 ) ), 16px );		/* grows, to what five fit in */
+	--steady-text:	min( calc( var( --type-body ) * var( --text-scale, 1 ) ), 16px );		/* grows, to what five fit in */
 
 	/* A PHONE'S FRAME, named once: every rule of the bars and the page between them takes
 	   its sizes from here, and ui_kit.mjs measures each phone against them (mock.html,
@@ -159,7 +173,7 @@ html, body, #root {
 
 body {
 	font-family: var( --font );
-	font-size: 13px;
+	font-size: var( --type-body );
 	line-height: 1.4;
 	letter-spacing: -0.003em;
 	color: var( --text );
@@ -292,7 +306,7 @@ select {
 .waiting-slow {
 	flex-basis: 100%;
 	color: var( --text-2 );
-	font-size: 12px;
+	font-size: var( --type-footnote );
 }
 
 /* on its own, under the row that started it: a card that is plainly
@@ -368,7 +382,7 @@ select {
 
 .pay-memo {
 	color: var( --text-2 );
-	font-size: 12px;
+	font-size: var( --type-footnote );
 }
 
 .pay-amount {
@@ -393,7 +407,7 @@ select {
 	align-items: center;
 	gap: 8px;
 	margin: 0;
-	font-size: 17px;
+	font-size: var( --type-title3 );
 	font-weight: 700;
 }
 
@@ -420,7 +434,7 @@ select {
 
 .pay-format-col {
 	color: var( --text );
-	font-size: 12px;
+	font-size: var( --type-footnote );
 	font-weight: 600;
 }
 
@@ -431,7 +445,7 @@ select {
 
 .pay-list-text {
 	font-family: var( --font-mono );
-	font-size: 12.5px;
+	font-size: var( --type-footnote );
 	line-height: 1.7;
 }
 
@@ -443,7 +457,7 @@ select {
 	margin: 12px 0 0;
 	padding: 0;
 	list-style: none;
-	font-size: 12.5px;
+	font-size: var( --type-footnote );
 }
 
 .pay-check li {
@@ -469,7 +483,7 @@ select {
 	border-radius: 50%;
 	background: var( --accent-soft );
 	color: var( --accent );
-	font-size: 11px;
+	font-size: var( --type-caption );
 	line-height: 1;		/* a badge keeps its shape: its glyph fits it at any text size */
 	font-weight: 700;
 	font-variant-numeric: tabular-nums;
@@ -547,7 +561,7 @@ select {
 
 .repeat-when {
 	color: var( --text-2 );
-	font-size: 12px;
+	font-size: var( --type-footnote );
 }
 
 .repeat-item.due .repeat-when {
@@ -608,7 +622,7 @@ TITLE BAR
 	gap: 8px;
 	padding-left: 14px;
 	color: var( --text );
-	font-size: 13px;
+	font-size: var( --type-body );
 	font-weight: 600;
 	letter-spacing: -0.005em;
 	pointer-events: none;		/* clicks fall through to the drag region */
@@ -758,7 +772,7 @@ CONTROLS
 	width: 100%;
 	min-height: 44px;		/* and taller as its words grow (175%) */
 	border-radius: 999px;
-	font-size: 15px;
+	font-size: var( --type-headline );
 }
 
 .link {
@@ -801,7 +815,7 @@ CONTROLS
 .hint {
 	margin: 6px 0 0;
 	color: var( --text-2 );
-	font-size: 12px;
+	font-size: var( --type-footnote );
 }
 
 .check {
@@ -809,7 +823,7 @@ CONTROLS
 	align-items: center;
 	gap: 10px;
 	margin: 24px 0 0;
-	font-size: 14px;
+	font-size: var( --type-callout );
 }
 
 .check input {
@@ -832,7 +846,7 @@ CONTROLS
 	border-radius: 999px;
 	background: var( --fill );
 	color: var( --text-2 );
-	font-size: 12px;
+	font-size: var( --type-footnote );
 	font-weight: 500;
 }
 
@@ -922,7 +936,7 @@ SPINNER / ALERT
 	background: var( --fill );
 	color: var( --text-2 );
 	font-family: var( --font-mono );
-	font-size: var( --text-min );
+	font-size: var( --type-caption );
 	line-height: 1.45;
 	white-space: pre-wrap;
 	user-select: text;
@@ -978,7 +992,7 @@ ONBOARDING
 
 .onboard-title {
 	margin-top: 20px;
-	font-size: 28px;
+	font-size: var( --type-title1 );
 }
 
 .onboard-card .pill {
@@ -988,7 +1002,7 @@ ONBOARDING
 .lede {
 	margin: 10px 0 0;
 	color: var( --text-2 );
-	font-size: 14px;
+	font-size: var( --type-callout );
 	line-height: 1.5;
 }
 
@@ -1017,14 +1031,14 @@ ONBOARDING
 }
 
 .feature-title {
-	font-size: 14px;
+	font-size: var( --type-callout );
 	font-weight: 600;
 }
 
 .feature-text {
 	margin-top: 1px;
 	color: var( --text-2 );
-	font-size: 13px;
+	font-size: var( --type-body );
 }
 
 /* T-049: v1's terms, read before anything else; left-aligned, as a page of them is */
@@ -1069,7 +1083,7 @@ ONBOARDING
 .status {
 	margin: 10px 0 0;
 	color: var( --text-2 );
-	font-size: 12px;
+	font-size: var( --type-footnote );
 }
 
 .phrase {
@@ -1089,7 +1103,7 @@ ONBOARDING
 	border-radius: var( --radius-sm );
 	background: var( --surface );
 	box-shadow: var( --shadow );
-	font-size: 13px;
+	font-size: var( --type-body );
 	font-weight: 500;
 }
 
@@ -1104,7 +1118,7 @@ ONBOARDING
 .footnote {
 	margin: 14px 0 0;
 	color: var( --text-2 );
-	font-size: 12px;
+	font-size: var( --type-footnote );
 }
 
 .phrase-input {
@@ -1162,7 +1176,7 @@ APP FRAME
 }
 
 .brand-name {
-	font-size: 15px;
+	font-size: var( --type-headline );
 	font-weight: 700;
 	letter-spacing: -0.015em;
 }
@@ -1206,7 +1220,7 @@ APP FRAME
 }
 
 .soon {
-	font-size: 11px;
+	font-size: var( --type-caption );
 	color: var( --text-2 );
 }
 
@@ -1263,14 +1277,14 @@ APP FRAME
 }
 
 .foot-title {
-	font-size: 12px;
+	font-size: var( --type-footnote );
 	font-weight: 600;
 }
 
 .foot-sub,
 .foot-version {
 	color: var( --text-2 );
-	font-size: 11px;
+	font-size: var( --type-caption );
 }
 
 .sync-dot {
@@ -1358,8 +1372,8 @@ column (a narrow window) it flows like a page (HOME LAYOUT, below)
 }
 
 .unit {
-	margin-left: 8px;
-	font-size: max( var( --text-min ), 0.42em );	/* a fraction of a big balance, readable next to a small one */
+	margin-left: 0.3em;		/* by its own size: 8px read as two spaces in a sentence ("1.20  TAZ") */
+	font-size: max( var( --type-caption ), 0.42em );	/* a fraction of a big balance, readable next to a small one */
 	font-weight: 600;
 	color: var( --text-2 );
 	letter-spacing: 0;
@@ -1379,7 +1393,7 @@ column (a narrow window) it flows like a page (HOME LAYOUT, below)
 	align-items: center;
 	gap: 6px;
 	margin: 0 0 12px 2px;
-	font-size: 14px;
+	font-size: var( --type-callout );
 	font-weight: 600;
 	letter-spacing: -0.005em;
 }
@@ -1425,7 +1439,7 @@ column (a narrow window) it flows like a page (HOME LAYOUT, below)
 
 .banner-body {
 	color: var( --text-2 );
-	font-size: 12.5px;
+	font-size: var( --type-footnote );
 }
 
 /* the balance card: deep teal in both themes, the leaf behind */
@@ -1493,7 +1507,7 @@ on a bank card, texture rather than a picture behind the numbers
 
 .account-name {
 	overflow: hidden;
-	font-size: 17px;
+	font-size: var( --type-title3 );
 	font-weight: 600;
 	letter-spacing: -0.01em;
 	white-space: nowrap;
@@ -1503,7 +1517,7 @@ on a bank card, texture rather than a picture behind the numbers
 .card-wallet {
 	margin: 0;
 	color: var( --card-text-2 );
-	font-size: 12.5px;
+	font-size: var( --type-footnote );
 	font-weight: 500;
 }
 
@@ -1533,7 +1547,7 @@ on a bank card, texture rather than a picture behind the numbers
 }
 
 .total {
-	font-size: 46px;
+	font-size: var( --type-balance );
 	font-weight: 700;
 	font-variant-numeric: tabular-nums;
 	letter-spacing: -0.035em;
@@ -1544,7 +1558,7 @@ on a bank card, texture rather than a picture behind the numbers
 	display: block;
 	margin-top: 4px;
 	color: var( --card-text-2 );
-	font-size: 15px;
+	font-size: var( --type-headline );
 }
 
 .icon-btn.eye {
@@ -1595,7 +1609,7 @@ on a bank card, texture rather than a picture behind the numbers
 	align-items: center;
 	gap: 6px;
 	color: var( --card-text-2 );
-	font-size: 12px;
+	font-size: var( --type-footnote );
 	font-weight: 500;
 }
 
@@ -1607,7 +1621,7 @@ on a bank card, texture rather than a picture behind the numbers
 
 .split-amount {
 	margin-top: 6px;
-	font-size: 16px;
+	font-size: var( --type-headline );
 	font-weight: 600;
 	font-variant-numeric: tabular-nums;
 	white-space: nowrap;		/* never cut: the split stacks instead when they don't fit (useStacked, below) */
@@ -1620,13 +1634,13 @@ on a bank card, texture rather than a picture behind the numbers
 .split-checking {
 	margin: 12px 0 0;
 	color: var( --card-text-2 );
-	font-size: 12.5px;
+	font-size: var( --type-footnote );
 }
 
 .split-share {
 	margin-top: 2px;
 	color: var( --card-text-2 );
-	font-size: 11.5px;
+	font-size: var( --type-caption );
 	font-variant-numeric: tabular-nums;
 }
 
@@ -1676,7 +1690,7 @@ on a bank card, texture rather than a picture behind the numbers
 	background: color-mix( in srgb, var( --card-text ) 12%, transparent );
 	box-shadow: inset 0 0 0 0.5px color-mix( in srgb, var( --card-text ) 20%, transparent );
 	color: var( --card-text );
-	font-size: 12px;
+	font-size: var( --type-footnote );
 	font-weight: 600;
 	font-variant-numeric: tabular-nums;
 	white-space: nowrap;
@@ -1731,7 +1745,7 @@ on a bank card, texture rather than a picture behind the numbers
 	border-radius: 999px;
 	background: #64d18a;
 	color: var( --on-accent );
-	font-size: 12px;
+	font-size: var( --type-footnote );
 	font-weight: 600;
 	box-shadow: 0 2px 8px rgba( 0, 0, 0, 0.2 );
 	transition: background 0.12s, transform 0.12s var( --ease );
@@ -1837,14 +1851,14 @@ on a bank card, texture rather than a picture behind the numbers
 }
 
 .action-label {
-	font-size: 13px;
+	font-size: var( --type-body );
 	font-weight: 600;
 }
 
 .action-hint {
 	max-width: 100%;
 	color: var( --text-2 );
-	font-size: 11.5px;
+	font-size: var( --type-caption );
 	text-align: center;		/* wraps: it can hold an amount ("0.05 TAZ is public"), and "0.05 T..." once said less than it knew */
 }
 
@@ -1937,7 +1951,7 @@ on a bank card, texture rather than a picture behind the numbers
 }
 
 .pool-name {
-	font-size: 13.5px;
+	font-size: var( --type-body );
 	font-weight: 600;
 	white-space: nowrap;
 }
@@ -1946,7 +1960,7 @@ on a bank card, texture rather than a picture behind the numbers
 	contain: inline-size;		/* sized by the row, never sizing it: the name sets the column */
 	overflow: hidden;
 	color: var( --text-2 );
-	font-size: 12px;
+	font-size: var( --type-footnote );
 	white-space: nowrap;
 	text-overflow: ellipsis;		/* one line: it once wrapped "Private · recommended" in two */
 }
@@ -1993,7 +2007,7 @@ on a bank card, texture rather than a picture behind the numbers
 
 .pool-sheet-total,
 .receipt-amount {
-	font-size: 28px;
+	font-size: var( --type-amount );
 	font-weight: 700;
 	letter-spacing: -0.02em;
 	font-variant-numeric: tabular-nums;
@@ -2001,7 +2015,7 @@ on a bank card, texture rather than a picture behind the numbers
 
 .pool-sheet-sub {
 	color: var( --text-2 );
-	font-size: 12.5px;
+	font-size: var( --type-footnote );
 }
 
 .pool-share {
@@ -2030,7 +2044,7 @@ on a bank card, texture rather than a picture behind the numbers
 
 .pool-share-text {
 	color: var( --text-2 );
-	font-size: 12px;
+	font-size: var( --type-footnote );
 }
 
 .pool-about {
@@ -2047,7 +2061,7 @@ on a bank card, texture rather than a picture behind the numbers
 	border-radius: 10px;
 	background: var( --accent-soft );
 	color: var( --accent );
-	font-size: 12.5px;
+	font-size: var( --type-footnote );
 	font-weight: 600;
 }
 
@@ -2115,7 +2129,7 @@ on a bank card, texture rather than a picture behind the numbers
 .public-spread-text {
 	flex: 1;
 	min-width: 0;
-	font-size: 13.5px;
+	font-size: var( --type-body );
 }
 
 .public-spread-see {
@@ -2123,7 +2137,7 @@ on a bank card, texture rather than a picture behind the numbers
 	align-items: center;
 	gap: 2px;
 	color: var( --accent );
-	font-size: 13px;
+	font-size: var( --type-body );
 	font-weight: 600;
 }
 
@@ -2235,12 +2249,12 @@ button.action-row:hover {
 }
 
 .action-title {
-	font-size: 14px;
+	font-size: var( --type-callout );
 	font-weight: 600;
 }
 
 .action-sub {
-	font-size: 12.5px;
+	font-size: var( --type-footnote );
 	opacity: 0.75;
 }
 
@@ -2294,7 +2308,7 @@ button.action-row:hover {
 }
 
 .public-row-zats {
-	font-size: 15px;
+	font-size: var( --type-headline );
 	font-weight: 700;
 	font-variant-numeric: tabular-nums;
 }
@@ -2303,7 +2317,7 @@ button.action-row:hover {
 	overflow: hidden;
 	color: var( --text-2 );
 	font-family: var( --font-mono );
-	font-size: 12px;
+	font-size: var( --type-footnote );
 	text-overflow: ellipsis;
 	white-space: nowrap;
 }
@@ -2331,7 +2345,7 @@ button.action-row:hover {
 	background: var( --surface );
 	color: var( --text );
 	font-family: var( --font-mono );
-	font-size: 12px;
+	font-size: var( --type-footnote );
 	line-height: 1.55;
 	word-break: break-all;
 }
@@ -2420,14 +2434,14 @@ button.tile:active {
 
 .tile-title {
 	max-width: 100%;
-	font-size: 13.5px;
+	font-size: var( --type-body );
 	font-weight: 600;
 }
 
 .tile-sub {
 	max-width: 100%;
 	color: var( --text-2 );
-	font-size: 12px;
+	font-size: var( --type-footnote );
 	line-height: 1.35;
 }
 
@@ -2517,13 +2531,13 @@ button.tile:active {
 }
 
 .kind-name {
-	font-size: 14px;
+	font-size: var( --type-callout );
 	font-weight: 600;
 }
 
 .kind-tag {
 	color: var( --text-2 );
-	font-size: 12px;
+	font-size: var( --type-footnote );
 }
 
 .kind-mark {
@@ -2533,7 +2547,7 @@ button.tile:active {
 	gap: 4px;
 	padding: 3px 8px;
 	border-radius: 999px;
-	font-size: 11px;
+	font-size: var( --type-caption );
 	font-weight: 600;
 }
 
@@ -2564,7 +2578,7 @@ button.tile:active {
 }
 
 .receive-kind .kind-tag {
-	font-size: 12.5px;
+	font-size: var( --type-footnote );
 }
 
 /* the pools (i): each pool's badge, name and tag, one short fact */
@@ -2605,13 +2619,13 @@ button.tile:active {
 
 .pool-guide-tag {
 	color: var( --text-2 );
-	font-size: 12px;
+	font-size: var( --type-footnote );
 	font-weight: 400;
 }
 
 .pool-guide-fact {
 	color: var( --text-2 );
-	font-size: 12.5px;
+	font-size: var( --type-footnote );
 }
 
 .pool-guide-end {
@@ -2635,7 +2649,7 @@ button.tile:active {
 
 .pool-amount {
 	white-space: nowrap;
-	font-size: 15px;
+	font-size: var( --type-headline );
 	font-weight: 600;
 	font-variant-numeric: tabular-nums;
 	letter-spacing: -0.01em;
@@ -2644,7 +2658,7 @@ button.tile:active {
 .pool-pending {
 	color: var( --warn );
 	text-align: right;
-	font-size: 11.5px;
+	font-size: var( --type-caption );
 	font-weight: 500;
 }
 
@@ -2688,7 +2702,7 @@ button.tile:active {
 
 .fact dt {
 	color: var( --text-2 );
-	font-size: 12.5px;
+	font-size: var( --type-footnote );
 }
 
 .fact dd {
@@ -2696,7 +2710,7 @@ button.tile:active {
 	align-items: center;
 	gap: 7px;
 	margin: 0;
-	font-size: 12.5px;
+	font-size: var( --type-footnote );
 	font-weight: 600;
 	font-variant-numeric: tabular-nums;
 }
@@ -2732,7 +2746,7 @@ button.tile:active {
 	border-radius: 9px;
 	background: var( --warn-soft );
 	color: var( --text );
-	font-size: 12px;
+	font-size: var( --type-footnote );
 	line-height: 1.5;
 }
 
@@ -2785,7 +2799,7 @@ button.tile:active {
 
 .privacy-title {
 	margin: 0 0 6px;
-	font-size: 16px;
+	font-size: var( --type-headline );
 	font-weight: 600;
 	letter-spacing: -0.01em;
 	line-height: 1.25;
@@ -2794,7 +2808,7 @@ button.tile:active {
 .privacy-body {
 	margin: 0 0 14px;
 	color: var( --text-2 );
-	font-size: 12.5px;
+	font-size: var( --type-footnote );
 	line-height: 1.5;
 }
 
@@ -2878,7 +2892,7 @@ SEGMENTED CONTROL
 .segmented.small button {
 	min-height: 22px;		/* and taller as its words grow (175%) */
 	padding: 1px 10px;
-	font-size: 12px;
+	font-size: var( --type-footnote );
 }
 
 
@@ -2950,7 +2964,7 @@ RESTORE
 
 .phrase-cell .phrase-num {
 	width: 18px;
-	font-size: 11px;
+	font-size: var( --type-caption );
 	text-align: right;
 	flex-shrink: 0;
 }
@@ -2967,7 +2981,7 @@ RESTORE
 	padding: 0 0 0 4px;
 	border: none;
 	background: none;
-	font-size: 13px;
+	font-size: var( --type-body );
 	font-weight: 500;
 	line-height: 32px;
 	white-space: nowrap;
@@ -2994,7 +3008,7 @@ RESTORE
 .phrase-status {
 	margin: 12px 0 0;
 	color: var( --text-2 );
-	font-size: 13px;
+	font-size: var( --type-body );
 	font-weight: 500;
 	font-variant-numeric: tabular-nums;
 }
@@ -3005,7 +3019,7 @@ RESTORE
 
 .viewkey-input {
 	font-family: var( --font-mono );
-	font-size: 12px;
+	font-size: var( --type-footnote );
 	resize: none;
 	word-break: break-all;
 }
@@ -3017,7 +3031,7 @@ RESTORE
 }
 
 .group-title {
-	font-size: 14px;
+	font-size: var( --type-callout );
 	font-weight: 600;
 }
 
@@ -3110,7 +3124,7 @@ INFO POPOVER
 	background: linear-gradient( 180deg, var( --popover-tint ) 0, var( --popover ) 64px );
 	box-shadow: 0 0 0 1px var( --popover-edge ), 0 24px 60px var( --shade-deep ), 0 4px 12px var( --shade );
 	color: var( --text );
-	font-size: 13px;
+	font-size: var( --type-body );
 	font-weight: 400;
 	letter-spacing: normal;
 	line-height: 1.5;
@@ -3153,7 +3167,7 @@ INFO POPOVER
 
 .popover-title {
 	margin-bottom: 3px;
-	font-size: 13.5px;
+	font-size: var( --type-body );
 	font-weight: 650;
 	letter-spacing: -0.005em;
 }
@@ -3172,7 +3186,7 @@ INFO POPOVER
 	color: var( --tip-text );
 	backdrop-filter: blur( 12px );
 	box-shadow: 0 6px 18px var( --shade-deep );
-	font-size: 12px;
+	font-size: var( --type-footnote );
 	font-weight: 500;
 	line-height: 1.3;
 	pointer-events: none;
@@ -3344,7 +3358,7 @@ BACKUP
 	display: flex;
 	align-items: center;
 	gap: 14px;
-	font-size: 13px;
+	font-size: var( --type-body );
 	color: var( --text-2 );
 }
 
@@ -3403,7 +3417,7 @@ BACKUP
 	align-items: center;
 	gap: 6px;
 	color: var( --text-2 );
-	font-size: 13px;
+	font-size: var( --type-body );
 	font-weight: 500;
 }
 
@@ -3413,7 +3427,7 @@ BACKUP
 	background: var( --surface );
 	box-shadow: var( --shadow );
 	font-family: var( --font-mono );
-	font-size: 13px;
+	font-size: var( --type-body );
 	white-space: pre-wrap;
 	user-select: text;
 }
@@ -3421,14 +3435,14 @@ BACKUP
 .phrase-passphrase-edges {
 	grid-column: 2;
 	color: var( --warn );
-	font-size: 12px;
+	font-size: var( --type-footnote );
 }
 
 /* restore: typed in the clear and in a fixed-width face, so each space shows */
 .passphrase-input {
 	margin-top: 10px;
 	font-family: var( --font-mono );
-	font-size: 13px;
+	font-size: var( --type-body );
 }
 
 .hint.warn {
@@ -3447,7 +3461,7 @@ BACKUP
 	border-radius: var( --radius );
 	background: none;
 	color: var( --text );
-	font-size: 15px;
+	font-size: var( --type-headline );
 	font-weight: 600;
 }
 
@@ -3461,7 +3475,7 @@ BACKUP
 
 .phrase-cover-hint {
 	color: var( --text-2 );
-	font-size: 12px;
+	font-size: var( --type-footnote );
 	font-weight: 400;
 }
 
@@ -3487,7 +3501,7 @@ BACKUP
 }
 
 .birthday-date {
-	font-size: 15px;
+	font-size: var( --type-headline );
 	font-weight: 600;
 	text-align: right;
 }
@@ -3495,7 +3509,7 @@ BACKUP
 .birthday-block {
 	grid-column: 2;
 	color: var( --text-2 );
-	font-size: 11px;
+	font-size: var( --type-caption );
 	font-variant-numeric: tabular-nums;
 	text-align: right;
 }
@@ -3566,7 +3580,7 @@ BACKUP
 	min-height: 20px;
 	margin: 14px 0 0;
 	color: var( --text-2 );
-	font-size: 13px;
+	font-size: var( --type-body );
 }
 
 .verify-status.bad {
@@ -3625,7 +3639,7 @@ SIDEBAR: SWITCHER AND NAV
 
 .switcher-wallet {
 	color: var( --text-2 );
-	font-size: 12px;
+	font-size: var( --type-footnote );
 }
 
 .switcher-chevron {
@@ -3735,7 +3749,7 @@ MENUS
 
 .menu-amount {
 	color: var( --text-2 );
-	font-size: 12px;
+	font-size: var( --type-footnote );
 	font-variant-numeric: tabular-nums;
 }
 
@@ -3746,7 +3760,7 @@ MENUS
 	min-height: 26px;		/* and taller as its words grow (175%) */
 	padding: 3px 4px 3px 8px;
 	color: var( --text-2 );
-	font-size: 11px;
+	font-size: var( --type-caption );
 	font-weight: 600;
 	letter-spacing: 0.02em;
 	text-transform: uppercase;
@@ -3756,7 +3770,7 @@ MENUS
 	padding: 1px 6px;
 	border-radius: 999px;
 	background: var( --fill );
-	font-size: var( --text-min );
+	font-size: var( --type-caption );
 	text-transform: none;
 	letter-spacing: 0;
 }
@@ -3850,9 +3864,9 @@ SHEETS
 
 .sheet-title {
 	margin: 0;
-	font-size: 17px;
+	font-size: var( --type-title2 );		/* a sheet's title, a step over its labels: at 17px "Send" read as one more label over "To" */
 	font-weight: 700;
-	letter-spacing: -0.015em;
+	letter-spacing: -0.02em;
 }
 
 .sheet-desc {
@@ -3980,8 +3994,7 @@ SECURITY: LOCK SCREEN, PASSWORDS, SETTINGS
 }
 
 .page-title {
-	margin-bottom: 24px;
-	font-size: 26px;
+	font-size: var( --type-title1 );
 }
 
 .settings {
@@ -4114,7 +4127,7 @@ WINDOW: WINDOWS CAPTION BUTTONS, RESIZE EDGES
 
 .link.small {
 	padding: 0;
-	font-size: 12px;
+	font-size: var( --type-footnote );
 }
 
 
@@ -4184,7 +4197,7 @@ RECEIVE AND FUND
 	background: var( --fill );
 	color: var( --text );
 	font-family: var( --font-mono );
-	font-size: 12px;
+	font-size: var( --type-footnote );
 	word-break: break-all;
 	user-select: text;
 	transition: background 0.15s;
@@ -4243,11 +4256,11 @@ RECEIVE AND FUND
 
 .all-label {
 	color: var( --text-2 );
-	font-size: 13px;
+	font-size: var( --type-body );
 }
 
 .all-amount {
-	font-size: 20px;
+	font-size: var( --type-title2 );
 	font-weight: 700;
 	font-variant-numeric: tabular-nums;
 }
@@ -4294,6 +4307,7 @@ RECEIVE AND FUND
 	align-items: center;
 	justify-content: space-between;
 	gap: 12px;
+	margin-bottom: 20px;		/* the head's, not the title's: in the title's own box, Export sat 12px off its middle */
 }
 
 .request-actions {
@@ -4313,7 +4327,7 @@ RECEIVE AND FUND
 	border-radius: var( --radius-sm );
 	background: var( --warn-soft );
 	color: var( --text );
-	font-size: 12px;
+	font-size: var( --type-footnote );
 	line-height: 1.5;
 }
 
@@ -4372,7 +4386,7 @@ RECEIVE AND FUND
 .link-row-sub {
 	display: block;
 	color: var( --text-2 );
-	font-size: 12px;
+	font-size: var( --type-footnote );
 }
 
 .settings-section + .settings-section {
@@ -4403,7 +4417,7 @@ BALANCE HISTORY
 .chart-note {
 	margin: 0 0 0 2px;
 	color: var( --text-2 );
-	font-size: 12px;
+	font-size: var( --type-footnote );
 }
 
 .chart-body {
@@ -4457,7 +4471,7 @@ BALANCE HISTORY
 
 .chart-axis {
 	fill: var( --text-3 );
-	font-size: var( --text-min );
+	font-size: var( --type-caption );
 	font-variant-numeric: tabular-nums;
 }
 
@@ -4508,7 +4522,7 @@ BALANCE HISTORY
 	background: var( --fill );
 	color: var( --text-2 );
 	font: inherit;
-	font-size: 12px;
+	font-size: var( --type-footnote );
 	font-weight: 600;
 	transition: background 0.12s, color 0.12s;
 }
@@ -4544,7 +4558,7 @@ BALANCE HISTORY
 	display: inline-flex;
 	align-items: center;
 	gap: 6px;
-	font-size: 12px;
+	font-size: var( --type-footnote );
 	font-variant-numeric: tabular-nums;
 	white-space: nowrap;
 }
@@ -4589,7 +4603,7 @@ BALANCE HISTORY
 }
 
 .chart-bubble-amount {
-	font-size: 13px;
+	font-size: var( --type-body );
 	font-weight: 600;
 	font-variant-numeric: tabular-nums;
 }
@@ -4600,7 +4614,7 @@ BALANCE HISTORY
 }
 
 .chart-bubble-date {
-	font-size: 11px;
+	font-size: var( --type-caption );
 	opacity: 0.7;
 }
 
@@ -4610,7 +4624,7 @@ BALANCE HISTORY
 	display: grid;
 	place-items: center;
 	color: var( --text-2 );
-	font-size: 12.5px;
+	font-size: var( --type-footnote );
 	font-weight: 600;
 }
 
@@ -4657,14 +4671,14 @@ BALANCE HISTORY
 }
 
 .chart-empty-title {
-	font-size: 14px;
+	font-size: var( --type-callout );
 	font-weight: 600;
 }
 
 .chart-empty-text {
 	max-width: 300px;
 	color: var( --text-2 );
-	font-size: 12.5px;
+	font-size: var( --type-footnote );
 }
 
 
@@ -4708,7 +4722,7 @@ SHIELD AND SCAN SHEETS
 }
 
 .sheet-state-title {
-	font-size: 16px;
+	font-size: var( --type-headline );
 	font-weight: 600;
 }
 
@@ -4771,7 +4785,7 @@ SHIELD AND SCAN SHEETS
 	border-radius: 999px;
 	background: var( --fill );
 	color: var( --text-2 );
-	font-size: 12px;
+	font-size: var( --type-footnote );
 	font-weight: 600;
 }
 
@@ -4809,11 +4823,11 @@ SHIELD AND SCAN SHEETS
 
 .flow-label {
 	color: var( --text-2 );
-	font-size: 12px;
+	font-size: var( --type-footnote );
 }
 
 .flow-amount {
-	font-size: 16px;
+	font-size: var( --type-headline );
 	font-weight: 600;
 	font-variant-numeric: tabular-nums;
 }
@@ -4864,7 +4878,7 @@ SHIELD AND SCAN SHEETS
 
 .receipt-title {
 	color: var( --text-2 );
-	font-size: 13px;
+	font-size: var( --type-body );
 	font-weight: 600;
 }
 
@@ -4880,6 +4894,13 @@ SHIELD AND SCAN SHEETS
 .receive-side {
 	display: flex;
 	flex-direction: column;
+}
+/* one column (a phone, a narrow window): what it is, centred under the centred QR and
+   Copy; left-aligned, the eye went from the middle to the edge and back */
+.receive-side > .sheet-desc:first-child,
+.receive-side > .receive-kind:first-child {
+	justify-content: center;
+	text-align: center;
 }
 
 @media ( min-width: 780px ) {
@@ -4933,7 +4954,7 @@ SHIELD AND SCAN SHEETS
 /* an id in a facts row: shortened on one line, selectable, the same size as the label */
 .fact-id {
 	font-family: var( --font-mono );
-	font-size: 12px;
+	font-size: var( --type-footnote );
 	font-weight: 500;
 	white-space: nowrap;
 	user-select: text;
@@ -5047,7 +5068,7 @@ SHIELD AND SCAN SHEETS
 
 .tx-step-label {
 	color: var( --text-2 );
-	font-size: 12px;
+	font-size: var( --type-footnote );
 	font-weight: 600;
 }
 
@@ -5058,7 +5079,7 @@ SHIELD AND SCAN SHEETS
 
 .tx-progress-head {
 	margin: 0;
-	font-size: 15px;
+	font-size: var( --type-headline );
 	font-weight: 700;
 }
 
@@ -5073,7 +5094,7 @@ SHIELD AND SCAN SHEETS
 .tx-progress-sub {
 	margin: 2px 0 0;
 	color: var( --text-2 );
-	font-size: 12.5px;
+	font-size: var( --type-footnote );
 	line-height: 1.5;
 }
 
@@ -5082,7 +5103,7 @@ SHIELD AND SCAN SHEETS
 	padding-top: 10px;
 	border-top: 1px solid var( --line );
 	color: var( --text-2 );
-	font-size: 12px;
+	font-size: var( --type-footnote );
 	line-height: 1.5;
 }
 
@@ -5150,7 +5171,7 @@ SHIELD AND SCAN SHEETS
 	gap: 8px;
 	max-width: 80%;
 	color: #e7f4ef;
-	font-size: 12.5px;
+	font-size: var( --type-footnote );
 	line-height: 1.5;
 	text-align: center;
 }
@@ -5169,7 +5190,7 @@ SHIELD AND SCAN SHEETS
 
 .field.mono {
 	font-family: var( --font-mono );
-	font-size: 12px;
+	font-size: var( --type-footnote );
 }
 
 /* the hint in words, not code: in the address's font "scan" broke into "sca / n" at a large size */
@@ -5228,7 +5249,7 @@ SHIELD AND SCAN SHEETS
 .scan-kind-text {
 	display: block;
 	color: var( --text-2 );
-	font-size: 12.5px;
+	font-size: var( --type-footnote );
 }
 
 .soon-btn .soon {
@@ -5236,7 +5257,7 @@ SHIELD AND SCAN SHEETS
 	padding: 1px 6px;
 	border-radius: 999px;
 	background: var( --fill );
-	font-size: var( --text-min );
+	font-size: var( --type-caption );
 	font-weight: 600;
 }
 
@@ -5254,7 +5275,7 @@ SWITCHER: SYNC AND BACKUP
 	align-items: center;
 	gap: 5px;
 	color: var( --text-2 );
-	font-size: 11px;
+	font-size: var( --type-caption );
 	font-weight: 500;
 }
 
@@ -5275,7 +5296,7 @@ SWITCHER: SYNC AND BACKUP
 	padding: 1px 8px;
 	border-radius: 999px;
 	outline: none;
-	font-size: 11px;
+	font-size: var( --type-caption );
 	font-weight: 600;
 	user-select: none;
 	transition: background 0.12s;
@@ -5437,7 +5458,7 @@ SETTINGS: APPEARANCE, SECURITY, STORAGE
 	align-items: center;
 	gap: 8px;
 	color: var( --text-2 );
-	font-size: 11px;
+	font-size: var( --type-caption );
 	font-weight: 600;
 	letter-spacing: 0.05em;
 	text-transform: uppercase;
@@ -5465,7 +5486,7 @@ SETTINGS: APPEARANCE, SECURITY, STORAGE
 
 .sec-title {
 	margin-top: 6px;
-	font-size: 15px;
+	font-size: var( --type-headline );
 	font-weight: 600;
 }
 
@@ -5489,7 +5510,7 @@ SETTINGS: APPEARANCE, SECURITY, STORAGE
 	align-items: center;
 	gap: 9px;
 	color: var( --text-2 );
-	font-size: 12.5px;
+	font-size: var( --type-footnote );
 }
 
 .sec-steps li.on {
@@ -5591,13 +5612,13 @@ SETTINGS: APPEARANCE, SECURITY, STORAGE
 }
 
 .handoff-label {
-	font-size: 12.5px;
+	font-size: var( --type-footnote );
 	font-weight: 600;
 }
 
 .handoff-where {
 	color: var( --text-2 );
-	font-size: 11.5px;
+	font-size: var( --type-caption );
 }
 
 /* grouped rows: icon, words, and the action or value at the right */
@@ -5666,7 +5687,7 @@ SETTINGS: APPEARANCE, SECURITY, STORAGE
 
 .set-sub {
 	color: var( --text-2 );
-	font-size: 12px;
+	font-size: var( --type-footnote );
 }
 
 .set-actions {
@@ -5692,7 +5713,7 @@ SETTINGS: APPEARANCE, SECURITY, STORAGE
 }
 
 .sto-total {
-	font-size: 22px;
+	font-size: var( --type-title2 );
 	font-weight: 700;
 	letter-spacing: -0.02em;
 }
@@ -5702,7 +5723,7 @@ SETTINGS: APPEARANCE, SECURITY, STORAGE
 	align-items: center;
 	gap: 6px;
 	color: var( --text-2 );
-	font-size: 12px;
+	font-size: var( --type-footnote );
 }
 
 .sto-free svg {
@@ -5786,14 +5807,14 @@ SYNC SHEET
 
 .ring-percent {
 	color: var( --text-2 );
-	font-size: 13px;
+	font-size: var( --type-body );
 	font-weight: 700;
 	font-variant-numeric: tabular-nums;
 }
 
 .sync-title {
 	margin: 0;
-	font-size: 18px;
+	font-size: var( --type-title3 );
 	font-weight: 700;
 	letter-spacing: -0.015em;
 }
@@ -5840,7 +5861,7 @@ SYNC SHEET
 	justify-content: space-between;
 	margin-top: 6px;
 	color: var( --text-2 );
-	font-size: 12px;
+	font-size: var( --type-footnote );
 	font-weight: 500;
 }
 
@@ -5867,7 +5888,7 @@ SYNC SHEET
 
 .sync-fact-text {
 	color: var( --text-2 );
-	font-size: 12px;
+	font-size: var( --type-footnote );
 }
 
 .sync-why {
@@ -5875,7 +5896,7 @@ SYNC SHEET
 	align-items: center;
 	gap: 4px;
 	color: var( --text-2 );
-	font-size: 12.5px;
+	font-size: var( --type-footnote );
 }
 
 .sync-sheet .sheet-buttons {
@@ -6003,7 +6024,7 @@ HOME LAYOUT: FILL THE WINDOW
 	}
 
 	.total {
-		font-size: 38px;
+		font-size: var( --type-balance-small );
 	}
 
 	.total-row {
@@ -6046,7 +6067,7 @@ HOME LAYOUT: FILL THE WINDOW
 	}
 
 	.action-label {
-		font-size: 12px;
+		font-size: var( --type-footnote );
 	}
 
 	.panel.chart {
@@ -6093,7 +6114,7 @@ SEND
 	min-height: 26px;		/* and taller as its words grow (175%) */
 	padding: 3px 11px;
 	gap: 5px;
-	font-size: 12px;
+	font-size: var( --type-footnote );
 }
 
 .btn.small svg {
@@ -6117,14 +6138,15 @@ SEND
 }
 
 .send-to {
+	--tools-room:	32px;		/* under the address, for Paste, Scan and Choose inside the field; none on a phone, where they go under it */
 	position: relative;
 }
 
 .send-to .field {
 	field-sizing: content;		/* as tall as the address: a unified one scrolled under Paste, Scan and Choose */
-	min-height: calc( 2lh + 50px );		/* two lines, as rows=2 drew it */
+	min-height: calc( 2lh + 18px + var( --tools-room ) );		/* two lines, as rows=2 drew it */
 	resize: none;
-	padding-bottom: 40px;
+	padding-bottom: calc( 8px + var( --tools-room ) );
 	word-break: break-all;
 }
 
@@ -6143,7 +6165,10 @@ SEND
 	min-height: 22px;
 	margin-top: 6px;
 	color: var( --text-2 );
-	font-size: 12px;
+	font-size: var( --type-footnote );
+}
+.send-check:empty {
+	min-height: 0;		/* nothing to say yet: no empty line held open under the address (it read as a 46px hole, 11-27) */
 }
 
 .send-kind {
@@ -6222,7 +6247,7 @@ SEND
 
 .choice-sub {
 	color: var( --text-2 );
-	font-size: 11.5px;
+	font-size: var( --type-caption );
 	font-variant-numeric: tabular-nums;
 }
 
@@ -6293,22 +6318,24 @@ SEND
 	flex-wrap: wrap;
 	align-items: center;
 	gap: 8px;
-	font-size: 15px;
+	font-size: var( --type-headline );
 	font-weight: 600;
 }
 
 .choice-list .choice-sub {
 	color: var( --text-2 );
-	font-size: 13px;
+	font-size: var( --type-body );
 	line-height: 1.35;
 }
 
-.choice-badge {
+/* a small accent badge: a choice's "Recommended", the amount's "Max" */
+.choice-badge,
+.send-max-chip {
 	padding: 2px 8px;
 	border-radius: 999px;
 	background: var( --accent-soft );
 	color: var( --accent );
-	font-size: 11px;
+	font-size: var( --type-caption );
 	font-weight: 600;
 	letter-spacing: 0.02em;
 }
@@ -6358,7 +6385,7 @@ SEND
 	border: none;
 	outline: none;
 	background: none;
-	font-size: 24px;
+	font-size: var( --type-title1 );
 	font-weight: 700;
 	font-variant-numeric: tabular-nums;
 	letter-spacing: -0.02em;
@@ -6370,7 +6397,7 @@ SEND
 	align-items: center;
 	gap: 8px;
 	min-width: 0;
-	font-size: 20px;
+	font-size: var( --type-title2 );
 	font-weight: 700;
 }
 
@@ -6385,7 +6412,7 @@ SEND
 /* an amount in dollars beside its ZEC (UI_Usd): quieter than the ZEC */
 .usd {
 	color: var( --text-2 );
-	font-size: 13px;
+	font-size: var( --type-body );
 	font-weight: 500;
 }
 
@@ -6397,15 +6424,8 @@ SEND
 	margin-top: 8px;
 }
 
-/* says the number wasn't typed: it is everything, and follows the pool */
+/* says the number wasn't typed: it is everything, and follows the pool (the badge's look: .choice-badge) */
 .send-max-chip {
-	padding: 2px 8px;
-	border-radius: 999px;
-	background: var( --accent-soft );
-	color: var( --accent );
-	font-size: var( --text-min );
-	font-weight: 700;
-	letter-spacing: 0.02em;
 	text-transform: uppercase;
 }
 
@@ -6424,7 +6444,7 @@ SEND
 
 .review-amount {
 	padding: 6px 0 2px;
-	font-size: 40px;
+	font-size: var( --type-amount );
 	font-weight: 700;
 	font-variant-numeric: tabular-nums;
 	letter-spacing: -0.03em;
@@ -6456,7 +6476,7 @@ SEND
 }
 
 .fact.total dd {
-	font-size: 14px;
+	font-size: var( --type-callout );
 }
 
 .review-memo {
@@ -6540,7 +6560,7 @@ HISTORY
 	flex-wrap: wrap;
 	align-items: center;
 	gap: 6px;
-	margin: -2px 0 16px;
+	margin: 0 0 16px;
 }
 
 .history-active .filter-chip svg {
@@ -6569,7 +6589,7 @@ HISTORY
 	border-radius: 999px;
 	background: var( --accent-fill );
 	color: var( --on-accent );
-	font-size: 11px;
+	font-size: var( --type-caption );
 	line-height: 1;		/* a badge keeps its shape: its glyph fits it at any text size */
 	font-weight: 700;
 }
@@ -6585,7 +6605,7 @@ HISTORY
 	border-radius: 999px;
 	background: var( --fill );
 	color: var( --text-2 );
-	font-size: 12.5px;
+	font-size: var( --type-footnote );
 	font-weight: 500;
 	transition: background 0.15s, color 0.15s;
 }
@@ -6622,7 +6642,7 @@ HISTORY
 	display: block;
 	margin-bottom: 7px;
 	color: var( --text-2 );
-	font-size: 11.5px;
+	font-size: var( --type-caption );
 	font-weight: 600;
 	letter-spacing: 0.04em;
 	text-transform: uppercase;
@@ -6649,7 +6669,7 @@ HISTORY
 .tx-day {
 	margin: 0 0 8px 4px;
 	color: var( --text-2 );
-	font-size: 12px;
+	font-size: var( --type-footnote );
 	font-weight: 600;
 	letter-spacing: 0.02em;
 	text-transform: uppercase;
@@ -6723,7 +6743,7 @@ HISTORY
 .tx-sub {
 	overflow: hidden;
 	color: var( --text-2 );
-	font-size: 12px;
+	font-size: var( --type-footnote );
 	white-space: nowrap;
 	text-overflow: ellipsis;
 }
@@ -6747,7 +6767,7 @@ HISTORY
 	border-radius: 999px;
 	background: var( --warn-soft );
 	color: var( --warn );
-	font-size: var( --text-min );
+	font-size: var( --type-caption );
 	font-weight: 600;
 }
 
@@ -6772,7 +6792,6 @@ HISTORY
 }
 
 .sheet-tx .sheet-title {
-	margin-top: -6px;
 	text-align: center;
 }
 
@@ -6789,7 +6808,7 @@ HISTORY
 	flex: none;
 	width: 68px;
 	height: 68px;
-	margin-top: 4px;
+	margin: 4px 0;		/* clear of its 7px ring: the sheet's gap is the rest */
 	border-radius: 50%;
 	background:
 		radial-gradient( circle at 30% 25%, color-mix( in srgb, var( --accent ) 30%, transparent ), transparent 62% ),
@@ -6828,7 +6847,7 @@ HISTORY
 .tx-avatar-face {
 	display: grid;
 	place-items: center;
-	font-size: 21px;
+	font-size: var( --type-title2 );
 	font-weight: 700;
 	letter-spacing: 0.02em;
 }
@@ -6864,12 +6883,11 @@ HISTORY
 	display: flex;
 	flex-direction: column;
 	align-items: center;
-	gap: 6px;
-	margin-top: -8px;
+	gap: 6px;		/* the sheet's gap above it, as every part's: pulled up 8px, it hid that "Received" sat on the avatar */
 }
 
 .tx-head-amount {
-	font-size: 32px;
+	font-size: var( --type-amount );
 	font-weight: 700;
 	letter-spacing: -0.025em;
 	font-variant-numeric: tabular-nums;
@@ -6884,9 +6902,6 @@ HISTORY
 	text-decoration: line-through;
 }
 
-.usd-then {
-	margin-top: -4px;
-}
 
 .tx-chip {
 	display: inline-flex;
@@ -6894,7 +6909,7 @@ HISTORY
 	gap: 6px;
 	padding: 4px 11px 4px 9px;
 	border-radius: 999px;
-	font-size: 12.5px;
+	font-size: var( --type-footnote );
 	font-weight: 600;
 	max-width: 100%;		/* "Confirmed · 4,403,000 confirmations" wraps at a large text size, never out of its sheet */
 }
@@ -6956,6 +6971,7 @@ HISTORY
 
 .tx-route-end {
 	flex: 1 1 0;		/* From and To share the room either side of the arrow */
+	align-self: start;		/* their labels on one line: centred, a two-line From pushed TO down */
 	display: flex;
 	flex-direction: column;
 	align-items: center;
@@ -6966,7 +6982,7 @@ HISTORY
 
 .tx-route-label {
 	color: var( --text-3 );
-	font-size: var( --text-min );
+	font-size: var( --type-caption );
 	font-weight: 600;
 	letter-spacing: 0.08em;
 	text-transform: uppercase;
@@ -6994,7 +7010,7 @@ HISTORY
 .address-more {
 	margin-left: 5px;
 	color: var( --text-2 );
-	font-size: 11.5px;
+	font-size: var( --type-caption );
 	font-weight: 700;
 }
 
@@ -7022,6 +7038,8 @@ HISTORY
    nor wallet at a large text size (11-27) */
 .tx-route-name,
 .tx-route-sub {
+	color: var( --text-2 );
+	font-size: var( --type-footnote );
 	display: -webkit-box;
 	max-width: 100%;
 	overflow: hidden;
@@ -7042,21 +7060,17 @@ HISTORY
 }
 
 .tx-route-name {
-	font-size: 14px;
+	font-size: var( --type-callout );
 	font-weight: 600;
 }
 
 .tx-route-name.address {
 	display: block;		/* whole: an address is never cut short */
 	font-family: var( --font-mono );
-	font-size: 12px;
+	font-size: var( --type-footnote );
 	-webkit-line-clamp: none;
 }
 
-.tx-route-sub {
-	color: var( --text-2 );
-	font-size: 12px;
-}
 
 .tx-route-link {
 	position: relative;
@@ -7121,7 +7135,7 @@ HISTORY
 	align-items: center;
 	gap: 5px;
 	color: var( --text-3 );
-	font-size: var( --text-min );
+	font-size: var( --type-caption );
 	font-weight: 600;
 	letter-spacing: 0.08em;
 	text-transform: uppercase;
@@ -7139,7 +7153,7 @@ HISTORY
 	border-radius: 18px 18px 18px 6px;
 	background: var( --surface-2 );
 	color: var( --text );
-	font-size: 14px;
+	font-size: var( --type-callout );
 	line-height: 1.45;
 	white-space: pre-wrap;
 	box-shadow: 0 1px 0 var( --line );
@@ -7256,7 +7270,7 @@ HISTORY
 
 	.tx-foot .round-action-label {
 		color: var( --text );
-		font-size: 13px;
+		font-size: var( --type-body );
 	}
 
 	.tx-foot .round-action.main {
@@ -7335,7 +7349,7 @@ HISTORY
 
 .round-action-label {
 	color: var( --text-2 );
-	font-size: 12px;
+	font-size: var( --type-footnote );
 	font-weight: 600;
 	text-align: center;
 }
@@ -7352,7 +7366,7 @@ HISTORY
 	background: color-mix( in srgb, var( --card-warn ) 16%, transparent );
 	color: var( --card-warn-text );
 	font: inherit;
-	font-size: 12.5px;
+	font-size: var( --type-footnote );
 	font-weight: 600;
 	cursor: pointer;
 }
@@ -7371,7 +7385,7 @@ HISTORY
 }
 
 .tx-status {
-	margin: -6px 0 0;
+	margin: 0;
 	color: var( --text-2 );
 	text-align: center;
 }
@@ -7461,7 +7475,7 @@ TOASTS
 .toast-sub {
 	overflow: hidden;
 	color: var( --text-2 );
-	font-size: 12px;
+	font-size: var( --type-footnote );
 	white-space: nowrap;
 	text-overflow: ellipsis;
 }
@@ -7515,14 +7529,14 @@ ABOUT AND LICENSES
 }
 
 .about-name {
-	font-size: 17px;
+	font-size: var( --type-title3 );
 	font-weight: 700;
 }
 
 .about-version {
 	margin-left: 4px;
 	color: var( --text-2 );
-	font-size: 13px;
+	font-size: var( --type-body );
 	font-weight: 500;
 }
 
@@ -7559,7 +7573,7 @@ ABOUT AND LICENSES
 	display: inline-flex;
 	align-items: center;
 	gap: 6px;
-	font-size: 12px;
+	font-size: var( --type-footnote );
 }
 
 .home-customize svg {
@@ -7590,7 +7604,7 @@ ABOUT AND LICENSES
 
 .folder-path {
 	font-family: var( --font-mono );
-	font-size: 12px;
+	font-size: var( --type-footnote );
 }
 
 
@@ -7601,7 +7615,7 @@ ABOUT AND LICENSES
 	border-radius: var( --radius-sm );
 	background: var( --fill );
 	font-family: var( --font-mono );
-	font-size: 15px;
+	font-size: var( --type-headline );
 	line-height: 1.6;
 	letter-spacing: 0.04em;
 	user-select: all;
@@ -7618,7 +7632,7 @@ ABOUT AND LICENSES
 	align-items: center;
 	gap: 8px;
 	margin: 0 0 12px;
-	font-size: 12px;
+	font-size: var( --type-footnote );
 	font-weight: 500;
 	color: var( --text-2 );
 }
@@ -7683,10 +7697,6 @@ ABOUT AND LICENSES
 	text-align: center;
 }
 
-.sheet-notes .sheet-title {
-	font-size: 20px;
-	letter-spacing: -0.02em;
-}
 
 .sheet-notes .release-items {
 	flex: 1 1 auto;
@@ -7745,7 +7755,7 @@ ABOUT AND LICENSES
 
 .license-name {
 	margin: 8px 0 0;
-	font-size: 15px;
+	font-size: var( --type-headline );
 }
 
 /* a block of plain text to read and copy: a license, a support report */
@@ -7759,7 +7769,7 @@ ABOUT AND LICENSES
 	background: var( --surface-2 );
 	color: var( --text-2 );
 	font-family: var( --font-mono );
-	font-size: var( --text-min );
+	font-size: var( --type-caption );
 	line-height: 1.55;
 	white-space: pre-wrap;
 	user-select: text;
@@ -7812,7 +7822,7 @@ WORKING AND NOTES
 
 .work-sub {
 	color: var( --text-2 );
-	font-size: 12px;
+	font-size: var( --type-footnote );
 	font-variant-numeric: tabular-nums;
 }
 
@@ -7887,7 +7897,7 @@ ADDRESS BOOK AND CHOOSING WHO TO PAY
 	border-radius: 50%;
 	background: var( --accent-soft );
 	color: var( --accent );
-	font-size: 12px;
+	font-size: var( --type-footnote );
 	line-height: 1;		/* a badge keeps its shape: its glyph fits it at any text size */
 	font-weight: 700;
 	letter-spacing: 0.02em;
@@ -7896,7 +7906,7 @@ ADDRESS BOOK AND CHOOSING WHO TO PAY
 .contact-avatar.small {
 	width: 24px;
 	height: 24px;
-	font-size: var( --text-min );
+	font-size: var( --type-caption );
 }
 
 .contact-text .set-sub {
@@ -7915,7 +7925,7 @@ ADDRESS BOOK AND CHOOSING WHO TO PAY
 
 .contact-paid {
 	color: var( --text-2 );
-	font-size: var( --text-min );
+	font-size: var( --type-caption );
 }
 
 .set-sub.mono,
@@ -7989,7 +7999,7 @@ ADDRESS BOOK AND CHOOSING WHO TO PAY
 .menu-sub {
 	overflow: hidden;
 	color: var( --text-2 );
-	font-size: var( --text-min );
+	font-size: var( --type-caption );
 	text-overflow: ellipsis;
 	white-space: nowrap;
 }
@@ -7997,7 +8007,7 @@ ADDRESS BOOK AND CHOOSING WHO TO PAY
 .menu-empty {
 	padding: 6px 8px;
 	color: var( --text-2 );
-	font-size: 12px;
+	font-size: var( --type-footnote );
 }
 
 /* what a receipt offers next (UI_Receipt): links side by side, apart, wrapping on a phone */
@@ -8050,7 +8060,7 @@ SETTINGS WINDOW
 
 .settings-nav-title {
 	margin: 0 0 2px 10px;
-	font-size: 24px;
+	font-size: var( --type-title1 );
 }
 
 .settings-nav-group {
@@ -8152,7 +8162,7 @@ SETTINGS WINDOW
 }
 
 .pane-title {
-	font-size: 22px;
+	font-size: var( --type-title2 );
 	line-height: 1.2;
 }
 
@@ -8163,7 +8173,7 @@ SETTINGS WINDOW
 .pane-lede {
 	margin: 3px 0 0;
 	color: var( --text-2 );
-	font-size: 13px;
+	font-size: var( --type-body );
 }
 
 /* inside a pane, a section's title is a quiet label over its group */
@@ -8173,7 +8183,7 @@ SETTINGS WINDOW
 	gap: 6px;
 	margin: 0 0 8px 2px;
 	color: var( --text-2 );
-	font-size: 13px;
+	font-size: var( --type-body );
 	font-weight: 600;
 	letter-spacing: 0;
 }
@@ -8201,7 +8211,7 @@ SETTINGS WINDOW
 	background: var( --surface-2 );
 	box-shadow: inset 0 0 0 1px var( --line );
 	color: var( --text-2 );
-	font-size: 12px;
+	font-size: var( --type-footnote );
 	font-weight: 500;
 	white-space: nowrap;
 }
@@ -8285,7 +8295,7 @@ SWITCHES AND CHOICES
 	background: var( --surface );
 	color: var( --text );
 	font: inherit;
-	font-size: 13px;
+	font-size: var( --type-body );
 }
 
 
@@ -8356,7 +8366,7 @@ MANAGE WALLETS
 */
 
 .section-lede {
-	margin: -4px 0 12px;
+	margin: 0 0 12px;
 }
 
 .wallet-card {
@@ -8387,7 +8397,7 @@ MANAGE WALLETS
 .wallet-note {
 	margin: 10px 0 0;
 	color: var( --text-2 );
-	font-size: 12px;
+	font-size: var( --type-footnote );
 }
 
 .wallet-accounts {
@@ -8529,7 +8539,7 @@ ZEC PRICE
 }
 
 .price-now {
-	font-size: 22px;
+	font-size: var( --type-title2 );
 	font-weight: 700;
 	letter-spacing: -0.02em;
 	font-variant-numeric: tabular-nums;
@@ -8553,7 +8563,7 @@ ZEC PRICE
 
 .price-when {
 	color: var( --text-2 );
-	font-size: 12px;
+	font-size: var( --type-footnote );
 }
 
 .price-plot {
@@ -8586,7 +8596,7 @@ ZEC PRICE
 .price-source {
 	margin: 4px 0 0;
 	color: var( --text-2 );
-	font-size: var( --text-min );
+	font-size: var( --type-caption );
 }
 
 /* Phones: the account picker stays at the top and navigation stays within
@@ -8756,7 +8766,7 @@ ZEC PRICE
 		padding: 8px 34px 8px 12px;
 		border-radius: 0;
 		background: none;
-		font-size: 15px;
+		font-size: var( --type-headline );
 		font-weight: 500;
 		white-space: normal;
 	}
@@ -8798,7 +8808,7 @@ ZEC PRICE
 		min-height: 48px;
 		padding: 0 14px;
 		border-radius: 0;
-		font-size: 14px;
+		font-size: var( --type-callout );
 	}
 	.wallet-actions > .btn:not( .primary ) {
 		background: none;
@@ -8825,7 +8835,7 @@ ZEC PRICE
 	}
 	.verify-choices .chip {
 		min-height: 48px;		/* and taller as its words grow (175%) */
-		font-size: 15px;
+		font-size: var( --type-headline );
 	}
 	/* Quick Actions on a phone: one row of round buttons, a word under each, as a
 	   phone's own apps do. As cards, two to a row, they were 330px of the screen */
@@ -8862,7 +8872,7 @@ ZEC PRICE
 		height: 22px;
 	}
 	.action-label {
-		font-size: 12.5px;
+		font-size: var( --type-footnote );
 	}
 	.action-hint {
 		display: none;
@@ -8879,8 +8889,8 @@ ZEC PRICE
 		justify-content: center;
 		min-width: 0;
 	}
-	.send-to .field {
-		padding-bottom: 12px;
+	.send-to {
+		--tools-room:	0px;		/* the field kept 50px empty for tools no longer in it (11-27) */
 	}
 	/* a setting's buttons and choices go under its words on a phone, lined up with
 	   them; a switch stays on the right. Beside them, a button left the words a 4 to
@@ -8947,10 +8957,10 @@ ZEC PRICE
 		grid-column: 2;
 	}
 	.tile-title {
-		font-size: 15px;
+		font-size: var( --type-headline );
 	}
 	.tile-sub {
-		font-size: 13px;
+		font-size: var( --type-body );
 	}
 	.tile.muted {
 		box-shadow: none;
@@ -9027,7 +9037,7 @@ ZEC PRICE
 		min-height: 44px;
 	}
 	input, textarea, select {
-		font-size: 16px;
+		font-size: var( --type-headline );
 	}
 	.settings {
 		min-width: 0;
@@ -9164,7 +9174,7 @@ ZEC PRICE
 	}
 	.segmented button, .segmented.small button {
 		padding: 0 4px;
-		font-size: var( --text-min );
+		font-size: var( --type-caption );
 	}
 	.chart-head > div {
 		min-width: 0;
@@ -9224,7 +9234,7 @@ ZEC PRICE
 		right: 12px;
 	}
 	.tile-title {
-		font-size: 13.5px;
+		font-size: var( --type-body );
 	}
 	.tile-wrap .tile {
 		padding-right: 52px;

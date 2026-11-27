@@ -55,6 +55,10 @@ same on both phones and is checked by the Android gate first.
   the document (the webview's own scroll view), never a box of its own: a box that
   scrolled in a page that didn't took no finger at 175% (11-27). The kit sets the text
   size as Settings does (`__setting`) and draws the lock (`?password`).
+- Every font size is a step of the type scale (`--type-caption` 11 ... `--type-title1` 26,
+  `--type-amount`, `--type-balance`; ui.css :root), which grows with the text size;
+  check_owners refuses a size written as a number. Spacing between a sheet's parts
+  is its gap, never a negative margin pulling one part into the next.
 - A box with words grows with them: `min-height`, never a px `height`, beside a px
   font size (it spills at 175%); a badge that keeps its shape says `line-height: 1`.
   check_text_room.mjs keeps it so; the kit says words spilled from a box held to a
