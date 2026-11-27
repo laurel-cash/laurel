@@ -37,18 +37,21 @@ async function Open( mobile: boolean ) {
 }
 
 describe( "UI_Settings", () => {
-	it( "on a phone opens on the list, a pane over it, and Back to the list", async () => {
+	// which one shows where there's room for one is ui.css's (@container content): the
+	// window says which it is, and the way back is there only for a pane gone into
+	it( "opens on the list, goes into a pane with its way back, and Back to the list", async () => {
 		await Open( true );
-		expect( screen.getByRole( "button", { name: T.settings.help } ) ).toBeTruthy();
-		expect( screen.queryByRole( "heading", { name: T.settings.help } ) ).toBeNull();		// no pane under the list
+		const shown = () => document.querySelector( ".settings-window" );
+		expect( shown()?.classList.contains( "shows-list" ) ).toBe( true );
+		expect( screen.queryByRole( "button", { name: T.settings.title } ) ).toBeNull();
 
 		fireEvent.click( screen.getByRole( "button", { name: T.settings.help } ) );
 		expect( screen.getByRole( "heading", { name: T.settings.help } ) ).toBeTruthy();
-		expect( screen.queryByRole( "button", { name: T.settings.about } ) ).toBeNull();		// the pane alone
+		expect( shown()?.classList.contains( "shows-pane" ) ).toBe( true );
 
 		fireEvent.click( screen.getByRole( "button", { name: T.settings.title } ) );
-		expect( screen.getByRole( "button", { name: T.settings.about } ) ).toBeTruthy();
-		expect( screen.queryByRole( "heading", { name: T.settings.help } ) ).toBeNull();
+		expect( shown()?.classList.contains( "shows-list" ) ).toBe( true );
+		expect( screen.queryByRole( "button", { name: T.settings.title } ) ).toBeNull();
 	} );
 
 	it( "on a phone opens straight on a pane it's sent to (Manage Wallets)", async () => {

@@ -24,7 +24,7 @@ import * as Dialog from "@radix-ui/react-dialog";
 import { Com_ErrorOf, Com_FormatZec, errorInfo_t } from "./ui_local";
 import { T } from "./ui_text";
 import { useStore } from "./ui_store";
-import { useAction, useAppSettings } from "./ui_hooks";
+import { useAction, useAppSettings, usePhoneLayout } from "./ui_hooks";
 import type { appSettings_t } from "./bindings";
 
 const COPIED_MSEC	= 1600;		// how long "Copied" shows
@@ -611,7 +611,7 @@ export function UI_Sheet( props: {
 	className?:		string;			// a kind of sheet with its own look
 	children:		ReactNode;
 } ) {
-	const mobile = useStore( ( s ) => s.constants?.mobile );
+	const phone = usePhoneLayout();
 	function Change( open: boolean ) {
 		if ( !open && props.busy ) {
 			return;
@@ -645,7 +645,7 @@ export function UI_Sheet( props: {
 							>
 								{/* a phone's way back, at the top as an iPhone's is: a long sheet's
 								    Close was a long swipe down (What's New, 11-26). The one at the bottom stays */}
-								{mobile && (
+								{phone && (
 									<button className="sheet-back" disabled={props.busy} onClick={() => Change( false )}>
 										<ChevronLeft aria-hidden="true" />{T.common.back}
 									</button>

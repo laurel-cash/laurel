@@ -11,7 +11,7 @@ See the LICENSE file for details.
 // ui_home.tsx -- main window: sidebar with the switcher, and the open
 // account's balance card, quick actions, pools, network and privacy
 
-import { Fragment, ReactNode, useEffect, useLayoutEffect, useRef, useState } from "react";
+import { CSSProperties, Fragment, ReactNode, useEffect, useLayoutEffect, useRef, useState } from "react";
 import { AnimatePresence, motion } from "motion/react";
 import { ArrowDownLeft, ArrowUpRight, Check, ChevronRight, Clock, Eye, EyeOff, FileKey, History, House, Lock, MapPin, Pause, Plus, RefreshCw, ScanLine, Settings, ShieldAlert, ShieldCheck, SlidersHorizontal, WifiOff, ArrowRightLeft } from "lucide-react";
 import type { LucideIcon } from "lucide-react";
@@ -380,7 +380,7 @@ export function UI_Actions( props: { onSheet: ( s: sheet_t ) => void; split: spl
 	return (
 		<section className="panel">
 			<h2 className="panel-title">{T.actions.quick}</h2>
-			<div className="actions">
+			<div className="actions" style={{ "--n": ACTIONS.length, "--half": Math.ceil( ACTIONS.length / 2 ) } as CSSProperties}>
 				{ACTIONS.map( ( a ) => (
 					<button key={a.label} className="action" onClick={() => props.onSheet( a.sheet )}>
 						<span className="action-circle"><a.icon aria-hidden="true" /></span>

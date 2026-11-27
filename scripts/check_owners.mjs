@@ -150,32 +150,48 @@ for ( const name of new Set( names.filter( ( n, i ) => names.indexOf( n ) !== i 
 CSS_Rules
 
 Every style rule in css with the at-rules around it (its context) and
-its line. @keyframes steps are not selectors and are left out.
+its line. @keyframes steps are not selectors and are left out. A rule that
+holds only rules, no declarations of its own (:where( :root[data-page~=
+"roomy"] ) { ... }), is a condition as an @media is: a context, not a rule
 ==================
 */
 function CSS_Rules( css ) {
 	const rules = [];
-	const stack = [];
+	const stack = [];		// { head, rule (its index in rules, or -1), own (a declaration), nested (a rule) }
 	let prelude = "";
 	let line = 1;
 	for ( let i = 0; i < css.length; i++ ) {
 		const ch = css[i];
+		const top = stack[stack.length - 1];
 		if ( css.startsWith( "/*", i ) ) {
 			const end = css.indexOf( "*/", i + 2 );
 			line += ( css.slice( i, end ).match( /\n/g ) ?? [] ).length;
 			i = end + 1;
 		} else if ( ch === "{" ) {
 			const head = prelude.trim().replace( /\s+/g, " " );
-			const inKeyframes = stack.some( ( s ) => s.startsWith( "@keyframes" ) );
+			const inKeyframes = stack.some( ( s ) => s.head.startsWith( "@keyframes" ) );
+			let rule = -1;
 			if ( !head.startsWith( "@" ) && !inKeyframes ) {
-				rules.push( { context: stack.join( " " ), selectors: head.split( "," ).map( ( s ) => s.trim() ), line: line } );
+				rule = rules.push( { context: stack.map( ( s ) => s.head ).join( " " ), selectors: head.split( "," ).map( ( s ) => s.trim() ), line: line } ) - 1;
 			}
-			stack.push( head );
+			if ( top ) {
+				top.nested = true;
+			}
+			stack.push( { head: head, rule: rule, own: false, nested: false } );
 			prelude = "";
 		} else if ( ch === "}" ) {
-			stack.pop();
+			if ( prelude.trim() && top ) {
+				top.own = true;		// a last declaration with no ";"
+			}
+			const done = stack.pop();
+			if ( done && done.rule >= 0 && done.nested && !done.own ) {
+				rules[done.rule].condition = true;
+			}
 			prelude = "";
 		} else if ( ch === ";" ) {
+			if ( top ) {
+				top.own = true;
+			}
 			prelude = "";
 		} else {
 			if ( ch === "\n" ) {
@@ -184,7 +200,7 @@ function CSS_Rules( css ) {
 			prelude += ch;
 		}
 	}
-	return rules;
+	return rules.filter( ( r ) => !r.condition );
 }
 
 // an amount is never cut: "12.80" once showed as "12..." at a large text

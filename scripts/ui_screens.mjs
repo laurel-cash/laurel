@@ -11,7 +11,7 @@ See the LICENSE file for details.
 // ui_screens.mjs -- the screens a check opens, and the phones it opens them on:
 // one list, so a screen's way in is written once. check_layout.mjs measures
 // some of them in Edge at a computer's sizes and a phone's; ui_kit.mjs
-// pictures all of them on the iPhones.
+// pictures all of them on the iPhones and iPads.
 //
 // mock.html opens each: ?pane= Settings on that pane, ?click= presses through
 // (several, apart by |, each once it's there); drawn says it's there. A new
@@ -50,11 +50,23 @@ export function Com_ScreenUrl( port, screen, flags ) {
 	return `http://127.0.0.1:${port}/mock.html?${flags.join( "&" )}&pane=${screen.pane ?? ""}${screen.click ? `&click=${encodeURIComponent( screen.click )}` : ""}&drawn=${encodeURIComponent( screen.drawn )}`;
 }
 
-// iPhones by their css size and safe areas (portrait): the smallest still sold, the
-// common one, the largest. island: the Dynamic Island's box under the status bar
-// (top, width, height), else a plain status bar
-export const IPHONES = [
-	{ id: "se",		name: "iPhone SE",			w: 375, h: 667, top: 20, bottom: 0 },
-	{ id: "16",		name: "iPhone 16",			w: 393, h: 852, top: 59, bottom: 34, island: [ 11, 125, 37 ] },
-	{ id: "max",	name: "iPhone 16 Pro Max",	w: 440, h: 956, top: 62, bottom: 34, island: [ 11, 125, 37 ] },
+// the devices a check pictures, by css size, safe areas (portrait) and own pixel
+// ratio (a store picture's): the iPhones (the smallest still sold, the common one,
+// the largest, the wide one) and the iPads (the smallest; the 13", App Store
+// Connect's one iPad slot, upright and on its side; beside and over another app).
+// island: the Dynamic Island's box under the status bar (top, width, height); bar:
+// "ipad" (time and date left) or "none"; else the SE's plain status bar
+export const DEVICES = [
+	{ id: "se",		name: "iPhone SE",			w: 375, h: 667, dpr: 2, top: 20, bottom: 0 },
+	{ id: "16",		name: "iPhone 16",			w: 393, h: 852, dpr: 3, top: 59, bottom: 34, island: [ 11, 125, 37 ] },
+	{ id: "max",	name: "iPhone 16 Pro Max",	w: 440, h: 956, dpr: 3, top: 62, bottom: 34, island: [ 11, 125, 37 ] },
+	// the wide one (App Store Connect's "iPhone Duo" slot, 1398x2034 at 3x): its safe areas taken as the 16's
+	{ id: "duo",	name: "iPhone Duo",			w: 466, h: 678, dpr: 3, top: 59, bottom: 34, island: [ 11, 125, 37 ] },
+	{ id: "mini",	name: "iPad mini",			w: 744, h: 1133, dpr: 2, top: 24, bottom: 20, bar: "ipad" },
+	{ id: "ipad13",	name: "iPad Pro 13-inch",	w: 1032, h: 1376, dpr: 2, top: 24, bottom: 20, bar: "ipad" },
+	{ id: "land",	name: "iPad Pro 13-inch, on its side",	w: 1376, h: 1032, dpr: 2, top: 24, bottom: 20, bar: "ipad" },
+	// beside another app (Split View, half the 13" on its side), and over one (Slide Over:
+	// a phone's width, so a phone's layout, with no status bar of its own)
+	{ id: "split",	name: "iPad Split View",	w: 678, h: 1032, dpr: 2, top: 24, bottom: 20, bar: "ipad" },
+	{ id: "slide",	name: "iPad Slide Over",	w: 375, h: 900, dpr: 2, top: 0, bottom: 0, bar: "none" },
 ];

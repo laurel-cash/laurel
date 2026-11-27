@@ -226,14 +226,21 @@
 				// box that clips
 				const PastTheEdge = () => {
 					const out = [];
-					const W = document.documentElement.clientWidth;
+					// the page's edge: the screen's, or its scroller's (main.content beside a sidebar, an
+					// iPad's: History's Filters cut there at 175% went unseen, 11-27)
+					const page = document.querySelector( "main.content" );
+					const box = page && getComputedStyle( page ).overflowY !== "visible" ? page.getBoundingClientRect() : null;
+					const screen = [ 0, document.documentElement.clientWidth ];
+					const inner = box ? [ box.left, box.left + page.clientLeft + page.clientWidth ] : screen;
+					const Edge = ( el ) => ( page?.contains( el ) ? inner : screen );		// the sidebar, a sheet: the screen's
+					const W = screen[1];
 					// in a box that scrolls it or cuts it off (the balance card's leaf): never past the
-					// screen as seen. The page's own (body, html) is the edge measured, not one of these
+					// screen as seen. The page's own (body, html, its scroller) is the edge measured
 					const Held = ( el ) => {
-						for ( let p = el.parentElement; p && p !== document.body; p = p.parentElement ) if ( getComputedStyle( p ).overflowX !== "visible" ) return true;
+						for ( let p = el.parentElement; p && p !== document.body && p !== page; p = p.parentElement ) if ( getComputedStyle( p ).overflowX !== "visible" ) return true;
 						return false;
 					};
-					const Past = ( el ) => { const r = el.getBoundingClientRect(); return r.width > 1 && ( r.right > W + 1 || r.left < -1 ); };
+					const Past = ( el ) => { const r = el.getBoundingClientRect(), [ l, w ] = Edge( el ); return r.width > 1 && ( r.right > w + 1 || r.left < l - 1 ); };
 					for ( const el of document.querySelectorAll( "body *" ) ) {
 						if ( !Shown( el ) || !Past( el ) || Held( el ) || [ ...el.children ].some( Past ) ) continue;
 						const r = el.getBoundingClientRect();

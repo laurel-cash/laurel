@@ -485,7 +485,7 @@
 				PRODUCT_BUNDLE_IDENTIFIER = cash.laurel.wallet;
 				PRODUCT_NAME = "Laurel";
 				SDKROOT = iphoneos;
-				TARGETED_DEVICE_FAMILY = 1;
+				TARGETED_DEVICE_FAMILY = "1,2";
 				VALID_ARCHS = arm64;
 			};
 			name = release;
@@ -516,7 +516,7 @@
 				PRODUCT_BUNDLE_IDENTIFIER = cash.laurel.wallet;
 				PRODUCT_NAME = "Laurel";
 				SDKROOT = iphoneos;
-				TARGETED_DEVICE_FAMILY = 1;
+				TARGETED_DEVICE_FAMILY = "1,2";
 				VALID_ARCHS = arm64;
 			};
 			name = debug;

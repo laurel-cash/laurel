@@ -43,7 +43,7 @@ TOKENS
 	--text-scale:	1;
 	/* the text size's own choices grow only so far: the way back from too large is always in
 	   one row ("100 / %" broke under each number at 175% on an iPhone SE, 11-27) */
-	--steady-text:	min( calc( var( --type-body ) * var( --text-scale, 1 ) ), 16px );		/* grows, to what five fit in */
+	--steady-text:	min( calc( var( --type-body ) * var( --text-scale, 1 ) ), calc( 8cqi - 8px ) );		/* grows with the text, to what five fit in its row (cqi: #text-size's) */
 
 	/* A PHONE'S FRAME, named once: every rule of the bars and the page between them takes
 	   its sizes from here, and ui_kit.mjs measures each phone against them (mock.html,
@@ -1192,7 +1192,7 @@ APP FRAME
 	align-items: center;
 	gap: 8px;
 	width: 100%;
-	height: 28px;
+	min-height: 28px;		/* and taller as its words grow */
 	padding: 0 8px;
 	margin-bottom: 1px;
 	border: none;
@@ -1227,7 +1227,7 @@ APP FRAME
 /* a narrow window, or a large text size: the sidebar becomes a rail of
    icons; the words stay for screen readers (hidden like .sr-only, never
    display: none, which would take each button's name away) */
-@media ( max-width: 720px ) {
+:where( :root[data-page~="rail"] ) {
 	.sidebar {
 		width: 64px;
 		padding-right: 8px;
@@ -1239,7 +1239,8 @@ APP FRAME
 	.foot-text,
 	.foot-version,
 	.switcher-text,
-	.switcher-chevron {
+	.switcher-chevron,
+	.titlebar-brand {		/* the switcher's leaf is the rail's one: the name spilled out of 64px, its leaf sat twice (11-27) */
 		position: absolute;
 		width: 1px;
 		height: 1px;
@@ -1318,6 +1319,7 @@ APP FRAME
 }
 
 .content {
+	container: content / inline-size;		/* its room, in its text: Settings' one at a time */
 	display: flex;
 	flex: 1;
 	flex-direction: column;
@@ -1445,7 +1447,7 @@ column (a narrow window) it flows like a page (HOME LAYOUT, below)
 /* the balance card: deep teal in both themes, the leaf behind */
 
 .card-hero {
-	container-type: inline-size;
+	container: card / inline-size;
 	position: relative;
 	isolation: isolate;
 	overflow: hidden;
@@ -1467,7 +1469,7 @@ column (a narrow window) it flows like a page (HOME LAYOUT, below)
 .card-leaf {
 	position: absolute;
 	right: -14px;
-	top: 46px;
+	top: 3.54em;		/* 46px at 100%: under the sync pill, which grows with the text */
 	z-index: -1;
 	opacity: 0.85;
 	pointer-events: none;
@@ -1477,9 +1479,10 @@ column (a narrow window) it flows like a page (HOME LAYOUT, below)
 /*
 a card narrower than this has no empty corner for the leaf (the split
 needs the width): it becomes a faint white watermark, like the pattern
-on a bank card, texture rather than a picture behind the numbers
+on a bank card, texture rather than a picture behind the numbers. In px:
+the leaf is a picture, the same size at any text size
 */
-@container ( max-width: 740px ) {
+@container card ( width <= 740px ) {
 	.card-leaf {
 		opacity: 0.07;
 		filter: brightness( 0 ) invert( 1 );
@@ -1787,10 +1790,25 @@ on a bank card, texture rather than a picture behind the numbers
 
 /* quick actions: four tiles of one shape */
 
+/* all of them in one row while each has its --action-min, else half to a row (--half,
+   rounded up: three over two, never four over one, as a 744px iPad at 130% had). The
+   basis is the row's share until that's under the minimum, then (the factor makes it a
+   switch) half's: one rule for the cards and a phone's round buttons. --n and --half
+   are the count's (UI_Actions), the minimum the layout's */
 .actions {
-	display: grid;
-	grid-template-columns: repeat( auto-fit, minmax( 112px, 1fr ) );
-	gap: 10px;
+	--action-min: 8.6em;		/* a card: "Get your address" in two lines at most */
+	--action-gap: 10px;
+	--action-one: calc( ( 100% - ( var( --n ) - 1 ) * var( --action-gap ) ) / var( --n ) );
+	--action-half: calc( ( 100% - ( var( --half ) - 1 ) * var( --action-gap ) ) / var( --half ) );
+	display: flex;
+	flex-wrap: wrap;
+	justify-content: center;
+	gap: 10px var( --action-gap );
+}
+
+.actions > .action {
+	flex: 0 0 min( var( --action-half ), max( var( --action-one ), ( var( --action-min ) - var( --action-one ) ) * 1000 ) );
+	min-width: 0;
 }
 
 .action {
@@ -2870,6 +2888,9 @@ SEGMENTED CONTROL
 	position: relative;		/* above the thumb */
 }
 
+#text-size {
+	container-type: inline-size;		/* its own width, that --steady-text's five share */
+}
 #text-size button {
 	font-size: var( --steady-text );
 	white-space: nowrap;
@@ -3637,8 +3658,8 @@ SIDEBAR: SWITCHER AND NAV
 
 .nav-icon {
 	flex-shrink: 0;
-	width: 16px;
-	height: 16px;
+	width: 1.23em;		/* 16px at 100%: an icon its word's size, never a bullet beside a 175% word */
+	height: 1.23em;
 	stroke-width: 1.8;
 }
 
@@ -4889,7 +4910,7 @@ SHIELD AND SCAN SHEETS
 	text-align: center;
 }
 
-@media ( min-width: 780px ) {
+:where( :root[data-page~="roomy"] ) {
 	.sheet.sheet-receive {
 		width: min( 760px, calc( 100vw - 48px ) );
 	}
@@ -5682,6 +5703,31 @@ SETTINGS: APPEARANCE, SECURITY, STORAGE
 	gap: 8px;
 }
 
+/* a setting's buttons and choices go under its words when its list is narrow for
+   the text, lined up with them; a switch stays on the right. Beside them, a button
+   left the words a 4 to 6 line column ("Lock Automatically", "Try It", "Check
+   Again"; "Passw|ord" on an iPad mini at 175%). By the list's width in its own
+   text (em), so a phone, an iPad and a narrow window at any text size are one rule */
+:has( > .set-row ) {
+	container: set-list / inline-size;
+}
+@container set-list ( width <= 30em ) {
+	.set-row {
+		flex-wrap: wrap;
+	}
+	.set-text {
+		min-width: 7em;
+	}
+	.set-actions:has( .btn, select, .field-select ) {
+		flex: 1 0 100%;
+		flex-wrap: wrap;
+		padding-left: 48px;
+	}
+	.set-actions:has( select, .field-select ) > * {
+		flex: 1;
+	}
+}
+
 .set-value {
 	flex-shrink: 0;
 	font-weight: 600;
@@ -5938,7 +5984,7 @@ HOME LAYOUT: FILL THE WINDOW
 /* a narrow chart (a phone, a narrow window): its tools take two rows, the
    kind of chart above, By Pool and the period under it. In one row "By
    Pool" broke in two and the periods ran off the card's edge */
-@container chart ( max-width: 560px ) {
+@container chart ( width <= 43.08em ) {
 	.chart-head {
 		flex-wrap: wrap;
 	}
@@ -5949,21 +5995,14 @@ HOME LAYOUT: FILL THE WINDOW
 	}
 }
 
-/* two columns: the six actions stay one row, so the chart keeps its height */
-@media ( min-width: 1061px ) {
-	.actions {
-		grid-template-columns: repeat( 6, minmax( 0, 1fr ) );
-	}
-}
-
-@media ( min-width: 1061px ) and ( max-width: 1300px ) {
+:where( :root[data-page~="snug"] ) {
 	.home-grid {
 		grid-template-columns: minmax( 0, 1fr ) 300px;
 	}
 }
 
 /* a narrow window stacks the side column under the main one */
-@media ( max-width: 1060px ) {
+:where( :root[data-page~="stacked"] ) {
 	.home {
 		flex: 0 0 auto;
 	}
@@ -6484,6 +6523,9 @@ HISTORY
 */
 
 .history {
+	/* its width in its own text (em) narrows it (@container history): a phone, an iPad
+	   mini at 175% (Filters cut off at the page's edge, 11-27), a narrow window alike */
+	container: history / inline-size;
 	width: 100%;
 	max-width: 860px;
 	margin: 0 auto;
@@ -6771,7 +6813,7 @@ HISTORY
 }
 
 /* a wide window: the same one column, room for the facts in one row and the actions beside Close */
-@media ( min-width: 780px ) {
+:where( :root[data-page~="roomy"] ) {
 	.sheet.sheet-tx {
 		width: min( 640px, calc( 100vw - 48px ) );
 	}
@@ -7035,7 +7077,7 @@ HISTORY
 
 /* too narrow for From and To side by side (a large text size: em, so it follows it): one
    over the other, the arrow pointing down. Side by side they broke "Priv / ate" at 175% */
-@container tx-route ( max-width: 21em ) {
+@container tx-route ( width <= 21em ) {
 	.tx-route-end {
 		flex-basis: 100%;
 	}
@@ -7215,7 +7257,7 @@ HISTORY
 	margin: 0;
 }
 
-@media ( min-width: 780px ) {
+:where( :root[data-page~="roomy"] ) {
 	.tx-foot {
 		flex-direction: row;
 		align-items: center;
@@ -8063,8 +8105,8 @@ SETTINGS WINDOW
 	align-items: center;
 	gap: 10px;
 	width: 100%;
-	height: 34px;
-	padding: 0 10px;
+	min-height: 34px;		/* grows with its words: "Help & Support" took two lines at 175% on an iPad */
+	padding: 4px 10px;
 	border: none;
 	border-radius: 9px;
 	background: none;
@@ -8202,31 +8244,78 @@ SETTINGS WINDOW
 	white-space: nowrap;
 }
 
-/* narrow windows: the categories become a row above the pane */
-@media ( max-width: 820px ) {
+/* Settings' way back to its list: only when it shows one at a time (below) */
+.settings-window .settings-back {
+	display: none;
+}
+/* Settings with no room for its list beside a pane (a phone, a Split View, a narrow
+   window, any at a big text size): one at a time, the list as grouped rows as a phone's
+   own settings, a pane with its way back. By its own room in its own text (em): a row of
+   chips scrolled sideways was cut at the edge, three seen at a time (11-27) */
+@container content ( width <= 42em ) {
 	.settings-window {
 		grid-template-columns: minmax( 0, 1fr );
 		gap: 18px;
 	}
-
-	.settings-nav {
-		position: static;
-		flex-direction: row;
-		gap: 4px;
-		overflow-x: auto;
-		padding-bottom: 4px;
-	}
-
-	.settings-nav-title {
+	.settings-window.shows-pane .settings-nav,
+	.settings-window.shows-list .settings-pane {
 		display: none;
 	}
-
-	.settings-nav-group {
-		flex-direction: row;
+	.settings-window.shows-pane .settings-back {
+		display: inline-flex;
+		margin: 0 0 8px -6px;
 	}
-
-	.settings-nav-item {
-		white-space: nowrap;
+	.settings-window.shows-list .settings-nav {
+		flex-direction: column;
+		gap: 18px;
+		overflow: visible;
+	}
+	.settings-window.shows-list .settings-nav-title {
+		display: block;
+		margin: 4px 0 0 4px;
+	}
+	.settings-window.shows-list .settings-nav-group {
+		flex-direction: column;
+		gap: 0;
+		overflow: hidden;
+		border-radius: 14px;
+		background: var( --surface );
+		box-shadow: var( --shadow );
+	}
+	.settings-window.shows-list .settings-nav-group li + li {
+		box-shadow: inset 52px 1px 0 -51px var( --line );
+	}
+	.settings-window.shows-list .settings-nav-item,
+	.settings-window.shows-list .settings-nav-item.on {
+		position: relative;
+		gap: 12px;
+		min-height: 52px;		/* and taller as the words grow, as an iPhone's own rows */
+		padding: 8px 34px 8px 12px;
+		border-radius: 0;
+		background: none;
+		font-size: var( --type-headline );
+		font-weight: 500;
+		white-space: normal;
+	}
+	.settings-window.shows-list .settings-nav-item::after {
+		content: "";
+		position: absolute;
+		top: calc( 50% - 4px );
+		right: 16px;
+		width: 7px;
+		height: 7px;
+		border-top: 2px solid var( --text-2 );
+		border-right: 2px solid var( --text-2 );
+		transform: rotate( 45deg );
+	}
+	.settings-window.shows-list .settings-nav-icon {
+		width: 30px;
+		height: 30px;
+		border-radius: 8px;
+	}
+	.settings-window.shows-list .settings-nav-icon svg {
+		width: 17px;
+		height: 17px;
 	}
 }
 
@@ -8590,19 +8679,30 @@ ZEC PRICE
 :root[data-mobile="true"] {
 	--titlebar-h: calc( var( --bar-h ) + var( --safe-top ) );
 }
-:root[data-mobile="true"] .titlebar {
+:root[data-phone="true"],
+:root[data-phone="true"] body,
+:root[data-phone="true"] #root {
+	height: auto;		/* a phone's page scrolls as the document */
+}
+:root[data-phone="true"] body {
+	overflow: visible;		/* hidden, it left no scroll a finger could move (a script's still could) */
+}
+:root[data-phone="true"] .titlebar {
 	/* an iPhone's navigation bar: Back | the screen's name | the lock. The name has the
 	   middle and gives way, cut short, to a long Back; centred by position, it lay under
 	   Back at 175% on a 320px phone (check_layout, 11-27) */
 	display: grid;
 	grid-template-columns: 1fr minmax( 0, max-content ) 1fr;
+}
+/* under the status bar on any phone or iPad, whichever bar it is */
+:root[data-mobile="true"] .titlebar {
 	padding-top: var( --safe-top );
 }
-:root[data-mobile="true"] .titlebar-back {
+:root[data-phone="true"] .titlebar-back {
 	grid-column: 1;
 	justify-self: start;
 }
-:root[data-mobile="true"] .titlebar-tools {
+:root[data-phone="true"] .titlebar-tools {
 	grid-column: 3;
 	justify-self: end;
 }
@@ -8645,13 +8745,13 @@ ZEC PRICE
 .titlebar-back:disabled, .sheet-back:disabled {
 	opacity: 0.4;
 }
-:root[data-mobile="true"] .nav-back:not( [role="dialog"] .nav-back ) {
+:root[data-phone="true"] .nav-back:not( [role="dialog"] .nav-back ) {
 	display: none;
 }
 :root[data-back="true"] .sidebar .switcher {
 	visibility: hidden;
 }
-@media ( max-width: 480px ) {
+:where( :root[data-page~="phone"] ) {
 	.app {
 		flex-direction: column;
 		height: auto;		/* as tall as its page: the document scrolls it (below) */
@@ -8694,8 +8794,8 @@ ZEC PRICE
 		height: var( --frame-tool );
 	}
 	/* a pane named in the bar: its own head keeps only what it's for */
-	.settings-window.phone-pane .pane-head-icon,
-	.settings-window.phone-pane .pane-title {
+	.settings-window.shows-pane .pane-head-icon,
+	.settings-window.shows-pane .pane-title {
 		display: none;
 	}
 	.sidebar .switcher-text, .sidebar .switcher-chevron {
@@ -8720,64 +8820,6 @@ ZEC PRICE
 	.sidebar .nav li {
 		flex: 1;
 		min-width: 0;
-	}
-	/* Settings on a phone: a list of grouped rows, as a phone's own settings; a pane
-	   opens alone, with the way back. A row of twelve chips scrolled sideways, three
-	   seen at a time */
-	.settings-window.phone-list .settings-nav {
-		flex-direction: column;
-		gap: 18px;
-		overflow: visible;
-	}
-	.settings-window.phone-list .settings-nav-title {
-		display: block;
-		margin: 4px 0 0 4px;
-	}
-	.settings-window.phone-list .settings-nav-group {
-		flex-direction: column;
-		gap: 0;
-		overflow: hidden;
-		border-radius: 14px;
-		background: var( --surface );
-		box-shadow: var( --shadow );
-	}
-	.settings-window.phone-list .settings-nav-group li + li {
-		box-shadow: inset 52px 1px 0 -51px var( --line );
-	}
-	.settings-window.phone-list .settings-nav-item,
-	.settings-window.phone-list .settings-nav-item.on {
-		position: relative;
-		gap: 12px;
-		min-height: 52px;		/* and taller as the words grow, as an iPhone's own rows */
-		padding: 8px 34px 8px 12px;
-		border-radius: 0;
-		background: none;
-		font-size: var( --type-headline );
-		font-weight: 500;
-		white-space: normal;
-	}
-	.settings-window.phone-list .settings-nav-item::after {
-		content: "";
-		position: absolute;
-		top: calc( 50% - 4px );
-		right: 16px;
-		width: 7px;
-		height: 7px;
-		border-top: 2px solid var( --text-2 );
-		border-right: 2px solid var( --text-2 );
-		transform: rotate( 45deg );
-	}
-	.settings-window.phone-list .settings-nav-icon {
-		width: 30px;
-		height: 30px;
-		border-radius: 8px;
-	}
-	.settings-window.phone-list .settings-nav-icon svg {
-		width: 17px;
-		height: 17px;
-	}
-	.settings-window.phone-pane .nav-back {
-		margin: 0 0 8px -6px;
 	}
 	/* a wallet's actions on a phone: one list, a row each, Remove last in red. As
 	   pills they wrapped into three ragged rows */
@@ -8824,19 +8866,13 @@ ZEC PRICE
 		font-size: var( --type-headline );
 	}
 	/* Quick Actions on a phone: one row of round buttons, a word under each, as a
-	   phone's own apps do. As cards, two to a row, they were 330px of the screen */
-	/* one row of five while their words fit (a word is ~3.8em at most: "Receive"); past
-	   that, three over two, centred, never four over one. The basis is 18% until the word
-	   needs more, then jumps to 31% (the factor makes it a switch): the text size grows the
-	   words but not the screen, and at 175% "Receive" ran into "Shield" (ui_kit, 11-26) */
+	   phone's own apps do. As cards, two to a row, they were 330px of the screen. A
+	   word is ~3.8em at most ("Receive"): at 175% it ran into "Shield" (11-26) */
 	.actions {
-		display: flex;
-		flex-wrap: wrap;
-		justify-content: center;
-		gap: 10px 0;
+		--action-min: 3.8em;
+		--action-gap: 0px;
 	}
 	.action {
-		flex: 0 0 min( 31%, max( 18%, ( 3.8em - 18% ) * 1000 ) );
 		gap: 6px;
 		padding: 4px 0;
 		background: none;
@@ -8877,23 +8913,6 @@ ZEC PRICE
 	}
 	.send-to {
 		--tools-room:	0px;		/* the field kept 50px empty for tools no longer in it (11-27) */
-	}
-	/* a setting's buttons and choices go under its words on a phone, lined up with
-	   them; a switch stays on the right. Beside them, a button left the words a 4 to
-	   6 line column ("Lock Automatically", "Try It", "Check Again") */
-	.set-row {
-		flex-wrap: wrap;
-	}
-	.set-text {
-		min-width: 7em;
-	}
-	.set-actions:has( .btn, select, .field-select ) {
-		flex: 1 0 100%;
-		flex-wrap: wrap;
-		padding-left: 48px;
-	}
-	.set-actions:has( select, .field-select ) > * {
-		flex: 1;
 	}
 	/* tiles (UI_ActionTile) are a list on a phone: one rounded block, a row each with
 	   its icon, title and line of why, hairlines between. Three tiles to a row were
@@ -8993,12 +9012,6 @@ ZEC PRICE
 	   phone's browser and its own lists do (bounce, a tap on the status bar to go up). A
 	   box scrolling inside a page that didn't was what took no finger on an iPhone
 	   (Settings at 175%, 11-27); the bars stay, fixed and sticky, over it */
-	html, body, #root {
-		height: auto;
-	}
-	body {
-		overflow: visible;		/* hidden, it left no scroll a finger could move (a script's still could) */
-	}
 	.content {
 		flex: none;
 		min-width: 0;
@@ -9093,15 +9106,13 @@ ZEC PRICE
 		max-height: calc( 100dvh / var( --app-zoom, 1 ) - var( --titlebar-h ) - 24px );
 		overflow-y: auto;
 	}
-	.history {
-		container: phone-history / inline-size;
-	}
 }
 
 /* a word never breaks in two ("Receiv/e", "Mov/es" at 175%): where five labels or four
    kinds don't fit, the others show their icon alone and the chosen one keeps its word,
-   with the room of two */
-@container phone-nav ( max-width: 300px ) {
+   with the room of two. The one width in px: the tab bar's words keep their size at
+   any text size (--frame-*), so its room is the screen's, not the text's */
+@container phone-nav ( width <= 300px ) {
 	.nav li:has( > .nav-item:not( .active ) ) .nav-label {
 		position: absolute;
 		width: 1px;
@@ -9114,7 +9125,7 @@ ZEC PRICE
 		flex: 2;
 	}
 }
-@container phone-history ( max-width: 300px ) {
+@container history ( width <= 20em ) {
 	.history-tools-end > :first-child button:not( .on ) .segmented-label {
 		position: absolute;
 		width: 1px;
@@ -9130,7 +9141,7 @@ ZEC PRICE
 
 /* a narrow list (the largest text size): the amount goes under the words, so the
    time beside it isn't squeezed to nothing (8px of "10:11 PM" at 175% on 320) */
-@container phone-history ( max-width: 300px ) {
+@container history ( width <= 20em ) {
 	.tx-row {
 		flex-wrap: wrap;
 	}
@@ -9141,7 +9152,7 @@ ZEC PRICE
 
 /* At the largest text size a phone has fewer layout pixels. Keep each
    amount whole and put related values below their labels. */
-@container phone-home ( max-width: 240px ) {
+@container phone-home ( width <= 18.46em ) {
 	.card-hero, .panel, .privacy-card {
 		padding: 12px;
 	}
@@ -9178,7 +9189,7 @@ ZEC PRICE
 	}
 }
 
-@container phone-sheet ( max-width: 240px ) {
+@container phone-sheet ( width <= 18.46em ) {
 	.send-to-tools {
 		grid-template-columns: minmax( 0, 1fr );
 	}
@@ -9259,7 +9270,7 @@ ZEC PRICE
 /* the kinds of address in a sheet under 300px (a 320px phone): Recommended goes on a
    line of its own, beside the name it pushed the (i) off and broke "Private" in two. The
    check goes: the chosen kind's outline already says it, and aria-current to a reader */
-@container phone-sheet ( max-width: 300px ) {
+@container phone-sheet ( width <= 23.08em ) {
 	.kind-pick {
 		flex-wrap: wrap;
 	}
@@ -9273,7 +9284,7 @@ ZEC PRICE
 
 /* a settings pane under 240px (the largest text size on a 320px phone): the security
    card's badge goes above its words, so none breaks in two ("Notifi/cations") */
-@container phone-settings ( max-width: 240px ) {
+@container phone-settings ( width <= 18.46em ) {
 	.sec-hero {
 		flex-wrap: wrap;
 	}

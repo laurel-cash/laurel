@@ -10,7 +10,7 @@ See the LICENSE file for details.
 */
 // ui_hooks.ts -- the async patterns every screen shares, written once
 
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useLayoutEffect, useRef, useState, useSyncExternalStore } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { useStore } from "./ui_store";
@@ -353,3 +353,73 @@ export function useSize< E extends HTMLElement >() {
 	return { ref, ...size };
 }
 
+
+/*
+==================
+usePageLayout
+
+The page's layouts, by its width at 100% text: the window's, divided by the
+text size where only the text grows (css zoom, --text-scale; the webview's own
+zoom has already narrowed the window). Each layout is a name on the root
+(data-page), and ui.css's :where( :root[data-page~="name"] ) blocks style it:
+so a 678px iPad Split View at 175% is a phone (388px of text) and the 13" at
+100% a computer, on every system alike. A px @media saw only the window, and
+an iPad laid out a computer's page in a phone's room of text (11-27).
+PAGE_LAYOUTS is the one place a width is written
+==================
+*/
+export const PAGE_LAYOUTS: readonly ( readonly [ string, ( width: number ) => boolean ] )[] = [
+	[ "phone",		( w ) => w <= 480 ],				// one column, a tab bar at the bottom
+	[ "rail",		( w ) => w <= 720 ],				// the sidebar a rail of icons
+	[ "roomy",		( w ) => w >= 780 ],				// sheets with room beside their words
+	[ "stacked",	( w ) => w <= 1060 ],				// Home's side column under its main one
+	[ "snug",		( w ) => w > 1060 && w <= 1300 ],	// ...with a narrower side column
+];
+
+export function Com_PageLayouts( width: number ): string {
+	return PAGE_LAYOUTS.filter( ( [ , is ] ) => is( width ) ).map( ( [ name ] ) => name ).join( " " );
+}
+
+export function usePageLayout() {
+	const { settings } = useAppSettings();
+	const scale = settings?.textScale ?? 100;
+	const zoom = useStore( ( s ) => s.constants?.textZoom );
+
+	useLayoutEffect( () => {
+		const root = document.documentElement;
+		function Lay() {
+			root.dataset.page = Com_PageLayouts( window.innerWidth / ( zoom === "page" ? 1 : scale / 100 ) );
+		}
+		Lay();
+		window.addEventListener( "resize", Lay );
+		return () => window.removeEventListener( "resize", Lay );
+	}, [ scale, zoom ] );
+}
+
+/*
+==================
+usePhoneLayout
+
+A phone's layout: the way back top left in the bar, Back atop a sheet, the page
+scrolled as the document. A phone's build (constants.mobile) on a page laid out as
+a phone's (usePageLayout): an iPad is the same build, and a phone's only where its
+text leaves a phone's room
+==================
+*/
+function Com_PagePhone(): boolean {
+	const page = document.documentElement.dataset.page;
+	// not laid out (a unit test's page): a phone's build is taken as a phone
+	return page === undefined || page.split( " " ).includes( "phone" );
+}
+
+function Com_WatchPage( changed: () => void ): () => void {
+	const watch = new MutationObserver( changed );
+	watch.observe( document.documentElement, { attributes: true, attributeFilter: [ "data-page" ] } );
+	return () => watch.disconnect();
+}
+
+export function usePhoneLayout(): boolean {
+	const mobile = useStore( ( s ) => s.constants?.mobile === true );
+	const phone = useSyncExternalStore( Com_WatchPage, Com_PagePhone );
+	return mobile && phone;
+}

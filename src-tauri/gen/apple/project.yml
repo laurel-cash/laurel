@@ -46,6 +46,12 @@ targets:
           - UIInterfaceOrientationPortrait
           - UIInterfaceOrientationLandscapeLeft
           - UIInterfaceOrientationLandscapeRight
+        # all four on an iPad: Split View and Slide Over need them
+        UISupportedInterfaceOrientations~ipad:
+          - UIInterfaceOrientationPortrait
+          - UIInterfaceOrientationPortraitUpsideDown
+          - UIInterfaceOrientationLandscapeLeft
+          - UIInterfaceOrientationLandscapeRight
         CFBundleShortVersionString: 0.3.3
         CFBundleVersion: "0.3.3"
     entitlements:
@@ -59,9 +65,10 @@ targets:
         RUST_LOG: info
     settings:
       base:
-        # an iPhone app: an iPad runs it as one. Its own layout was never looked at, and
-        # App Review would test it there (and ask for iPad screenshots)
-        TARGETED_DEVICE_FAMILY: 1
+        # iPhone and iPad: an iPad gets the computer's layout (sidebar, Settings' list
+        # beside its pane), a narrow Split View the phone's (usePhoneLayout); the kit
+        # pictures the iPad mini, the 13" upright and on its side, and Slide Over
+        TARGETED_DEVICE_FAMILY: "1,2"
         ENABLE_BITCODE: false
         ARCHS: [arm64]
         VALID_ARCHS: arm64 

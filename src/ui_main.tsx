@@ -18,7 +18,7 @@ import { QueryClientProvider } from "@tanstack/react-query";
 
 import { Com_ErrorOf, Com_Unreachable, commands, created_t, failedWallet_t, recovery_t } from "./ui_local";
 import { RUST_WORDS, T } from "./ui_text";
-import { useAction, useTextScale } from "./ui_hooks";
+import { useAction, usePageLayout, useTextScale } from "./ui_hooks";
 import { St_Start, useAppScreen, useStore } from "./ui_store";
 import { UI_Alert, UI_Spinner, UI_TipProvider, UI_Waiting } from "./ui_widgets";
 import { UI_BetaWalletsSheet, UI_WhatsNewSheet, useBetaWallets, useWhatsNew } from "./ui_notes";
@@ -60,6 +60,7 @@ function UI_AutoLock() {
 function UI_TextScale() {
 	const constants = useStore( ( s ) => s.constants );
 	useTextScale( constants?.textScales ?? NO_SCALES );
+	usePageLayout();
 	return null;
 }
 const NO_SCALES: number[] = [];

@@ -1163,7 +1163,7 @@ const EN = {
 		appHint:			"The app, and Sapling's proving key once a payment from Sapling has fetched it.",
 		cache:				"Temporary files",
 		cacheHint:			( freed: string ) => `Cleaned each time Laurel starts. Freed ${freed} this time.`,
-		free:				( free: string, disk: string ) => `${free} free of ${disk} on this ${Phone() ? "phone" : "disk"}`,
+		free:				( free: string, disk: string ) => `${free} free of ${disk} on this ${Phone() ? "device" : "disk"}`,
 		lowTitle:			"Your Disk Is Almost Full",
 		low:				( free: string ) => `Only ${free} is free where your wallets are saved. If it runs out, Laurel can't save new payments until space is freed.`,
 		measuring:			"Measuring…",

@@ -168,8 +168,12 @@ export function Com_IosProblems( ios, project ) {
 	if ( !/^\s*com\.apple\.developer\.default-data-protection:\s*NSFileProtectionComplete(UnlessOpen)?\s*$/m.test( project ) ) {
 		problems.push( "project.yml doesn't protect the app's files (default-data-protection): they'd be readable while the phone is locked" );
 	}
-	if ( !/^\s*TARGETED_DEVICE_FAMILY:\s*"?1"?\s*$/m.test( project ) ) {
-		problems.push( "project.yml doesn't make an iPhone app (TARGETED_DEVICE_FAMILY: 1): App Review would test an iPad layout nobody has seen" );
+	if ( !/^\s*TARGETED_DEVICE_FAMILY:\s*"1,2"\s*$/m.test( project ) ) {
+		problems.push( "project.yml doesn't make an iPhone and iPad app (TARGETED_DEVICE_FAMILY: \"1,2\"): the kit pictures iPads, and the App Store has iPad screenshots" );
+	}
+	const ipad = project.match( /UISupportedInterfaceOrientations~ipad:\n((?:[ \t]+- \S+\n)+)/ )?.[1] ?? "";
+	if ( [ "Portrait", "PortraitUpsideDown", "LandscapeLeft", "LandscapeRight" ].some( ( o ) => !new RegExp( `- UIInterfaceOrientation${o}\n` ).test( ipad ) ) ) {
+		problems.push( "project.yml doesn't turn an iPad every way (UISupportedInterfaceOrientations~ipad): Split View and Slide Over need all four" );
 	}
 	return problems;
 }

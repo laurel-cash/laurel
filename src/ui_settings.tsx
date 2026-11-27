@@ -116,14 +116,13 @@ UI_Settings
 export function UI_Settings( props: { actions: walletActions_t } ) {
 	const pane		= useStore( ( s ) => s.settingsPane );
 	const shown		= useStore( ( s ) => s.settingsShown );
-	const mobile	= useStore( ( s ) => s.constants?.mobile );
 	const go		= useStore( ( s ) => s.Go );
-	// a phone has room for one: the list, or a pane with the way back to it
-	const one: "list" | "pane" | null = mobile ? shown : null;
 
+	// both, always: where there's room for one (ui.css, @container content) the list, or
+	// the pane gone into with its way back, is shown; the room is the stylesheet's to say
 	return (
-		<div className={"settings-window" + ( one ? " phone-" + one : "" )}>
-			{one !== "pane" && <nav className="settings-nav" aria-label={T.settings.title}>
+		<div className={"settings-window shows-" + shown}>
+			<nav className="settings-nav" aria-label={T.settings.title}>
 				<h1 className="settings-nav-title">{T.settings.title}</h1>
 				{PANES.map( ( group, i ) => (
 					<ul key={i} className="settings-nav-group">
@@ -141,18 +140,16 @@ export function UI_Settings( props: { actions: walletActions_t } ) {
 						) )}
 					</ul>
 				) )}
-			</nav>}
-			{one !== "list" && (
-				<div className="settings-pane" key={pane}>
-					{one === "pane" && (
-						<button className="nav-back" data-title={PANES.flat().find( ( p ) => p.pane === pane )?.label} onClick={() => go( "settings" )}>
-							<ChevronLeft aria-hidden="true" />{T.settings.title}
-						</button>
-					)}
-					<UI_PaneHead pane={pane} />
-					<UI_Pane pane={pane} actions={props.actions} />
-				</div>
-			)}
+			</nav>
+			<div className="settings-pane" key={pane}>
+				{shown === "pane" && (
+					<button className="nav-back settings-back" data-title={PANES.flat().find( ( p ) => p.pane === pane )?.label} onClick={() => go( "settings" )}>
+						<ChevronLeft aria-hidden="true" />{T.settings.title}
+					</button>
+				)}
+				<UI_PaneHead pane={pane} />
+				<UI_Pane pane={pane} actions={props.actions} />
+			</div>
 		</div>
 	);
 }

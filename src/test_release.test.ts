@@ -178,12 +178,14 @@ describe( "the iPhone's own side", () => {
 
 	it( "refuses one missing any of them, or with one commented out", () => {
 		const ios = "UIApplicationWillResignActiveNotification\nUIScreenCapturedDidChangeNotification\nNSURLIsExcludedFromBackupKey\nbeginBackgroundTask\nUNUserNotificationCenterDelegate\n";
-		const project = "      properties:\n        com.apple.developer.default-data-protection: NSFileProtectionCompleteUnlessOpen\n      base:\n        TARGETED_DEVICE_FAMILY: 1\n";
+		const ipad = "        UISupportedInterfaceOrientations~ipad:\n          - UIInterfaceOrientationPortrait\n          - UIInterfaceOrientationPortraitUpsideDown\n          - UIInterfaceOrientationLandscapeLeft\n          - UIInterfaceOrientationLandscapeRight\n";
+		const project = `      properties:\n${ipad}        com.apple.developer.default-data-protection: NSFileProtectionCompleteUnlessOpen\n      base:\n        TARGETED_DEVICE_FAMILY: "1,2"\n`;
 		expect( Com_IosProblems( ios, project ) ).toEqual( [] );
 		expect( Com_IosProblems( ios.replace( "NSURLIsExcludedFromBackupKey", "" ), project ) ).toHaveLength( 1 );
 		expect( Com_IosProblems( ios.replace( "\nNSURL", "\n// NSURL" ), project ) ).toHaveLength( 1 );
-		expect( Com_IosProblems( ios, "" ) ).toHaveLength( 2 );
-		expect( Com_IosProblems( ios, project.replace( "TARGETED_DEVICE_FAMILY: 1", "TARGETED_DEVICE_FAMILY: \"1,2\"" ) ) ).toHaveLength( 1 );
+		expect( Com_IosProblems( ios, "" ) ).toHaveLength( 3 );
+		expect( Com_IosProblems( ios, project.replace( "TARGETED_DEVICE_FAMILY: \"1,2\"", "TARGETED_DEVICE_FAMILY: 1" ) ) ).toHaveLength( 1 );		// iPhone only
+		expect( Com_IosProblems( ios, project.replace( "          - UIInterfaceOrientationPortraitUpsideDown\n", "" ) ) ).toHaveLength( 1 );		// an iPad not every way
 		expect( Com_IosProblems( ios, project.replace( "        com", "        # com" ) ) ).toHaveLength( 1 );
 	} );
 

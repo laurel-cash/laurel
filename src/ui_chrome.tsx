@@ -25,6 +25,7 @@ import { Com_FormatDate, Com_Unreachable, syncProgress_t, syncState_t } from "./
 import { T } from "./ui_text";
 import { useStore } from "./ui_store";
 import { UI_Spinner, UI_Tip } from "./ui_widgets";
+import { usePhoneLayout } from "./ui_hooks";
 
 import LOGO_SMALL_SRC from "./assets/leaf-double-160.webp";
 import LOGO_LARGE_SRC from "./assets/leaf-double-640.webp";
@@ -148,9 +149,14 @@ window loses focus, as both systems do.
 export function UI_TitleBar() {
 	const [ focused, setFocused ] = useState( true );
 	const mobile = useStore( ( s ) => s.constants?.mobile );
+	const phone = usePhoneLayout();
 	useEffect( () => {
 		document.documentElement.dataset.mobile = String( mobile );
 	}, [ mobile ] );
+	// the phone's bar (Back | name | lock) and its hidden in-page Backs: a phone's layout, not an iPad's
+	useEffect( () => {
+		document.documentElement.dataset.phone = String( phone );
+	}, [ phone ] );
 
 	// Android's Back asks here first (MainActivity): leaving is only for Home
 	useEffect( () => {
@@ -193,7 +199,7 @@ export function UI_TitleBar() {
 		<>
 			<div className={"titlebar" + ( focused ? "" : " blurred" ) + ( IS_WINDOWS ? " windows" : "" )} data-tauri-drag-region={!mobile || undefined}>
 				{!mobile && !IS_WINDOWS && UI_Lights( win )}
-				{mobile && <UI_PhoneBack />}
+				{phone && <UI_PhoneBack />}
 				{brand}
 				<div className="titlebar-tools">
 					<UI_LockButton />
